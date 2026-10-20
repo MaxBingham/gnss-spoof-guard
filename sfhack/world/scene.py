@@ -95,8 +95,11 @@ class PackageWorld:
         cx, cy = (e["min_x"] + e["max_x"]) / 2, (e["min_y"] + e["max_y"]) / 2
         hw, hh = (e["max_x"] - e["min_x"]) / 2, (e["max_y"] - e["min_y"]) / 2
 
+        # MuJoCo only decodes PNG from files; pass the decoded pixels so JPEG packages work too.
+        img = cv2.cvtColor(cv2.imread(str(self.dir / self.texture_file), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
         tex = spec.add_texture(name="ortho", type=mujoco.mjtTexture.mjTEXTURE_2D,
-                               file=str(self.dir / self.texture_file))
+                               width=img.shape[1], height=img.shape[0], nchannel=3)
+        tex.data = img.tobytes()
         mat = spec.add_material(name="ortho", texrepeat=[1, 1], texuniform=False, reflectance=0.0)
         mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = tex.name
         floor = spec.geom("floor")

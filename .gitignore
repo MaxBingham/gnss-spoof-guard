@@ -1,0 +1,27 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Generated data belongs in $SFHACK_DATA (outside the repo), never here
+data/
+runs/
+eval_out/
+cache/
+*.mp4
+*.npz
+*.gif
+
+# V1 browser prototype: separate repo (JLrobot/gnss-free-nav), cloned next to this one, never committed here
+gnss-free-nav/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

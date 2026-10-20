@@ -1,0 +1,30 @@
+[project]
+name = "sfhack"
+version = "0.1.0"
+description = "GNSS-free drone navigation in MuJoCo: map-based visual localization + EKF (hackathon prototype)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mujoco>=3.3",
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "opencv-python>=4.9",
+    "pillow>=10.3",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "websockets>=12.0",
+    "httpx>=0.27",
+    "matplotlib>=3.8",
+    "pytest>=8.2",
+]
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sfhack"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

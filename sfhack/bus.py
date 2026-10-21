@@ -24,6 +24,7 @@ HEALTH = "health"
 SETPOINT = "setpoint"
 MOTOR = "motor"
 DISTURBANCE = "disturbance"
+DECISION = "decision"  # (t, text): onboard decisions (re-localization, landing, timeout, ...)
 
 
 class Bus:

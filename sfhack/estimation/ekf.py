@@ -16,7 +16,7 @@ import numpy as np
 from ..config import EkfConfig
 from ..messages import PoseEstimate, VisualFix
 
-MAX_CONSECUTIVE_REJECTS = 10  # then the next fix is force-accepted (re-localization after divergence)
+MAX_CONSECUTIVE_REJECTS = 5  # then the next fix is accepted with inflated noise (re-localization)
 
 
 class Ekf:
@@ -31,6 +31,10 @@ class Ekf:
         self.consecutive_rejects = 0
         self.n_fix_accepted = 0
         self.n_fix_rejected = 0
+        self.n_relocalized = 0
+        self.last_fix_t: float | None = None
+        self.nis_log: list[tuple[float, float, bool]] = []  # (t, NIS, accepted) for every visual fix
+        self.last_decision = ""  # set when a fix is accepted by re-localization
 
     def predict(self, acc_world: np.ndarray, dt: float, t: float) -> None:
         self.t = t
@@ -72,20 +76,39 @@ class Ekf:
         return float(y @ np.linalg.solve(S, y))
 
     def update_fix(self, fix: VisualFix) -> bool:
-        """Fuse a visual fix. Returns False (and sets fix.accepted) if gated out as an outlier."""
+        """Fuse a visual fix with a chi-square gate on the NIS (2 dof). Returns False if gated out.
+
+        - Long dead-reckoning stretches: the KF covariance already grows with the process noise; a
+          floor (`nofix_inflation`) keeps a correct fix from being rejected after many seconds blind.
+        - After MAX_CONSECUTIVE_REJECTS the camera keeps disagreeing: accept the next fix with its
+          noise inflated to make it consistent (re-localization) and report it via `last_decision`.
+        """
+        self.last_decision = ""
+        if self.last_fix_t is not None and fix.t - self.last_fix_t > self.cfg.nofix_inflate_after_s:
+            blind = fix.t - self.last_fix_t
+            floor = (self.cfg.nofix_inflation * blind) ** 2
+            for i in (0, 1):
+                self.P[i, i] = max(self.P[i, i], floor)
         H = np.zeros((2, 6))
         H[:, :2] = np.eye(2)
         d2 = self.mahalanobis2(fix)
-        if d2 > self.cfg.gate_chi2 and self.consecutive_rejects < MAX_CONSECUTIVE_REJECTS:
-            self.consecutive_rejects += 1
-            self.n_fix_rejected += 1
-            fix.accepted = False
-            return False
-        if d2 > self.cfg.gate_chi2:  # persistent disagreement: trust the camera, re-localize
-            self.P[:2, :2] += np.eye(2) * d2 * float(np.trace(fix.cov))
-        self._update(H, fix.pos, fix.cov)
+        R = fix.cov
+        if d2 > self.cfg.gate_chi2:
+            if self.consecutive_rejects < MAX_CONSECUTIVE_REJECTS:
+                self.consecutive_rejects += 1
+                self.n_fix_rejected += 1
+                self.nis_log.append((fix.t, d2, False))
+                fix.accepted = False
+                return False
+            R = fix.cov * (d2 / self.cfg.gate_chi2)  # inflate the measurement noise until it is consistent
+            self.n_relocalized += 1
+            self.last_decision = (f"RELOCALIZE: accepted fix after {self.consecutive_rejects} rejections "
+                                  f"(NIS {d2:.1f}, offset {np.linalg.norm(fix.pos - self.x[:2]):.1f} m)")
+        self._update(H, fix.pos, R)
+        self.nis_log.append((fix.t, d2, True))
         self.consecutive_rejects = 0
         self.n_fix_accepted += 1
+        self.last_fix_t = fix.t
         fix.accepted = True
         return True
 

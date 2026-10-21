@@ -79,6 +79,12 @@ class VisualFix:
 
 
 @dataclass
+class Decision:
+    t: float
+    text: str  # e.g. "RELOCALIZE: ...", "WAIT_FOR_FIX above B ...", "TOUCHDOWN ...", "MISSION_TIMEOUT ..."
+
+
+@dataclass
 class PoseEstimate:
     t: float
     pos: np.ndarray  # (3,)

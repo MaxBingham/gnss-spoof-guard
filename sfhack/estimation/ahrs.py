@@ -4,8 +4,8 @@ The controller's inner loop needs roll/pitch/yaw and body rates, and the EKF nee
 rotate accelerations into the world frame. Neither may come from the truth, so this small AHRS
 provides them:
   - gyro integration (bias calibrated on the ground before takeoff),
-  - weak roll/pitch correction from the accelerometer, only when |a| is close to 1 g
-    (for a multirotor the accelerometer sees gravity only when NOT accelerating),
+  - roll/pitch correction from the accelerometer, only when |a| is close to 1 g and the body is
+    not rotating (for a multirotor the accelerometer sees gravity only when NOT accelerating),
   - yaw correction from the compass.
 Upgrade path: replace with a full error-state EKF (attitude + gyro/accel bias states) fused with
 the visual fixes, which also makes tilt observable during accelerations.
@@ -85,7 +85,7 @@ class Ahrs:
         phi = self.omega * dt
         acc = msg.accel - self.accel_bias
         na = float(np.linalg.norm(acc))
-        if abs(na - G) < self.cfg.accel_gate:
+        if abs(na - G) < self.cfg.accel_gate and float(np.linalg.norm(self.omega)) < self.cfg.rate_gate:
             up_meas = acc / na
             up_est = self.R.T[:, 2]
             phi = phi + self.cfg.tilt_gain * dt * np.cross(up_meas, up_est)

@@ -56,6 +56,11 @@ class Mission:
         self.phase = "PREFLIGHT"
         self.landed_timer = 0.0
         self.emergency = False
+        self.wait_at_b_since: float | None = None
+        self.events: list[tuple[float, str]] = []  # onboard decisions; the autopilot forwards them to the bus
+
+    def log(self, t: float, text: str) -> None:
+        self.events.append((t, text))
 
     @property
     def done(self) -> bool:
@@ -102,13 +107,14 @@ class Mission:
             return Setpoint(t, self.setpoint.copy(), vel, self.yaw, "RETURN_TO_LAST_FIX")
         if cruising and health == Health.LAND:
             self.emergency = True
+            self.log(t, "EMERGENCY_LAND: navigation health LAND")
 
         if self.emergency:
             target = np.array([self.setpoint[0], self.setpoint[1], GROUND_TARGET_Z])
             speed = self.cfg.descent_speed if pose.pos[2] > self.cfg.flare_alt else self.cfg.land_speed
             vel, reached = self._move_setpoint(target, speed, dt)
             self.phase = "EMERGENCY_LAND"
-            self._check_touchdown(pose, reached, dt)
+            self._check_touchdown(t, pose, dt)
             return Setpoint(t, self.setpoint.copy(), vel, self.yaw, self.phase)
 
         wp = self.waypoints[self.idx]
@@ -119,15 +125,38 @@ class Mission:
         if reached and not last:
             err = wp.pos - pose.pos
             if math.hypot(err[0], err[1]) < self.cfg.wp_radius and abs(err[2]) < self.cfg.wp_radius:
-                self.idx += 1
-        if last:
-            self._check_touchdown(pose, reached, dt)
+                if self._ready_to_leave(t, wp, pose):
+                    self.idx += 1
+        if self.waypoints[self.idx].phase in ("DESCEND", "LAND"):
+            self._check_touchdown(t, pose, dt)
         return Setpoint(t, self.setpoint.copy(), vel, self.yaw, self.phase)
 
-    def _check_touchdown(self, pose: PoseEstimate, setpoint_down: bool, dt: float) -> None:
-        if setpoint_down and pose.pos[2] < self.cfg.landed_alt and abs(pose.vel[2]) < 0.3:
+    def _ready_to_leave(self, t: float, wp: Waypoint, pose: PoseEstimate) -> bool:
+        """Above B (end of cruise): descend only when the estimate is precise, else hover and wait for a fix."""
+        nxt = self.waypoints[self.idx + 1]
+        if not (wp.phase == "CRUISE" and nxt.phase == "DESCEND"):
+            return True
+        s2 = pose.sigma2_horizontal()
+        if self.wait_at_b_since is None:
+            if s2 <= self.cfg.precision_sigma2:
+                self.log(t, f"ABOVE_B: 2-sigma {s2:.1f} m, descending")
+                return True
+            self.wait_at_b_since = t
+            self.log(t, f"WAIT_FOR_FIX above B: 2-sigma {s2:.1f} m > {self.cfg.precision_sigma2:.1f} m, hovering")
+            return False
+        waited = t - self.wait_at_b_since
+        if s2 <= self.cfg.precision_sigma2 or waited >= self.cfg.precision_wait_s:
+            why = "fix received" if s2 <= self.cfg.precision_sigma2 else "wait timeout"
+            self.log(t, f"DESCEND after {waited:.1f} s hover ({why}, 2-sigma {s2:.1f} m)")
+            return True
+        return False
+
+    def _check_touchdown(self, t: float, pose: PoseEstimate, dt: float) -> None:
+        """Touchdown = estimated height below landed_alt and vertical speed ~0 for touchdown_s."""
+        if pose.pos[2] < self.cfg.landed_alt and abs(pose.vel[2]) < self.cfg.touchdown_vz:
             self.landed_timer += dt
-            if self.landed_timer > 1.0:
+            if self.landed_timer >= self.cfg.touchdown_s:
                 self.phase = "LANDED"
+                self.log(t, f"TOUCHDOWN: motors off at estimated ({pose.pos[0]:.1f}, {pose.pos[1]:.1f})")
         else:
             self.landed_timer = 0.0

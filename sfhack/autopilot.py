@@ -20,7 +20,7 @@ from .control.pose_source import EkfPoseSource, PoseSource
 from .estimation.ahrs import Ahrs
 from .estimation.ekf import Ekf
 from .messages import (
-    BaroMsg, CameraFrame, Health, HealthState, ImuMsg, MagMsg, MotorCmd, PoseEstimate, Setpoint, VisualFix,
+    BaroMsg, CameraFrame, Decision, Health, HealthState, ImuMsg, MagMsg, MotorCmd, PoseEstimate, Setpoint, VisualFix,
 )
 from .perception.localizer import Localizer
 from .planning.health import HealthMonitor
@@ -73,6 +73,8 @@ class Autopilot:
         self.loc_frames = 0
         self.loc_fixes = 0
         self.loc_ms_total = 0.0
+        self.last_acc_world = np.zeros(3)  # diagnostics: EKF input after rotation + gravity removal
+        self.decisions: list[tuple[float, str]] = []  # decision log (also published on topics.DECISION)
 
         bus.subscribe(topics.IMU, self.on_imu)
         bus.subscribe(topics.BARO, self.on_baro)
@@ -88,6 +90,10 @@ class Autopilot:
 
     def set_localizer(self, localizer: Localizer | None) -> None:
         self.localizer = localizer
+
+    def log_decision(self, t: float, text: str) -> None:
+        self.decisions.append((t, text))
+        self.bus.publish(topics.DECISION, Decision(t, text))
 
     # ------------------------------------------------------------------ estimate
 
@@ -112,7 +118,8 @@ class Autopilot:
                     self.baro_offset = self._baro_sum / self._baro_n
                 self.mission.start()
         else:
-            self.ekf.predict(self.ahrs.rotate_accel(msg.accel), dt, msg.t)
+            self.last_acc_world = self.ahrs.rotate_accel(msg.accel)
+            self.ekf.predict(self.last_acc_world, dt, msg.t)
         if self.in_preflight or self.mission.done:
             self.ekf.update_zero_velocity()
         self._control(msg.t, dt)
@@ -141,6 +148,8 @@ class Autopilot:
             return
         self.loc_fixes += 1
         self.ekf.update_fix(fix)
+        if self.ekf.last_decision:
+            self.log_decision(frame.t, self.ekf.last_decision)
         self.health.on_fix(fix)
         self.last_fix = fix
         self.bus.publish(topics.FIX, fix)
@@ -163,6 +172,8 @@ class Autopilot:
             last_fix_pos=self.health.last_fix_pos,
         )
         self.setpoint = sp
+        while self.mission.events:
+            self.log_decision(*self.mission.events.pop(0))
         if self.mission.phase in ("PREFLIGHT", "LANDED"):
             motors = np.zeros(4)
         else:

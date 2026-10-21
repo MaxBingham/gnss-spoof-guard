@@ -81,8 +81,12 @@ class MissionConfig:
     flare_alt: float = 6.0  # below this, descend at land_speed
     land_speed: float = 0.7  # the slower final landing from fly_x2.py
     wp_radius: float = 1.0  # m, waypoint reached (horizontal, on the estimate)
-    preflight_s: float = 2.0  # on the ground: IMU calibration + zero-velocity updates
+    preflight_s: float = 4.0  # on the ground: IMU calibration + zero-velocity updates (gyro bias error ~ 1/sqrt(t))
     landed_alt: float = 0.35  # estimated z below which touchdown is checked
+    touchdown_vz: float = 0.25  # m/s, |estimated vertical speed| below this ...
+    touchdown_s: float = 0.5  # ... for this long (while descending) = touchdown -> motors off, LANDED
+    precision_sigma2: float = 3.0  # m, at B: descend only if the 2-sigma radius is below this ...
+    precision_wait_s: float = 10.0  # ... or after hovering this long waiting for a fix
     success_radius: float = 3.0  # landed within this distance of B = success (evaluation)
 
 
@@ -94,19 +98,27 @@ class EkfConfig:
     baro_std: float = 0.4
     zupt_std: float = 0.05  # zero-velocity update on the ground
     gate_chi2: float = 9.21  # 99 % for 2 dof: visual fixes beyond this Mahalanobis distance are rejected
+    nofix_inflate_after_s: float = 2.0  # without accepted fixes for this long, apply a covariance floor ...
+    nofix_inflation: float = 0.5  # ... of (this * seconds blind) m std, so a correct fix is not gated out
 
 
 @dataclass
 class AhrsConfig:
-    tilt_gain: float = 0.02  # 1/s, accel-based roll/pitch correction (only near 1 g)
+    # Roll/pitch error x g leaks straight into the horizontal acceleration (1 deg = 0.17 m/s^2), so the
+    # accel correction must beat the residual gyro bias: steady tilt error ~ bias / tilt_gain. 0.02 left
+    # ~0.8 deg (-> 140 m drift in 60 s); 0.3 keeps it < 0.1 deg.
+    tilt_gain: float = 0.3  # 1/s, accel-based roll/pitch correction (only in steady flight, see gates)
     yaw_gain: float = 1.0  # 1/s, compass yaw correction
-    accel_gate: float = 0.15  # m/s^2, use accel for tilt only when | |a| - g | < gate
+    accel_gate: float = 0.05  # m/s^2, use accel for tilt only when | |a| - g | < gate (~1 m/s^2 horizontal)
+    rate_gate: float = 0.1  # rad/s, ... and only while not rotating (steady thrust direction)
 
 
 @dataclass
 class LocalizerConfig:
     mock_sigma: float = 2.0  # m, MOCK: noise added to the true position
-    mock_min_landmarks: int = 3
+    # 2, not 3: at 40 m cruise the 70 deg footprint holds 3+ mapped landmarks on only ~15 % of the
+    # Berkeley route (V1 needed the same relaxation); 2 is still a 'real localizer could match here'.
+    mock_min_landmarks: int = 2
     orb_features: int = 1500
     orb_min_inliers: int = 12
     orb_ratio: float = 0.8

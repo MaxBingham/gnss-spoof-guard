@@ -40,10 +40,11 @@ class FlightResult:
     loc_fixes: int
     loc_ms_mean: float
     fixes_rejected: int
+    outcome: str = ""  # ARRIVED | MISSED | MISSION_TIMEOUT
     health_states: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
-        return (f"{'SUCCESS' if self.success else 'FAIL'}: landed={self.landed} final error to B "
+        return (f"{self.outcome} {'SUCCESS' if self.success else 'FAIL'}: landed={self.landed} final error to B "
                 f"{self.final_error:.2f} m, t={self.t_end:.1f} s, est. error mean {self.est_err_mean:.2f} m / "
                 f"max {self.est_err_max:.2f} m, localizer {self.loc_fixes}/{self.loc_frames} fixes, "
                 f"{self.loc_ms_mean:.1f} ms/frame, rejected {self.fixes_rejected}, health {self.health_states}")
@@ -170,7 +171,9 @@ class FlightSystem:
                 landed_at = landed_at if landed_at is not None else self.t
                 if self.t - landed_at >= settle_s:
                     break
-        return self.result()
+        r = self.result()
+        self.autopilot.log_decision(self.t, f"{r.outcome}, final error {r.final_error:.1f} m")  # harness: scored on truth
+        return r
 
     def result(self) -> FlightResult:
         truth = self.truth.state()
@@ -182,6 +185,7 @@ class FlightSystem:
         else:
             e_mean = e_max = 0.0
         ap = self.autopilot
+        outcome = "MISSION_TIMEOUT" if not self.done else ("ARRIVED" if landed and final_err <= self.cfg.mission.success_radius else "MISSED")
         return FlightResult(
             landed=landed,
             success=landed and final_err <= self.cfg.mission.success_radius,
@@ -194,6 +198,7 @@ class FlightSystem:
             loc_ms_mean=ap.loc_ms_total / ap.loc_frames if ap.loc_frames else 0.0,
             fixes_rejected=ap.ekf.n_fix_rejected,
             health_states=list(self.health_seen),
+            outcome=outcome,
         )
 
     def close(self) -> None:

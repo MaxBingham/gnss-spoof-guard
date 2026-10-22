@@ -18,8 +18,11 @@ export interface GnssFix {
   quality: number;
 }
 
-/** Raw camera landmark position in pixels. No landmark id. */
+export type LandmarkType = "building" | "tree" | "tower";
+
+/** ID-free camera blob. The landmark id is dropped; the class is kept. */
 export interface CameraLandmark {
+  type: LandmarkType;
   u: number;
   v: number;
 }

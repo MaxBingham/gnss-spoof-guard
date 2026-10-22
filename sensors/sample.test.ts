@@ -65,11 +65,14 @@ describe("sensor levers", () => {
 
   it("reports clean camera and lidar readings at weather intensity zero", () => {
     const frame = sampleFrame(HOVER, CLEAR, createSensorState(4), 0.02, 0);
-    const expected = LANDMARKS.map((landmark) => projectLandmark(HOVER, landmark)).filter(
-      (point): point is { u: number; v: number } => point !== null,
-    );
+    const expected = LANDMARKS.flatMap((landmark) => {
+      const projected = projectLandmark(HOVER, landmark);
+      if (!projected) return [];
+      return [{ type: landmark.type, u: projected.u, v: projected.v }];
+    });
     expect(expected.length).toBeGreaterThan(0);
     expect(frame.camera?.landmarks).toEqual(expected);
+    expect(frame.camera?.landmarks.every((blob) => !("id" in blob))).toBe(true);
     expect(frame.lidar?.beams.map((beam) => beam.rangeM)).toEqual(
       LIDAR_BEAMS.map((angle) => cleanLidarRange(HOVER.z, angle)),
     );

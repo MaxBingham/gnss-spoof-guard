@@ -1,6 +1,7 @@
 import { compassUnit } from "./compass.ts";
 import { gaussian, mulberry32 } from "./rng.ts";
 import type { BodyState, Conditions, SensorFrame } from "./types.ts";
+import { applyWeather } from "./weather.ts";
 
 export const CAMERA = {
   fx: 500,
@@ -28,9 +29,6 @@ const BARO_SIGMA_M = 0.5;
 const COMPASS_SIGMA_RAD = (2 * Math.PI) / 180;
 const IMU_ACCEL_SIGMA = 0.02;
 const IMU_YAW_RATE_SIGMA = 0.001;
-const WEATHER_PIXEL_SIGMA = 6;
-const WEATHER_RANGE_SIGMA_M = 1.5;
-const WEATHER_DROPOUT = 0.75;
 
 export interface SensorState {
   uniform: () => number;
@@ -66,15 +64,6 @@ export function cleanLidarRange(altitudeM: number, angleRad: number): number {
   return altitudeM / Math.cos(angleRad);
 }
 
-function weatherScale(intensity: number): { pixelSigma: number; rangeSigma: number; dropoutP: number } {
-  const scaled = Math.min(1, Math.max(0, intensity));
-  return {
-    pixelSigma: scaled * WEATHER_PIXEL_SIGMA,
-    rangeSigma: scaled * WEATHER_RANGE_SIGMA_M,
-    dropoutP: scaled * WEATHER_DROPOUT,
-  };
-}
-
 /**
  * Build one frame from the body state and the levers.
  * Jam omits GNSS. Occlusion omits that sensor. Spoof rate 0 leaves the fix unbiased.
@@ -87,7 +76,6 @@ export function sampleFrame(
   dt: number,
   t: number,
 ): SensorFrame {
-  const { pixelSigma, rangeSigma, dropoutP } = weatherScale(conditions.weather.intensity);
   const frame: SensorFrame = {
     t,
     imu: {
@@ -121,25 +109,21 @@ export function sampleFrame(
     const landmarks = [];
     for (const landmark of LANDMARKS) {
       const projected = projectLandmark(pose, landmark);
-      if (!projected) continue;
-      const dropped = state.uniform() < dropoutP;
-      const u = projected.u + gaussian(state.uniform) * pixelSigma;
-      const v = projected.v + gaussian(state.uniform) * pixelSigma;
-      if (!dropped) landmarks.push({ u, v });
+      if (projected) landmarks.push(projected);
     }
     frame.camera = { landmarks, intrinsics: CAMERA };
   }
 
   if (!conditions.lidar.occluded) {
     frame.lidar = {
-      beams: LIDAR_BEAMS.map((angleRad) => {
-        const dropped = state.uniform() < dropoutP;
-        const range = Math.max(0, cleanLidarRange(pose.z, angleRad) + gaussian(state.uniform) * rangeSigma);
-        return { angleRad, rangeM: dropped ? null : range };
-      }),
+      beams: LIDAR_BEAMS.map((angleRad) => ({
+        angleRad,
+        rangeM: cleanLidarRange(pose.z, angleRad),
+      })),
     };
   }
 
+  applyWeather(frame, conditions.weather.intensity, state.uniform);
   return frame;
 }
 

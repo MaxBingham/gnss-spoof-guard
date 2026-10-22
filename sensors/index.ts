@@ -1,5 +1,16 @@
 export { compassUnit } from "./compass.ts";
 export { gaussian, mulberry32 } from "./rng.ts";
+export { WIND_ACCEL_PER_MPS, windAcceleration } from "./wind.ts";
+export {
+  WEATHER_DROPOUT,
+  WEATHER_PIXEL_SIGMA,
+  WEATHER_RANGE_SIGMA_M,
+  applyWeather,
+  degradeLandmark,
+  degradeRange,
+  weatherEffect,
+} from "./weather.ts";
+export type { WeatherEffect } from "./weather.ts";
 export {
   CAMERA,
   LANDMARKS,

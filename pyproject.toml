@@ -1,7 +1,7 @@
 [project]
 name = "sfhack"
 version = "0.1.0"
-description = "GNSS-free drone navigation in MuJoCo: map-based visual localization + EKF (hackathon prototype)"
+description = "GNSS-free multi-modal map-referenced navigation (INS + TRN + IBN) in MuJoCo (hackathon prototype)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -16,6 +16,9 @@ dependencies = [
     "httpx>=0.27",
     "matplotlib>=3.8",
     "pytest>=8.2",
+    "rasterio>=1.3",
+    "tifffile>=2024.1",
+    "shapely>=2.0",
 ]
 
 [build-system]

@@ -27,6 +27,25 @@ class BaroMsg:
 
 
 @dataclass
+class AltimeterMsg:
+    """Downward altimeter (laser or radar): slant range along the body -z axis. nan = no reading
+    (beyond max range, dropout). The estimator projects it to the vertical with the AHRS attitude."""
+
+    t: float
+    range: float  # m, nan if no valid return
+    max_range: float
+
+
+@dataclass
+class CameraControl:
+    """Onboard -> camera payload: start / stop capturing down-camera frames. Frames cost power and CPU;
+    IBN only needs them inside image-based update zones and for the precision landing."""
+
+    t: float
+    active: bool
+
+
+@dataclass
 class MagMsg:
     """Compass heading, already converted to an ENU yaw angle (0 = east, CCW positive)."""
 
@@ -69,7 +88,7 @@ class VisualFix:
     t: float  # timestamp of the camera frame the fix was computed from
     pos: np.ndarray  # (2,) x, y [m] world
     cov: np.ndarray  # (2, 2) m^2
-    source: str  # "mock" or "orb"
+    source: str  # "mock" | "orb" | V3: "trn" (terrain-referenced) | "ibn" (image-based)
     matched_ids: list[int] = field(default_factory=list)  # onboard-map landmark ids (mock) or []
     matched_px: list[tuple[float, float]] = field(default_factory=list)  # pixel positions in the frame
     n_inliers: int = 0
@@ -97,7 +116,9 @@ class PoseEstimate:
 
     def sigma2_horizontal(self) -> float:
         """2-sigma radius of the horizontal position uncertainty (largest axis)."""
-        return 2.0 * float(np.sqrt(max(np.linalg.eigvalsh(self.cov[:2, :2]).max(), 0.0)))
+        a, b, c = float(self.cov[0, 0]), float(self.cov[0, 1]), float(self.cov[1, 1])
+        lmax = 0.5 * (a + c) + ((0.5 * (a - c)) ** 2 + b * b) ** 0.5  # closed form, 2x2 symmetric
+        return 2.0 * max(lmax, 0.0) ** 0.5
 
 
 @dataclass

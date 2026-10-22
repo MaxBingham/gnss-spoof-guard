@@ -13,6 +13,10 @@ from ..messages import PoseEstimate, Setpoint
 from .mixer import Mixer, VehicleParams
 
 
+def _cross(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
+
+
 class GeometricController:
     def __init__(self, params: VehicleParams, gains: ControlGains) -> None:
         self.mass = params.mass
@@ -23,20 +27,22 @@ class GeometricController:
         self.kR = np.array(gains.kR)
         self.kw = np.array(gains.kw)
         self.max_acc = gains.max_acc
+        self.last_acc_cmd = np.zeros(3)
 
     def __call__(self, pose: PoseEstimate, sp: Setpoint) -> np.ndarray:
         R, omega = pose.R, pose.omega
         # 1) position loop -> desired force vector in world frame
         acc = self.kp_pos * (sp.pos - pose.pos) + self.kd_pos * (sp.vel - pose.vel)
         acc = np.clip(acc, -self.max_acc, self.max_acc)
+        self.last_acc_cmd = acc  # commanded acceleration (V3: the AHRS uses it to detect steady flight)
         f_world = self.mass * (acc + np.array([0.0, 0.0, self.g]))
 
         # 2) desired attitude from force direction and yaw
         z_d = f_world / np.linalg.norm(f_world)
         x_c = np.array([np.cos(sp.yaw), np.sin(sp.yaw), 0.0])
-        y_d = np.cross(z_d, x_c)
+        y_d = _cross(z_d, x_c)
         y_d /= np.linalg.norm(y_d)
-        x_d = np.cross(y_d, z_d)
+        x_d = _cross(y_d, z_d)
         R_d = np.column_stack([x_d, y_d, z_d])
 
         # 3) attitude loop -> body torques

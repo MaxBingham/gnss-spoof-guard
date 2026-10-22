@@ -25,3 +25,4 @@ gnss-free-nav/
 Thumbs.db
 .vscode/
 .idea/
+MUJOCO_LOG.TXT

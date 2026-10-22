@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from collections import OrderedDict
-from typing import Protocol
+from typing import Any, Protocol
 
 import mujoco
 import numpy as np
@@ -18,7 +18,7 @@ from .. import bus as topics
 from ..bus import Bus
 from ..config import X2_DIR, Config
 from ..control.mixer import VehicleParams
-from ..messages import BaroMsg, CameraFrame, Disturbance, GnssMsg, ImuMsg, MagMsg, MotorCmd
+from ..messages import AltimeterMsg, BaroMsg, CameraControl, CameraFrame, Disturbance, GnssMsg, ImuMsg, MagMsg, MotorCmd
 
 GRAVITY = 9.81
 
@@ -68,11 +68,16 @@ class MujocoSim:
         spawn_yaw: float = 0.0,
         seed: int = 0,
         render_front: bool = False,
+        spawn_z: float | None = 0.005,  # None: on the simulated surface below spawn_xy (ray cast)
+        altimeter: Any | None = None,
+        down_cam_active: bool = True,
     ) -> None:
         self.cfg = cfg
         self.bus = bus
         self.rng = np.random.default_rng(seed)
         self.render_front = render_front
+        self.altimeter = altimeter  # V3: scenarios.AltimeterConfig (laser / radar) or None
+        self.down_cam_active = down_cam_active  # V3: switched by CameraControl messages from the autopilot
         self.model = self._build_model(world)
         self.data = mujoco.MjData(self.model)
         m, d = self.model, self.data
@@ -80,7 +85,10 @@ class MujocoSim:
         self.cam_ids = {"down": m.camera("down").id, "front": m.camera("front").id}
 
         # Spawn on the ground at A, motors off.
-        d.qpos[0:3] = [spawn_xy[0], spawn_xy[1], 0.005]
+        if spawn_z is None:
+            mujoco.mj_forward(m, d)  # world geom poses for the ray cast
+            spawn_z = self.surface_height(np.array(spawn_xy, float)) + 0.02
+        d.qpos[0:3] = [spawn_xy[0], spawn_xy[1], spawn_z]
         d.qpos[3:7] = [math.cos(spawn_yaw / 2), 0.0, 0.0, math.sin(spawn_yaw / 2)]
         d.qvel[:] = 0.0
         mujoco.mj_forward(m, d)
@@ -105,6 +113,17 @@ class MujocoSim:
             "front": _RateTimer(s.front_cam_hz),
             "gnss": _RateTimer(s.gnss_hz),
         }
+        if altimeter is not None:
+            self.timers["alt"] = _RateTimer(altimeter.hz)
+        self.altimeter_failed = False
+        self.gust_until = -1.0
+        # IMU outputs the mean rate / specific force over its sample period (like a MEMS IMU's internal
+        # integration), not an instantaneous physics sample: avoids aliasing attitude transients (coning).
+        self._imu_sum = np.zeros(6)
+        self._imu_n = 0
+        self._adr_gyro = int(m.sensor_adr[m.sensor("body_gyro").id])
+        self._adr_acc = int(m.sensor_adr[m.sensor("body_linacc").id])
+        self._adr_alt = int(m.sensor_adr[m.sensor("altimeter").id]) if altimeter is not None else -1
 
         # Disturbance state
         self.wind = np.zeros(3)
@@ -113,6 +132,7 @@ class MujocoSim:
 
         bus.subscribe(topics.MOTOR, self._on_motor)
         bus.subscribe(topics.DISTURBANCE, self.apply_disturbance)
+        bus.subscribe(topics.CAMERA_CONTROL, self._on_camera_control)
 
     # ------------------------------------------------------------------ model
 
@@ -133,6 +153,18 @@ class MujocoSim:
         spec.stat.extent = 100.0
         spec.visual.map.znear = 0.001  # 0.1 m
         spec.visual.map.zfar = 30.0  # 3 km
+        # Landing skids: the X2's lowest collision geoms are a front box and the rear rotor discs, so on the
+        # ground it rests ~9 deg nose-up (worse on a heightfield), which the AHRS calibration takes for level.
+        for i, (sx, sy) in enumerate([(0.11, 0.11), (0.11, -0.11), (-0.11, 0.11), (-0.11, -0.11)]):
+            drone.add_geom(name=f"skid{i}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.015, 0, 0],
+                           pos=[sx, sy, -0.01], mass=0.002, rgba=[0.15, 0.15, 0.15, 1])
+        if self.altimeter is not None:
+            # Downward altimeter: a MuJoCo rangefinder measures along the site's +z axis, so flip it
+            # (180 deg about x). The rangefinder ignores the body it is attached to (the drone).
+            drone.add_site(name="altimeter", pos=[0, 0, 0.01], quat=[0, 1, 0, 0])  # reads ~0.01 m on the ground
+            rf = spec.add_sensor(name="altimeter", type=mujoco.mjtSensor.mjSENS_RANGEFINDER,
+                                 objtype=mujoco.mjtObj.mjOBJ_SITE, objname="altimeter")
+            rf.intprm[0] = 1 << int(mujoco.mjtRayDataField.mjRAYDATA_DIST)  # output: distance only
         if world is not None:
             world.add_to_spec(spec)
         return spec.compile()
@@ -149,16 +181,32 @@ class MujocoSim:
             yaw_coeff=np.array([m.actuator_gear[i, 5] for i in range(4)]),
         )
 
+    def surface_height(self, xy: np.ndarray, top: float = 1e4) -> float:
+        """Height of the simulated surface (terrain, buildings, landing patch) below xy, by ray cast."""
+        geomid = np.zeros(1, np.int32)
+        d = mujoco.mj_ray(self.model, self.data, np.array([xy[0], xy[1], top]), np.array([0.0, 0.0, -1.0]),
+                          None, 1, self.body_id, geomid)
+        return top - d if d >= 0 else 0.0
+
     # ------------------------------------------------------------------ inputs
 
     def _on_motor(self, msg: MotorCmd) -> None:
         self.ctrl[:] = msg.thrust
+
+    def _on_camera_control(self, msg: CameraControl) -> None:
+        self.down_cam_active = bool(msg.active)
 
     def apply_disturbance(self, dist: Disturbance) -> None:
         t = self.data.time
         if dist.kind == "wind":
             vx, vy = (dist.value or (0.0, 0.0))[:2]
             self.wind = np.array([vx, vy, 0.0])
+        elif dist.kind == "gust":  # wind of value=(vx, vy) m/s for `duration` s, then calm again
+            vx, vy = (dist.value or (6.0, 0.0))[:2]
+            self.wind = np.array([vx, vy, 0.0])
+            self.gust_until = t + (dist.duration or 5.0)
+        elif dist.kind == "altimeter_fail":
+            self.altimeter_failed = True
         elif dist.kind == "camera_blackout":
             self.camera_blackout_until = t + dist.duration if dist.duration > 0 else math.inf
         elif dist.kind == "imu_bias_jump":
@@ -168,6 +216,7 @@ class MujocoSim:
         elif dist.kind == "clear":
             self.wind[:] = 0.0
             self.camera_blackout_until = -1.0
+            self.altimeter_failed = False
         # comms_loss is handled by the server (the drone keeps flying)
 
     # ------------------------------------------------------------------ stepping
@@ -187,6 +236,9 @@ class MujocoSim:
     def _apply_wind(self) -> None:
         dc = self.cfg.disturbance
         dt = self.cfg.sim.timestep
+        if 0 <= self.gust_until <= self.data.time:
+            self.wind[:] = 0.0
+            self.gust_until = -1.0
         if np.any(self.wind):
             # Ornstein-Uhlenbeck gust force with ~2 s correlation time
             self.gust += -self.gust * dt / 2.0 + self.rng.normal(0, dc.wind_gust_std * math.sqrt(dt), 3)
@@ -206,9 +258,15 @@ class MujocoSim:
     def _publish_sensors(self) -> None:
         t = self.time
         d, n = self.data, self.cfg.noise
+        self._imu_sum[:3] += d.sensordata[self._adr_gyro:self._adr_gyro + 3]
+        self._imu_sum[3:] += d.sensordata[self._adr_acc:self._adr_acc + 3]
+        self._imu_n += 1
         if self.timers["imu"].due(t):
-            gyro = d.sensor("body_gyro").data + self.gyro_bias + self.rng.normal(0, n.gyro_noise, 3)
-            acc = d.sensor("body_linacc").data + self.accel_bias + self.rng.normal(0, n.accel_noise, 3)
+            mean = self._imu_sum / self._imu_n
+            self._imu_sum[:] = 0.0
+            self._imu_n = 0
+            gyro = mean[:3] + self.gyro_bias + self.rng.normal(0, n.gyro_noise, 3)
+            acc = mean[3:] + self.accel_bias + self.rng.normal(0, n.accel_noise, 3)
             self.bus.publish(topics.IMU, ImuMsg(t, gyro.copy(), acc.copy()))
         if self.timers["baro"].due(t):
             alt = float(d.qpos[2]) + self.baro_bias + self.rng.normal(0, n.baro_noise)
@@ -220,10 +278,22 @@ class MujocoSim:
         if self.cfg.sim.gnss_enabled and self.timers["gnss"].due(t):
             pos = d.qpos[0:3] + self.rng.normal(0, n.gnss_noise, 3)
             self.bus.publish(topics.GNSS, GnssMsg(t, pos))
-        if self.timers["down"].due(t):
+        if "alt" in self.timers and self.timers["alt"].due(t):
+            self.bus.publish(topics.ALTIMETER, self._altimeter_reading(t))
+        if self.timers["down"].due(t) and self.down_cam_active:
             self.bus.publish(topics.CAMERA_DOWN, self.render("down"))
         if self.render_front and self.timers["front"].due(t):
             self.bus.publish(topics.CAMERA_FRONT, self.render("front"))
+
+    def _altimeter_reading(self, t: float) -> AltimeterMsg:
+        a = self.altimeter
+        r = float(self.data.sensordata[self._adr_alt])  # -1 = no surface hit
+        rng = self.rng
+        if self.altimeter_failed or r < 0 or r > a.max_range or rng.random() < a.dropout_prob:
+            return AltimeterMsg(t, math.nan, a.max_range)
+        if rng.random() < a.outlier_prob:  # spurious early return (bird, wire, rain)
+            return AltimeterMsg(t, float(rng.uniform(0.2, 1.0) * r), a.max_range)
+        return AltimeterMsg(t, max(r + float(rng.normal(0.0, a.sigma)), 0.0), a.max_range)
 
     # ------------------------------------------------------------------ cameras
 

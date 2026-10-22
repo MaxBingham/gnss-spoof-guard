@@ -1,5 +1,5 @@
 # One-time setup on Windows: installs Python 3.12 (uv-managed) and all dependencies
-# into $HOME\.venvs\sf-hack (outside OneDrive).
+# into $HOME\.venvs\sf-hack-v3 (outside OneDrive).
 #   powershell -ExecutionPolicy Bypass -File "scripts\setup.ps1"
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\env.ps1"

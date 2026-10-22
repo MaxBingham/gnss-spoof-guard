@@ -130,3 +130,100 @@ class PackageWorld:
                                pos=[x, y, trunk_h / 2], rgba=trunk, contype=0, conaffinity=0, group=1)
                 world.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r, 0, 0],
                                pos=[x, y, trunk_h], rgba=crown, contype=0, conaffinity=0, group=1)
+
+
+class TerrainWorld:
+    """V3 world package (sfhack.world.build_v3): the simulated REALITY.
+
+    Terrain = MuJoCo heightfield (truth/terrain.npz), buildings = extruded OSM footprints as chunked visual
+    meshes (truth/buildings.npz, textured with the orthophoto), natural scenes add the flat high-res
+    landing patch around B. Reads the truth/ part of the package; onboard code reads onboard/ only.
+    """
+
+    def __init__(self, pkg_dir: Path | str) -> None:
+        from .surface import Grid
+
+        self.dir = Path(pkg_dir).resolve()
+        self.manifest: dict[str, Any] = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8"))
+        tr = self.manifest["truth"]
+        self.terrain = Grid.load(self.dir / tr["terrain"])
+        self.dsm = Grid.load(self.dir / tr["dsm"])  # terrain + buildings raster (spawn height, crash check)
+
+    @property
+    def a_enu(self) -> np.ndarray:
+        return np.array(self.manifest["a"]["enu"], float)
+
+    @property
+    def b_enu(self) -> np.ndarray:
+        return np.array(self.manifest["b"]["enu"], float)
+
+    def surface_z(self, xy: np.ndarray) -> np.ndarray:
+        return self.dsm.sample(np.asarray(xy, float))
+
+    def add_to_spec(self, spec: mujoco.MjSpec) -> None:
+        _no_shadows(spec)
+        g = self.terrain
+        floor = spec.geom("floor")
+        spec.delete(floor)
+
+        # Heightfield vertices sit on the grid cell centers; MuJoCo's row 0 is the SOUTH edge.
+        z = g.z.astype(np.float64)
+        zmin, zmax = float(z.min()) - 1.0, float(z.max()) + 1.0
+        h, w = z.shape
+        hf = spec.add_hfield(name="terrain", nrow=h, ncol=w,
+                             size=[(w - 1) * g.mpp / 2, (h - 1) * g.mpp / 2, zmax - zmin, 5.0])
+        hf.userdata = ((z[::-1] - zmin) / (zmax - zmin)).astype(np.float32).ravel()
+
+        # Ground texture covers the full extent; crop half a cell on each side to match the hfield vertices.
+        img = cv2.cvtColor(cv2.imread(str(self.dir / self.manifest["truth"]["texture"]), cv2.IMREAD_COLOR),
+                           cv2.COLOR_BGR2RGB)
+        tpx = img.shape[1] / (g.max_x - g.min_x)
+        c = int(round(g.mpp / 2 * tpx))
+        hf_img = np.ascontiguousarray(img[c:img.shape[0] - c, c:img.shape[1] - c])
+        tex = spec.add_texture(name="ground", type=mujoco.mjtTexture.mjTEXTURE_2D,
+                               width=hf_img.shape[1], height=hf_img.shape[0], nchannel=3)
+        tex.data = hf_img.tobytes()
+        mat = spec.add_material(name="ground", texrepeat=[1, 1], texuniform=False, reflectance=0.0)
+        mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = tex.name
+        cx, cy = (g.min_x + g.max_x) / 2, (g.min_y + g.max_y) / 2
+        spec.worldbody.add_geom(name="terrain", type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="terrain",
+                                pos=[cx, cy, zmin], material="ground")
+
+        bpath = self.manifest["truth"].get("buildings")
+        if bpath:
+            tex_b = spec.add_texture(name="ortho_full", type=mujoco.mjtTexture.mjTEXTURE_2D,
+                                     width=img.shape[1], height=img.shape[0], nchannel=3)
+            tex_b.data = np.ascontiguousarray(img).tobytes()
+            mat_b = spec.add_material(name="buildings", texrepeat=[1, 1], texuniform=False, reflectance=0.0,
+                                      rgba=[1.0, 1.0, 1.0, 1.0])
+            mat_b.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = tex_b.name
+            with np.load(self.dir / bpath) as f:
+                for i in range(int(f["n_chunks"])):
+                    v, fc, uv = f[f"chunk{i}_vert"], f[f"chunk{i}_face"], f[f"chunk{i}_uv"]
+                    mesh = spec.add_mesh(name=f"bld{i}")
+                    mesh.uservert = v.astype(np.float32).ravel()
+                    mesh.userface = fc.astype(np.int32).ravel()
+                    mesh.usertexcoord = np.column_stack([uv[:, 0], 1.0 - uv[:, 1]]).astype(np.float32).ravel()
+                    mesh.maxhullvert = 4
+                    mesh.inertia = mujoco.mjtMeshInertia.mjMESH_INERTIA_SHELL
+                    spec.worldbody.add_geom(name=f"bld{i}", type=mujoco.mjtGeom.mjGEOM_MESH, meshname=mesh.name,
+                                            material="buildings", contype=0, conaffinity=0)
+
+        patch = self.manifest["truth"].get("patch")
+        if patch:
+            pimg = cv2.cvtColor(cv2.imread(str(self.dir / "truth" / patch["file"]), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+            ptex = spec.add_texture(name="patch", type=mujoco.mjtTexture.mjTEXTURE_2D,
+                                    width=pimg.shape[1], height=pimg.shape[0], nchannel=3)
+            ptex.data = np.ascontiguousarray(pimg).tobytes()
+            pmat = spec.add_material(name="patch", texrepeat=[1, 1], texuniform=False, reflectance=0.0)
+            pmat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = ptex.name
+            x0, y0, x1, y1 = patch["extent"]
+            spec.worldbody.add_geom(name="landing_patch", type=mujoco.mjtGeom.mjGEOM_PLANE,
+                                    size=[(x1 - x0) / 2, (y1 - y0) / 2, 0.05],
+                                    pos=[(x0 + x1) / 2, (y0 + y1) / 2, float(patch["z"]) + 0.03],
+                                    material="patch", contype=0, conaffinity=0)
+        # Large outdoor scene: near/far planes are fractions of stat.extent.
+        spec.stat.extent = 200.0
+        spec.visual.map.znear = 0.0005  # 0.1 m
+        spec.visual.map.zfar = 100.0  # 20 km
+        spec.visual.quality.offsamples = 0

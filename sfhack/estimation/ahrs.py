@@ -70,7 +70,12 @@ class Ahrs:
         self.R = _rot_z(self.yaw)
         self.calibrating = False
 
-    def update_imu(self, msg: ImuMsg) -> None:
+    def update_imu(self, msg: ImuMsg, acc_lin_world: np.ndarray | None = None, allow_tilt: bool = True,
+                   accel_gate: float | None = None) -> None:
+        """acc_lin_world: estimated linear acceleration of the vehicle (world, e.g. from the aided EKF). It is
+        removed from the accelerometer before using it as the gravity reference (V3): a horizontal acceleration
+        below ~1 m/s^2 passes the |a| ~ g gate and would otherwise 'level' the attitude towards a tilt of
+        atan(a / g), which terrain following and route corners do all the time."""
         dt = 0.0 if self.last_t is None else msg.t - self.last_t
         self.last_t = msg.t
         if self.calibrating:
@@ -84,8 +89,11 @@ class Ahrs:
             return
         phi = self.omega * dt
         acc = msg.accel - self.accel_bias
+        if acc_lin_world is not None:
+            acc = acc - self.R.T @ acc_lin_world
         na = float(np.linalg.norm(acc))
-        if abs(na - G) < self.cfg.accel_gate and float(np.linalg.norm(self.omega)) < self.cfg.rate_gate:
+        gate = self.cfg.accel_gate if accel_gate is None else accel_gate
+        if allow_tilt and abs(na - G) < gate and float(np.linalg.norm(self.omega)) < self.cfg.rate_gate:
             up_meas = acc / na
             up_est = self.R.T[:, 2]
             phi = phi + self.cfg.tilt_gain * dt * np.cross(up_meas, up_est)

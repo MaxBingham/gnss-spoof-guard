@@ -122,6 +122,8 @@ class Autopilot:
             self.ekf.predict(self.last_acc_world, dt, msg.t)
         if self.in_preflight or self.mission.done:
             self.ekf.update_zero_velocity()
+        if not self.ahrs.calibrating:
+            self.ahrs.correct_tilt_world(self.ekf.take_tilt_correction())
         self._control(msg.t, dt)
 
     def on_baro(self, msg: BaroMsg) -> None:

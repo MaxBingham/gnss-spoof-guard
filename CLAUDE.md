@@ -36,7 +36,15 @@ never imports the simulator or `sim/truth.py`. Truth leaves the simulator only v
   (`tests/test_dead_reckoning.py` asserts < 20 m / < 80 m).
 - Remaining dead-reckoning error: compass bias (~1 deg std) rotates every velocity change, plus no
   accel-bias states in the EKF (bias is calibrated on the ground only). Upgrade path: error-state EKF.
-- **EKF** (`estimation/ekf.py`): [x, y, z, vx, vy, vz]. Visual fixes are gated by NIS with chi-square
+- **Closed-loop drift (fixed 2026-10-22):** flying on the EKF, the AHRS tilt error is unobservable for
+  the accelerometer (the controller holds the drone tilted by exactly the error, so the specific force
+  looks vertical in the estimated frame); the raw-sample tilt gate also passed only 1-8 % of the time
+  (66 % on truth). Tilt error grew to ~2 deg, the leak drove 100+ m errors. Now the EKF has horizontal
+  accel-bias states (bx, by) learned from the fixes, and the autopilot hands them to the AHRS every IMU
+  step (`Ekf.take_tilt_correction` -> `Ahrs.correct_tilt_world`, error-state reset). 10 seeds: mean
+  final error 325 m -> 32 m. Blind stretches still drift (residual gyro bias ~0.5 deg / 30 s ~ 35 m),
+  so landing precision needs fixes all the way down.
+- **EKF** (`estimation/ekf.py`): [x, y, z, vx, vy, vz, bx, by]. Visual fixes are gated by NIS with chi-square
   9.21 (2 dof, 99 %), logged in `ekf.nis_log`. After `nofix_inflate_after_s` without an accepted fix,
   a covariance floor of (0.5 m/s * seconds blind) keeps correct fixes from being gated out. After 5
   consecutive rejections the next fix is accepted with its noise inflated to NIS = gate (re-localization),

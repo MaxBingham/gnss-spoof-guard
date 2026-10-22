@@ -95,6 +95,9 @@ class EkfConfig:
     accel_process_std: float = 0.15  # m/s^2/sqrt(Hz), continuous white accel noise (incl. model error)
     init_pos_std: float = 1.0
     init_vel_std: float = 0.1
+    # Horizontal accel bias states (world frame): absorb AHRS tilt error x g (1 deg = 0.17 m/s^2).
+    init_acc_bias_std: float = 0.05  # m/s^2 (the AHRS starts level-calibrated on the ground)
+    acc_bias_rw: float = 0.02  # m/s^2/sqrt(s), random walk: tilt error drifts with the residual gyro bias
     baro_std: float = 0.4
     zupt_std: float = 0.05  # zero-velocity update on the ground
     gate_chi2: float = 9.21  # 99 % for 2 dof: visual fixes beyond this Mahalanobis distance are rejected

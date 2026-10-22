@@ -1,7 +1,7 @@
 """V3 mission: follow the planned route (terrain following), then a precision landing at B.
 
 Phases: PREFLIGHT -> TAKEOFF -> CRUISE (route, HOLD on health) -> APPROACH (hover above B until IBN confirms
-the position) -> DESCEND -> LAND -> LANDED; EMERGENCY_LAND on health LAND.
+the position) -> DESCEND -> LAND -> LANDED. (EMERGENCY_LAND only on health LAND, which V3 never raises: recovery instead.)
 - CRUISE: the setpoint advances along the route at the route's speed limit x health speed scale, never more
   than `max_lead` ahead of the estimate's projection on the route. Height = planned profile (onboard DSM +
   cruise height) + a terrain-clearance offset raised whenever the altimeter measures less than `min_clearance`.
@@ -43,7 +43,8 @@ class RouteMissionConfig:
     precision_sigma2: float = 2.0  # m
     confirm_m: float = 2.0  # m, IBN fix vs estimate for 'confirmed'
     confirm_window_s: float = 2.0
-    precision_wait_s: float = 30.0
+    precision_wait_s: float = 30.0  # without confirmation: descend after this if the 2-sigma is small anyway ...
+    precision_wait_max_s: float = 90.0  # ... else keep hovering (IBN searching) up to this
     touchdown_range: float = 0.3  # m, landing rangefinder height (at-rest reading removed)
     touchdown_vz: float = 0.3  # (fallback without rangefinder)
     touchdown_s: float = 0.5
@@ -80,6 +81,8 @@ class RouteMission:
         self.imu_still_s = 0.0
         self.ground_contact = False  # rangefinder says we are down: the autopilot idles the motors
         self.recentering = False
+        self.wait_logged = False
+        self.n_recenter = 0
 
     @property
     def done(self) -> bool:
@@ -199,10 +202,16 @@ class RouteMission:
             off = float(np.hypot(*(ibn_fix[1] - pose.pos[:2])))
             self.log(t, f"DESCEND: IBN confirms position (fix offset {off:.1f} m, 2-sigma {s2:.1f} m) after {waited:.1f} s")
             self.phase = "DESCEND"
-        elif not ibn_available or waited >= c.precision_wait_s:
-            why = "no IBN available" if not ibn_available else f"no IBN confirmation after {waited:.0f} s"
-            self.log(t, f"DESCEND without confirmation ({why}), 2-sigma {s2:.1f} m")
+        elif not ibn_available:
+            self.log(t, f"DESCEND on the INS/TRN estimate (no IBN imagery at B), 2-sigma {s2:.1f} m")
             self.phase = "DESCEND"
+        elif (waited >= c.precision_wait_s and s2 <= 2.0 * c.precision_sigma2) or waited >= c.precision_wait_max_s:
+            self.log(t, f"DESCEND without IBN confirmation after {waited:.0f} s, 2-sigma {s2:.1f} m")
+            self.phase = "DESCEND"
+        elif not self.wait_logged:
+            self.wait_logged = True
+            self.log(t, f"WAIT_FOR_FIX above B: 2-sigma {s2:.1f} m, hovering until IBN confirms (camera search "
+                        f"window grows with the 2-sigma)")
         return Setpoint(t, self.setpoint.copy(), np.zeros(3), self.yaw, "APPROACH")
 
     def set_ground_sensing(self, range_agl: float | None, imu_still_s: float) -> None:
@@ -220,11 +229,15 @@ class RouteMission:
         ground = self.ground_est if self.ground_est is not None else pose.pos[2] - 30.0
         h = pose.pos[2] - ground
         off = float(np.hypot(*(self.b - pose.pos[:2])))
-        if self.phase in ("DESCEND", "LAND") and off > c.descend_xy_tol and not self.ground_contact:
+        tol = c.descend_xy_tol * (0.6 if self.recentering else 1.0)  # hysteresis: resume once well centered
+        if self.phase in ("DESCEND", "LAND") and off > tol and not self.ground_contact:
             # a late fix moved the estimate (or wind pushed the drone): re-center first, then continue down
             if not self.recentering:
                 self.recentering = True
-                self.log(t, f"RECENTER: {off:.1f} m off B horizontally, descent paused")
+                self.n_recenter += 1
+                if self.n_recenter <= 3:
+                    self.log(t, f"RECENTER: {off:.1f} m off B horizontally, descent paused"
+                                + (" (further pauses not logged)" if self.n_recenter == 3 else ""))
             vel = np.zeros(3)
         else:
             self.recentering = False

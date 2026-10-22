@@ -59,6 +59,8 @@ class IbnConfig:
     sigma_floor: float = 0.5  # m
     tilt_std_deg: float = 0.5  # AHRS attitude error projected to the ground: height x this
     hz: float = 2.0
+    strong_score: float = 0.65  # 'strong' fix (may re-localize the INS after a long outage): NCC and ...
+    strong_margin: float = 0.15  # ... margin to the second peak
 
 
 class IbnLocalizer:
@@ -246,4 +248,4 @@ class IbnLocalizer:
         sigma = math.hypot(c.sigma_floor, sig_px * mpp, agl * math.radians(c.tilt_std_deg))
         self.last_status = (f"fix NCC {score:.2f} margin {margin:.2f}" + (" (coarse-to-fine)" if self.last_coarse else ""))
         return VisualFix(frame.t, xy, np.eye(2) * sigma * sigma, "ibn", n_inliers=int(score * 100),
-                         frame_seq=frame.seq)
+                         frame_seq=frame.seq, strong=score >= c.strong_score and margin >= c.strong_margin)

@@ -103,6 +103,7 @@ class VisualFix:
     proc_ms: float = 0.0
     frame_seq: int = -1
     accepted: bool = True  # set by the EKF after Mahalanobis gating
+    strong: bool = False  # V3: unambiguous, high-quality fix (may re-localize the INS after a long outage)
 
 
 @dataclass

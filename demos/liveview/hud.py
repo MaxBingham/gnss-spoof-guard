@@ -286,12 +286,17 @@ class Hud:
             y += self.px(24)
         return im
 
-    def _banner(self, text: str, age: float, big: bool = False) -> Image.Image | None:
+    def _banner(self, text: str, age: float, max_w: int, big: bool = False) -> Image.Image | None:
         alpha = 1.0 if age < 3.0 else max(0.0, 1.0 - (age - 3.0) / 1.0)
         if alpha <= 0:
             return None
-        fnt = self.f(30 if big else 26, True)
-        tw = int(ImageDraw.Draw(Image.new("RGBA", (1, 1))).textlength(text, font=fnt))
+        size = 30 if big else 26
+        probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        fnt = self.f(size, True)
+        while size > 14 and probe.textlength(text, font=fnt) + self.px(48) > max_w:
+            size -= 1
+            fnt = self.f(size, True)
+        tw = int(probe.textlength(text, font=fnt))
         w, h = tw + self.px(48), self.px(56)
         im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
@@ -339,13 +344,13 @@ class Hud:
         paste(frame, map_img, m, H - m - side, side, side)
         paste(frame, cam_img, m + side + p(16), H - m - side, cw, side)
         blend_rgba(frame, np.asarray(self._sensors(st)), m, H - m - side - p(50))
+        cx0, cx1 = m + p(470), rx  # free strip between the left and right columns
         if st.result:
-            ban = self._banner(st.result, 0.0, big=True)
+            ban = self._banner(st.result, 0.0, cx1 - cx0 - 2 * m, big=True)
         elif st.banner:
-            ban = self._banner(st.banner[0], st.banner[1])
+            ban = self._banner(st.banner[0], st.banner[1], cx1 - cx0 - 2 * m)
         else:
             ban = None
-        cx0, cx1 = m + p(470), rx  # free strip between the left and right columns
         if ban is not None:
             blend_rgba(frame, np.asarray(ban), (cx0 + cx1 - ban.width) // 2, m)
         if st.scenario:

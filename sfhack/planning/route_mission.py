@@ -1,16 +1,15 @@
 """V3 mission: follow the planned route (terrain following), then a precision landing at B.
 
 Phases: PREFLIGHT -> TAKEOFF -> CRUISE (route, HOLD on health) -> APPROACH (hover above B until IBN confirms
-the position) -> DESCEND -> LAND -> LANDED. (EMERGENCY_LAND only on health LAND, which V3 never raises: recovery instead.)
+the position) -> DESCEND -> LAND -> LANDED; EMERGENCY_LAND on health LAND.
 - CRUISE: the setpoint advances along the route at the route's speed limit x health speed scale, never more
   than `max_lead` ahead of the estimate's projection on the route. Height = planned profile (onboard DSM +
   cruise height) + a terrain-clearance offset raised whenever the altimeter measures less than `min_clearance`.
 - APPROACH: descend only when IBN confirms the position (an accepted IBN fix within `confirm_m` of the estimate,
   2-sigma <= `precision_sigma2`); otherwise after `precision_wait_s` (logged: no confirmation).
-- DESCEND / LAND: heights relative to the ground measured by the altimeter, near the ground by the landing
-  rangefinder; RECENTER pauses the descent while the estimate is > `descend_xy_tol` off B. Touchdown (V2 port):
-  rangefinder < `touchdown_range` -> GROUND_CONTACT (motors idle), still low and IMU stationary for
-  `touchdown_s` -> motors off, LANDED (the autopilot then applies zero-velocity updates).
+- DESCEND / LAND: heights relative to the ground measured by the altimeter (ground = z_est - vertical range);
+  touchdown = altimeter range < `touchdown_range` and |vz| small for `touchdown_s` -> motors off, LANDED
+  (the autopilot then applies zero-velocity updates).
 All decisions use the estimate and onboard sensors only.
 """
 
@@ -30,11 +29,8 @@ from .route_planner import Route
 class RouteMissionConfig:
     climb_speed: float = 3.0
     descent_speed: float = 2.0
-    # V2: image fixes stop at ~4-5 m (the footprint gets too small): flare low and land briskly so the final
-    # blind stretch is short (6 m at 0.7 m/s = 9 s drifted 4-10 m in V2)
-    land_speed: float = 1.0
-    flare_agl: float = 4.0
-    descend_xy_tol: float = 1.5  # m, DESCEND / LAND pause while the estimate is farther than this from B
+    land_speed: float = 0.6
+    flare_agl: float = 5.0
     max_lead: float = 12.0  # m, setpoint lead over the estimate along the route
     min_clearance: float = 15.0  # m, altimeter-measured height above the surface that triggers a climb
     clearance_climb: float = 3.0  # m/s
@@ -43,14 +39,10 @@ class RouteMissionConfig:
     precision_sigma2: float = 2.0  # m
     confirm_m: float = 2.0  # m, IBN fix vs estimate for 'confirmed'
     confirm_window_s: float = 2.0
-    precision_wait_s: float = 30.0  # without confirmation: descend after this if the 2-sigma is small anyway ...
-    precision_wait_max_s: float = 90.0  # ... else keep hovering (IBN searching) up to this
-    touchdown_range: float = 0.3  # m, landing rangefinder height (at-rest reading removed)
-    touchdown_vz: float = 0.3  # (fallback without rangefinder)
+    precision_wait_s: float = 30.0
+    touchdown_range: float = 0.3
+    touchdown_vz: float = 0.3
     touchdown_s: float = 0.5
-    ground_idle: float = 0.3  # fraction of hover thrust, uniform on all motors, while in ground contact
-    still_acc: float = 0.3  # m/s^2, IMU stationary: | |a| - g | below this ...
-    still_rate: float = 0.2  # rad/s, ... and |omega| below this
     yaw_rate: float = 0.5  # rad/s
 
 
@@ -77,12 +69,6 @@ class RouteMission:
         self.arrival_t: float | None = None
         self.hold_logged = False
         self.v = 0.0  # current setpoint speed along the route
-        self.range_agl: float | None = None  # landing rangefinder (set_ground_sensing)
-        self.imu_still_s = 0.0
-        self.ground_contact = False  # rangefinder says we are down: the autopilot idles the motors
-        self.recentering = False
-        self.wait_logged = False
-        self.n_recenter = 0
 
     @property
     def done(self) -> bool:
@@ -202,74 +188,30 @@ class RouteMission:
             off = float(np.hypot(*(ibn_fix[1] - pose.pos[:2])))
             self.log(t, f"DESCEND: IBN confirms position (fix offset {off:.1f} m, 2-sigma {s2:.1f} m) after {waited:.1f} s")
             self.phase = "DESCEND"
-        elif not ibn_available:
-            self.log(t, f"DESCEND on the INS/TRN estimate (no IBN imagery at B), 2-sigma {s2:.1f} m")
+        elif not ibn_available or waited >= c.precision_wait_s:
+            why = "no IBN available" if not ibn_available else f"no IBN confirmation after {waited:.0f} s"
+            self.log(t, f"DESCEND without confirmation ({why}), 2-sigma {s2:.1f} m")
             self.phase = "DESCEND"
-        elif (waited >= c.precision_wait_s and s2 <= 2.0 * c.precision_sigma2) or waited >= c.precision_wait_max_s:
-            self.log(t, f"DESCEND without IBN confirmation after {waited:.0f} s, 2-sigma {s2:.1f} m")
-            self.phase = "DESCEND"
-        elif not self.wait_logged:
-            self.wait_logged = True
-            self.log(t, f"WAIT_FOR_FIX above B: 2-sigma {s2:.1f} m, hovering until IBN confirms (camera search "
-                        f"window grows with the 2-sigma)")
         return Setpoint(t, self.setpoint.copy(), np.zeros(3), self.yaw, "APPROACH")
-
-    def set_ground_sensing(self, range_agl: float | None, imu_still_s: float) -> None:
-        """Landing rangefinder height (at-rest reading removed, None = no reading) and how long the IMU has been
-        stationary; set by the autopilot every control step."""
-        self.range_agl = range_agl
-        self.imu_still_s = imu_still_s
 
     def _descend(self, t: float, pose: PoseEstimate, dt: float, agl: float | None) -> Setpoint:
         c = self.cfg
         if self.phase != "EMERGENCY_LAND":
             self.setpoint[:2] = self.b
-        if self.range_agl is not None:  # precise near the ground (the radar altimeter is not)
-            self.ground_est = float(pose.pos[2] - self.range_agl)
         ground = self.ground_est if self.ground_est is not None else pose.pos[2] - 30.0
         h = pose.pos[2] - ground
-        off = float(np.hypot(*(self.b - pose.pos[:2])))
-        tol = c.descend_xy_tol * (0.6 if self.recentering else 1.0)  # hysteresis: resume once well centered
-        if self.phase in ("DESCEND", "LAND") and off > tol and not self.ground_contact:
-            # a late fix moved the estimate (or wind pushed the drone): re-center first, then continue down
-            if not self.recentering:
-                self.recentering = True
-                self.n_recenter += 1
-                if self.n_recenter <= 3:
-                    self.log(t, f"RECENTER: {off:.1f} m off B horizontally, descent paused"
-                                + (" (further pauses not logged)" if self.n_recenter == 3 else ""))
-            vel = np.zeros(3)
+        if self.phase == "DESCEND" and h < c.flare_agl:
+            self.phase = "LAND"
+        speed = c.land_speed if (self.phase == "LAND" or h < c.flare_agl) else c.descent_speed
+        vel = self._move_vertical(ground - 0.3, speed, dt)
+        rng_ok = agl is not None and agl < c.touchdown_range
+        low = rng_ok or (agl is None and h < c.touchdown_range)
+        if low and abs(pose.vel[2]) < c.touchdown_vz:
+            self.landed_timer += dt
+            if self.landed_timer >= c.touchdown_s:
+                self.phase = "LANDED"
+                self.log(t, f"TOUCHDOWN: motors off at estimated ({pose.pos[0]:.1f}, {pose.pos[1]:.1f}), "
+                            f"2-sigma {pose.sigma2_horizontal():.1f} m")
         else:
-            self.recentering = False
-            if self.phase == "DESCEND" and h < c.flare_agl:
-                self.phase = "LAND"
-            speed = c.land_speed if (self.phase == "LAND" or h < c.flare_agl) else c.descent_speed
-            vel = self._move_vertical(ground - 0.3, speed, dt)
-        self._check_touchdown(t, pose, dt, agl, h)
+            self.landed_timer = 0.0
         return Setpoint(t, self.setpoint.copy(), vel, self.yaw, self.phase)
-
-    def _check_touchdown(self, t: float, pose: PoseEstimate, dt: float, agl: float | None, h: float) -> None:
-        """V2 port. Touchdown = rangefinder height < touchdown_range AND IMU stationary, both for touchdown_s
-        (independent of the estimated height). In ground contact the autopilot idles the motors: with position
-        control on, the drone hopped and skidded chasing its estimate and the IMU never looked still. Without a
-        rangefinder reading: altimeter / estimated height and |vz| small."""
-        c = self.cfg
-        if self.range_agl is not None:
-            low = self.range_agl < c.touchdown_range
-            if low and not self.ground_contact:
-                self.log(t, f"GROUND_CONTACT: rangefinder {self.range_agl:.2f} m, motors to idle")
-            self.ground_contact = low
-            still = self.imu_still_s >= c.touchdown_s
-            how = f"rangefinder {self.range_agl:.2f} m, IMU still {self.imu_still_s:.1f} s"
-        else:
-            self.ground_contact = False
-            low = ((agl is not None and agl < c.touchdown_range) or (agl is None and h < c.touchdown_range)) \
-                and abs(pose.vel[2]) < c.touchdown_vz
-            still = True
-            how = "no rangefinder: altimeter / estimated height"
-        self.landed_timer = self.landed_timer + dt if low else 0.0
-        if self.landed_timer >= c.touchdown_s and still:
-            self.phase = "LANDED"
-            self.ground_contact = False
-            self.log(t, f"TOUCHDOWN ({how}): motors off at estimated ({pose.pos[0]:.1f}, {pose.pos[1]:.1f}), "
-                        f"2-sigma {pose.sigma2_horizontal():.1f} m")

@@ -27,7 +27,6 @@ track has been matched; otherwise None. `info` reports the information content o
 from __future__ import annotations
 
 import math
-import time
 from collections import deque
 from dataclasses import dataclass
 
@@ -51,7 +50,6 @@ class TrnConfig:
     init_min_std: float = 4.0
     init_max_std: float = 150.0
     bias_init_std: float = 3.0  # m
-    bias_keep_std: float = 1.0  # m, bias spread on a restart once the bias has been learned
     bias_rw: float = 0.05  # m/sqrt(s)
     vel_err_min_std: float = 0.2  # m/s, initial spread of the per-particle INS velocity error (at least)
     vel_err_rw: float = 0.02  # m/s/sqrt(s), on top of the EKF's velocity-variance growth
@@ -61,12 +59,10 @@ class TrnConfig:
     rel_fix_std: float = 0.4  # ... or below this x the INS 1-sigma (a fix that is 2.5x better than the INS) ...
     cap_fix_std: float = 25.0  # ... but never wider than this
     min_fix_std: float = 0.8  # m, floor of the published fix sigma
-    fix_inflate: float = 2.0  # published sigma = cloud sigma x this (correlated map errors, shared velocity,
-    # and consecutive fixes share most of their terrain information)
+    fix_inflate: float = 1.5  # published sigma = cloud sigma x this (correlated map errors, shared velocity)
     fix_interval: float = 1.0  # s between published fixes
     info_track_m: float = 120.0  # along-track window for the information-content report
     lost_after_s: float = 8.0  # likelihood stays at the outlier floor this long -> request re-initialization
-    fix_travel: float = 20.0  # m of new track between two published fixes (no fixes while hovering)
 
 
 def trn_config_for(sc: Scenario) -> TrnConfig:
@@ -75,7 +71,7 @@ def trn_config_for(sc: Scenario) -> TrnConfig:
                          min_travel=60.0, max_fix_std=5.0, min_fix_std=1.0, info_track_m=120.0, pos_rw=0.05)
     return TrnConfig(sigma_meas=3.5, corr_length=40.0, init_min_std=20.0, init_max_std=600.0, bias_init_std=10.0,
                      min_travel=500.0, max_fix_std=30.0, cap_fix_std=100.0, min_fix_std=5.0, info_track_m=1000.0,
-                     pos_rw=0.1, n_particles=3000, fix_interval=1.0, bias_rw=0.1, fix_travel=30.0, fix_inflate=1.5)
+                     pos_rw=0.1, n_particles=3000, fix_interval=1.0, bias_rw=0.1)
 
 
 class TrnFilter:
@@ -93,10 +89,6 @@ class TrnFilter:
         self.dist_since_update = 0.0
         self.travel_since_init = 0.0
         self.last_good_lik_t = 0.0
-        self.s_fix_ref: float | None = None  # travel_since_init at the last published fix
-        self.proc_ms = 0.0  # cost of the last measurement update
-        self.ms_total = 0.0
-        self.n_timed = 0
         self.needs_reset = False
         self.n_updates = 0
         self.status = "idle"
@@ -104,7 +96,6 @@ class TrnFilter:
         self.est: np.ndarray | None = None
         self.est_cov: np.ndarray | None = None
         self.bias = 0.0
-        self.bias_known = False  # set once the cloud converged (a restart then keeps the bias)
         self.track: deque[tuple[float, float]] = deque()  # (s, map height at the estimate)
         self.s_total = 0.0
         self.profile: deque[tuple[float, float, float]] = deque(maxlen=400)  # (t, h_meas, h_map at estimate)
@@ -127,10 +118,7 @@ class TrnFilter:
         z = self.rng.normal(0, 1, (n, 2)) * std
         p = np.zeros((n, 5))
         p[:, :2] = pose.pos[:2] + z @ evecs.T
-        # the datum bias (baro drift + map offset) changes slowly: a restart keeps the learned value (a restart around
-        # 0 began 12 m off on S1, matched the profile at the wrong place and dragged the INS 16 m)
-        b0, bstd = (self.bias, c.bias_keep_std) if self.bias_known else (0.0, c.bias_init_std)
-        p[:, 2] = self.rng.normal(b0, bstd, n)
+        p[:, 2] = self.rng.normal(0, c.bias_init_std, n)
         ve, vv = np.linalg.eigh(pose.cov[3:5, 3:5] * (inflate or c.init_inflate) ** 2)
         vstd = np.clip(np.sqrt(np.maximum(ve, 0.0)), c.vel_err_min_std, 5.0)
         p[:, 3:5] = (self.rng.normal(0, 1, (n, 2)) * vstd) @ vv.T
@@ -142,7 +130,6 @@ class TrnFilter:
         self.last_good_lik_t = t
         self.needs_reset = False
         self.status = "init"
-        self.s_fix_ref = None
 
     # ------------------------------------------------------------------ filter steps
 
@@ -231,17 +218,6 @@ class TrnFilter:
 
     def step(self, msg: AltimeterMsg, pose: PoseEstimate, var_growth: float) -> VisualFix | None:
         """One altimeter sample. `var_growth` = NavEkf.vel_var_growth (accumulated). Returns a fix or None."""
-        t0 = time.perf_counter()
-        try:
-            return self._step(msg, pose, var_growth)
-        finally:
-            dt_ms = (time.perf_counter() - t0) * 1000.0
-            if self.t_last_update == msg.t:  # a measurement update ran (not just a prediction)
-                self.proc_ms = dt_ms
-                self.ms_total += dt_ms
-                self.n_timed += 1
-
-    def _step(self, msg: AltimeterMsg, pose: PoseEstimate, var_growth: float) -> VisualFix | None:
         c = self.cfg
         t = msg.t
         if self.p is None:
@@ -265,8 +241,6 @@ class TrnFilter:
         ins_std = 0.5 * pose.sigma2_horizontal()
         mean, cov, bias, ok, why = self._estimate(ins_std)
         self.est, self.est_cov, self.bias = mean, cov, bias
-        if ok:
-            self.bias_known = True
         h_map = float(self.dsm.sample(mean + hit_off))
         self.profile.append((t, h_meas - bias, h_map))
         self._track_info(mean)
@@ -274,16 +248,9 @@ class TrnFilter:
             self.status = why
         if not ok or t - self.t_last_fix < c.fix_interval:
             return None
-        # new terrain under the beam since the last fix: hovering re-publishes the same information, which the
-        # EKF would fuse as independent (overconfident; in V3's first version a stale hover fix out-voted IBN)
-        if self.s_fix_ref is not None and self.travel_since_init - self.s_fix_ref < c.fix_travel:
-            return None
-        self.s_fix_ref = self.travel_since_init
         self.t_last_fix = t
         R = cov * c.fix_inflate**2 + np.eye(2) * c.min_fix_std**2
-        std_max = float(np.sqrt(max(np.linalg.eigvalsh(cov).max(), 0.0)))
-        strong = std_max < 0.5 * c.max_fix_std and self.travel_since_init > 2.0 * c.min_travel
-        return VisualFix(t, mean.copy(), R, "trn", n_inliers=self.n_updates, strong=strong)
+        return VisualFix(t, mean.copy(), R, "trn", n_inliers=self.n_updates)
 
     def _track_info(self, xy: np.ndarray) -> None:
         if self.last_pose_xy is not None:

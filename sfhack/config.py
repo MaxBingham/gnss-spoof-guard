@@ -31,7 +31,6 @@ class SimConfig:
     down_cam_hz: float = 5.0
     front_cam_hz: float = 5.0
     gnss_hz: float = 5.0
-    range_hz: float = 20.0  # landing rangefinder
     gnss_enabled: bool = False  # GNSS exists but is DISABLED: this project is about flying without it
     max_time_s: float = 400.0
 
@@ -49,9 +48,6 @@ class SensorNoise:
     mag_noise_deg: float = 2.0
     mag_bias_deg: float = 1.0  # constant heading bias std (uncalibrated declination / hard iron)
     gnss_noise: float = 2.5  # m (unused while GNSS is disabled)
-    range_noise: float = 0.02  # m, landing rangefinder white noise ...
-    range_noise_rel: float = 0.01  # ... plus this fraction of the range
-    range_max: float = 40.0  # m, beyond this the rangefinder reports nothing (nan)
 
 
 @dataclass
@@ -74,8 +70,6 @@ class ControlGains:
     kR: tuple[float, float, float] = (4.0, 4.0, 1.0)
     kw: tuple[float, float, float] = (0.6, 0.6, 0.3)
     max_acc: float = 4.0  # m/s^2, clip of the position-loop acceleration command
-    drag_ff: float = 0.19  # 1/s, rotor-drag feedforward (vehicle parameter: rotor_drag / mass) ...
-    drag_ff_quad: float = 0.0069  # 1/m, ... plus body drag (body_drag / mass) x |v|
 
 
 @dataclass
@@ -154,10 +148,6 @@ class HealthConfig:
 class DisturbanceConfig:
     wind_drag: float = 0.15  # N per m/s of relative air speed (linear drag model for wind force)
     wind_gust_std: float = 0.3  # N, random gust force on top of the steady wind
-    # Rotor drag, N per m/s of air-relative speed in the rotor plane (always on, sim physics). ~0.19 m/s^2 per
-    # m/s for the 1.325 kg X2 (typical multirotor values 0.1-0.4 /s). The controller feeds it forward.
-    rotor_drag: float = 0.25
-    body_drag: float = 0.0092  # N/(m/s)^2, parasitic body drag 0.5 rho CdA (CdA 0.015 m^2), quadratic
     imu_bias_jump: float = 0.3  # m/s^2, magnitude of an accel bias jump
 
 

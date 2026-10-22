@@ -126,6 +126,11 @@ HEAVY_MISMATCH_NATURAL = replace(NATURAL_MISMATCH, dem_coarsen_m=90.0, vertical_
                                  ortho_gamma=1.4, ortho_contrast=0.7, ortho_change_frac=0.15)
 
 
+# Steady wind of the simulated weather (harness): speed uniform in [0.4, 1] x this, random direction per seed,
+# plus turbulence (config.DisturbanceConfig). Natural scenes fly higher and in the open.
+WIND_MAX: dict[str, float] = {"urban": 3.0, "natural": 5.0}
+
+
 def heavy_mismatch(sc: Scenario) -> MapMismatch:
     """The 'map mismatch heavy' onboard variant (truth stays the same; only the onboard map gets worse)."""
     base = HEAVY_MISMATCH_URBAN if sc.kind == "urban" else HEAVY_MISMATCH_NATURAL

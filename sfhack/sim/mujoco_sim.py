@@ -18,9 +18,7 @@ from .. import bus as topics
 from ..bus import Bus
 from ..config import X2_DIR, Config
 from ..control.mixer import VehicleParams
-from ..messages import (
-    AltimeterMsg, BaroMsg, CameraControl, CameraFrame, Disturbance, GnssMsg, ImuMsg, MagMsg, MotorCmd, RangeMsg,
-)
+from ..messages import AltimeterMsg, BaroMsg, CameraControl, CameraFrame, Disturbance, GnssMsg, ImuMsg, MagMsg, MotorCmd
 
 GRAVITY = 9.81
 
@@ -126,9 +124,6 @@ class MujocoSim:
         self._adr_gyro = int(m.sensor_adr[m.sensor("body_gyro").id])
         self._adr_acc = int(m.sensor_adr[m.sensor("body_linacc").id])
         self._adr_alt = int(m.sensor_adr[m.sensor("altimeter").id]) if altimeter is not None else -1
-        self._adr_range = int(m.sensor_adr[m.sensor("rangefinder").id])
-        self.timers["range"] = _RateTimer(s.range_hz)
-        self.range_rng = np.random.default_rng(seed + 3000)  # own stream: the other sensors stay unchanged
 
         # Disturbance state
         self.wind = np.zeros(3)
@@ -144,10 +139,6 @@ class MujocoSim:
     def _build_model(self, world: WorldModel | None) -> mujoco.MjModel:
         spec = mujoco.MjSpec.from_file(str(X2_DIR / "scene.xml"))
         spec.option.timestep = self.cfg.sim.timestep
-        # Aerodynamics are applied explicitly in _apply_wind (rotor drag + body drag); MuJoCo's inertia-box
-        # fluid model (x2.xml density) would add a second, unmodelled drag on top.
-        spec.option.density = 0.0
-        spec.option.viscosity = 0.0
         cam = self.cfg.camera
         drone = spec.body("x2")
         # MuJoCo cameras look along their -z axis. Down camera: image top = forward, image right = right.
@@ -174,12 +165,6 @@ class MujocoSim:
             rf = spec.add_sensor(name="altimeter", type=mujoco.mjtSensor.mjSENS_RANGEFINDER,
                                  objtype=mujoco.mjtObj.mjOBJ_SITE, objname="altimeter")
             rf.intprm[0] = 1 << int(mujoco.mjtRayDataField.mjRAYDATA_DIST)  # output: distance only
-        # Short-range landing rangefinder (V2 port): precise near the ground, used for touchdown only (the
-        # S2 radar altimeter's 0.5 m noise cannot tell 'down' from 'hovering low').
-        drone.add_site(name="rangefinder", pos=[0.03, 0, 0.01], quat=[0, 1, 0, 0])
-        rf2 = spec.add_sensor(name="rangefinder", type=mujoco.mjtSensor.mjSENS_RANGEFINDER,
-                              objtype=mujoco.mjtObj.mjOBJ_SITE, objname="rangefinder")
-        rf2.intprm[0] = 1 << int(mujoco.mjtRayDataField.mjRAYDATA_DIST)
         if world is not None:
             world.add_to_spec(spec)
         return spec.compile()
@@ -194,7 +179,6 @@ class MujocoSim:
             ctrl_max=float(m.actuator_ctrlrange[0, 1]),
             rotor_xy=rotor_xy,
             yaw_coeff=np.array([m.actuator_gear[i, 5] for i in range(4)]),
-            imu_offset=np.array(m.site("imu").pos, float) - np.array(m.body_ipos[self.body_id], float),
         )
 
     def surface_height(self, xy: np.ndarray, top: float = 1e4) -> float:
@@ -262,14 +246,6 @@ class MujocoSim:
             self.gust[:] = 0.0
         rel = self.wind - self.data.qvel[0:3]
         force = dc.wind_drag * rel * (1.0 if np.any(self.wind) else 0.0) + self.gust
-        # Rotor drag (blade flapping / induced drag): linear in the air-relative velocity within the rotor plane.
-        # Every real multirotor has it, and it is what lets the accelerometer see a tilt error: without it the
-        # only non-gravity force is the thrust along body z, the accelerometer always reads 'level', and an AHRS
-        # tilt error makes the drone drift unnoticed at several m/s (V2's closed-loop 'neutral mode').
-        R = self.data.xmat[self.body_id].reshape(3, 3)
-        rel_b = R.T @ rel
-        rel_b[2] = 0.0
-        force = force + dc.rotor_drag * (R @ rel_b) + dc.body_drag * float(np.linalg.norm(rel)) * rel
         self.data.xfrc_applied[self.body_id, 0:3] = force
 
     def _update_biases(self) -> None:
@@ -304,13 +280,6 @@ class MujocoSim:
             self.bus.publish(topics.GNSS, GnssMsg(t, pos))
         if "alt" in self.timers and self.timers["alt"].due(t):
             self.bus.publish(topics.ALTIMETER, self._altimeter_reading(t))
-        if self.timers["range"].due(t):
-            r = float(d.sensordata[self._adr_range])  # -1 = no hit
-            if 0.0 <= r <= n.range_max:
-                r = max(0.0, r + self.range_rng.normal(0, n.range_noise + n.range_noise_rel * r))
-            else:
-                r = math.nan
-            self.bus.publish(topics.RANGE, RangeMsg(t, r))
         if self.timers["down"].due(t) and self.down_cam_active:
             self.bus.publish(topics.CAMERA_DOWN, self.render("down"))
         if self.render_front and self.timers["front"].due(t):

@@ -99,18 +99,6 @@ class IntegrityMonitor:
             self._accepted(st, fix, nis)
             return True
 
-        blind = t - self.last_any_accept_t
-        if fix.strong and blind >= c.relocalize_blind_s and not any(
-                o.last_fix.accepted and self._cross(fix, o.last_fix, ekf) > c.cross_chi2 for o in others):
-            # first strong fix after a long outage: the INS covariance cannot be trusted any more (its error
-            # model is linear, a long blind stretch is not) -> covariance reset on this fix (V2 lesson: waiting
-            # for 5 rejections kept a drifting INS for seconds while good fixes were thrown away)
-            ekf.reset_position(fix.pos, fix.cov * 2.0)
-            self.events.append((t, f"RELOCALIZED on {fix.source}: first strong fix after {blind:.0f} s without "
-                                   f"fixes, INS off by {offset:.0f} m (NIS {nis:.0f}), covariance reset"))
-            self._accepted(st, fix, nis)
-            return True
-
         st.rejects += 1
         st.n_rejected += 1
         st.nis_log.append((t, nis, False))

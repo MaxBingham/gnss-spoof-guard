@@ -25,7 +25,7 @@ from .estimation.integrity import IntegrityConfig, IntegrityMonitor
 from .estimation.nav_ekf import NavEkf, NavEkfConfig
 from .messages import (
     AltimeterMsg, BaroMsg, CameraControl, CameraFrame, Decision, Health, HealthState, ImuMsg, MagMsg, MotorCmd,
-    PoseEstimate, RangeMsg, Setpoint, VisualFix,
+    PoseEstimate, Setpoint, VisualFix,
 )
 from .perception.ibn import IbnConfig, IbnLocalizer
 from .perception.trn import TrnFilter, trn_config_for
@@ -37,7 +37,6 @@ from .world.onboard_terrain import OnboardTerrainMap
 PUBLISH_HZ = 50.0
 CONTROL_HZ = 100.0
 ACC_LP_TAU = 0.3  # s, low-pass of the setpoint acceleration (planned manoeuvres)
-DRAG_EVERY = 4  # IMU samples averaged per drag-fusion update (200 Hz IMU -> 50 Hz)
 FLYING = ("TAKEOFF", "CRUISE", "HOLD", "APPROACH", "DESCEND", "LAND", "EMERGENCY_LAND")
 
 
@@ -66,7 +65,7 @@ class NavAutopilot:
         self.ahrs = Ahrs(cfg.ahrs, start_yaw)
         self.ekf = NavEkf(NavEkfConfig(), np.array([a[0], a[1], self.z0]))
         self.trn = TrnFilter(trn_config_for(sc), om.dsm, seed)
-        ibn_cfg = IbnConfig()
+        ibn_cfg = IbnConfig() if sc.kind == "urban" else IbnConfig(sigma_ref=0.6, agl_ref=40.0, max_search_m=60.0)
         self.ibn = IbnLocalizer(ibn_cfg, om.ortho, om.dsm) if om.ortho is not None else None
         urban = sc.kind == "urban"
         self.integrity = IntegrityMonitor(IntegrityConfig(relocalize_blind_s=30.0 if urban else 90.0,
@@ -80,17 +79,6 @@ class NavAutopilot:
         self.controller = GeometricController(vehicle, cfg.gains)
         self._truth_source = truth_pose_source
         self.pose_source = pose_source
-        self.tilt_feedback = True  # EKF accel bias -> AHRS tilt every IMU step (error-state reset, V2 port)
-        self.drag_fusion = True  # rotor-drag velocity measurement from the accelerometer (NavEkf.update_drag)
-        self._drag_sum = np.zeros(2)
-        self._drag_n = 0
-        self._imu_r = vehicle.imu_offset if vehicle.imu_offset is not None else np.zeros(3)
-        self._omega_prev = np.zeros(3)
-        self._range_rest: list[float] = []  # preflight rangefinder readings (sensor height when standing)
-        self.range_offset: float | None = None
-        self.range_agl: float | None = None  # landing rangefinder height above the surface, None = no reading
-        self._range_t = -1.0
-        self.imu_still_s = 0.0  # how long the IMU has been stationary (touchdown check)
 
         self._last_imu_t: float | None = None
         self._next_ctrl = 0.0
@@ -125,7 +113,6 @@ class NavAutopilot:
         bus.subscribe(topics.BARO, self.on_baro)
         bus.subscribe(topics.MAG, self.on_mag)
         bus.subscribe(topics.ALTIMETER, self.on_altimeter)
-        bus.subscribe(topics.RANGE, self.on_range)
         bus.subscribe(topics.CAMERA_DOWN, self.on_camera)
 
     # ------------------------------------------------------------------ switches / log
@@ -180,26 +167,6 @@ class NavAutopilot:
                 self.integrity.last_any_accept_t = msg.t
         else:
             self.ekf.predict(self.ahrs.rotate_accel(msg.accel), dt, msg.t)
-            if self.tilt_feedback:
-                self.ahrs.correct_tilt_world(self.ekf.take_tilt_correction())
-            w = self.ahrs.omega
-            wdot = (w - self._omega_prev) / dt if dt > 0 else np.zeros(3)
-            self._omega_prev = w.copy()
-            if self.drag_fusion and self.mission.phase in FLYING and not self.mission.ground_contact:
-                # lever arm: the IMU sits off the centre of mass, so attitude manoeuvres add w_dot x r + w x (w x r)
-                # (0.24 m/s^2 rms on the X2, 96 % correlated with the drag residual before this compensation)
-                r = self._imu_r
-                f = msg.accel - self.ahrs.accel_bias - np.cross(wdot, r) - np.cross(w, np.cross(w, r))
-                self._drag_sum += f[:2]
-                self._drag_n += 1
-                if self._drag_n >= DRAG_EVERY:
-                    self.ekf.update_drag(self._drag_sum / self._drag_n, self.pose().R)
-                    self._drag_sum[:] = 0.0
-                    self._drag_n = 0
-        mc = self.mission.cfg
-        still = (abs(float(np.linalg.norm(msg.accel - self.ahrs.accel_bias)) - 9.81) < mc.still_acc
-                 and float(np.linalg.norm(self.ahrs.omega)) < mc.still_rate)
-        self.imu_still_s = self.imu_still_s + dt if still else 0.0
         if self.mission.phase in ("PREFLIGHT", "LANDED"):
             self.ekf.update_zero_velocity()
         # guidance + control at CONTROL_HZ (motor commands hold in between); estimation runs at the IMU rate
@@ -208,17 +175,6 @@ class NavAutopilot:
             self._next_ctrl = msg.t + 1.0 / CONTROL_HZ
             self._control(msg.t, self._ctrl_dt)
             self._ctrl_dt = 0.0
-
-    def on_range(self, msg: RangeMsg) -> None:
-        """Landing rangefinder (V2 port): the at-rest reading in preflight is the sensor height, removed later."""
-        if self.mission.phase == "PREFLIGHT":
-            if np.isfinite(msg.range):
-                self._range_rest.append(msg.range)
-            return
-        if self._range_rest and self.range_offset is None:
-            self.range_offset = float(np.median(self._range_rest))
-        self.range_agl = msg.range - (self.range_offset or 0.0) if np.isfinite(msg.range) else None
-        self._range_t = msg.t
 
     def on_baro(self, msg: BaroMsg) -> None:
         if self.mission.phase == "PREFLIGHT":
@@ -326,8 +282,6 @@ class NavAutopilot:
             self.log_decision(t, f"HEALTH {hs.state.value}: {hs.reason}")
         self.health_state = hs
         enforce = self.pose_source == "ekf"
-        fresh = self.range_agl is not None and t - self._range_t < 0.2
-        self.mission.set_ground_sensing(self.range_agl if fresh else None, self.imu_still_s)
         sp = self.mission.update(t, ctrl_pose, dt, hs.state if enforce else Health.NOMINAL,
                                  hs.speed_scale if enforce else 1.0, self.current_agl(t), self.last_ibn_fix,
                                  ibn_available=self.ibn is not None and self.sources["ibn"]
@@ -339,13 +293,7 @@ class NavAutopilot:
         self.setpoint = sp
         while self.mission.events:
             self.log_decision(*self.mission.events.pop(0))
-        if self.mission.phase in ("PREFLIGHT", "LANDED"):
-            motors = np.zeros(4)
-        elif self.mission.ground_contact and enforce:  # V2: idle on the ground, no position control
-            c = self.controller
-            motors = np.full(4, self.mission.cfg.ground_idle * c.mass * c.g / 4)
-        else:
-            motors = self.controller(ctrl_pose, sp)
+        motors = np.zeros(4) if self.mission.phase in ("PREFLIGHT", "LANDED") else self.controller(ctrl_pose, sp)
         self.bus.publish(topics.MOTOR, MotorCmd(t, motors))
         if t >= self._next_pub:
             self._next_pub = t + 1.0 / PUBLISH_HZ

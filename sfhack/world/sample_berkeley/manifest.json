@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "package_id": "berkeley-sample",
+  "created_at": "2026-10-19T21:31:28+00:00",
+  "bbox": {
+    "south": 37.86895252707382,
+    "west": -122.26152601632593,
+    "north": 37.876747472926176,
+    "east": -122.25697398367407
+  },
+  "origin": {
+    "lat": 37.87285,
+    "lon": -122.25925000000001
+  },
+  "coordinate_frame": "local ENU (x=east, y=north, z=up) in meters, equirectangular around origin",
+  "a": {
+    "lat": 37.8703,
+    "lon": -122.2595,
+    "enu": [
+      -21.97,
+      -283.86
+    ]
+  },
+  "b": {
+    "lat": 37.8754,
+    "lon": -122.259,
+    "enu": [
+      21.97,
+      283.86
+    ]
+  },
+  "terrain": "flat (z=0)",
+  "sources": [
+    {
+      "name": "OpenStreetMap (via Overpass API)",
+      "license": "ODbL-1.0",
+      "attribution": "\u00a9 OpenStreetMap contributors",
+      "url": "https://www.openstreetmap.org/copyright"
+    },
+    {
+      "name": "USGS The National Map - USGSImageryOnly",
+      "license": "Public Domain",
+      "attribution": "Imagery: USGS National Map",
+      "url": "https://basemap.nationalmap.gov/"
+    }
+  ],
+  "attribution": "\u00a9 OpenStreetMap contributors (ODbL) \u00b7 Imagery: USGS National Map (public domain)",
+  "landmark_counts": {
+    "building": 97,
+    "tree": 148,
+    "tower": 1,
+    "fountain": 2
+  },
+  "hand_made": false,
+  "files": [
+    "manifest.json",
+    "landmarks.json",
+    "ground.jpg"
+  ],
+  "ortho": {
+    "file": "ortho.jpg",
+    "source": "usgs",
+    "zoom": "export",
+    "width_px": 800,
+    "height_px": 1735,
+    "extent_enu": {
+      "min_x": -200.0,
+      "min_y": -433.86,
+      "max_x": 200.0,
+      "max_y": 433.86
+    },
+    "m_per_px": [
+      0.5,
+      0.50013
+    ]
+  }
+}

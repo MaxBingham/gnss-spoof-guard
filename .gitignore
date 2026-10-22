@@ -1,43 +1,27 @@
-# Dependencies
-node_modules/
-.pnp
-.pnp.js
-.yarn/*
-!.yarn/releases
-
-# Build output
-dist/
-dist-ssr/
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
 build/
-*.tsbuildinfo
-.vite/
+dist/
 
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+# Generated data belongs in $SFHACK_DATA (outside the repo), never here
+data/
+runs/
+eval_out/
+cache/
+*.mp4
+*.npz
+*.gif
 
-# Environment
-.env
-.env.*
-!.env.example
+# V1 browser prototype: separate repo (JLrobot/gnss-free-nav), cloned next to this one, never committed here
+gnss-free-nav/
 
-# Test and coverage
-coverage/
-playwright-report/
-test-results/
-
-# Editors and OS
-.vscode/*
-!.vscode/extensions.json
-.idea/
+# OS / editors
 .DS_Store
 Thumbs.db
-*.swp
-
-# Local caches
-.cache/
-.eslintcache
+.vscode/
+.idea/

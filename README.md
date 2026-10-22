@@ -1,36 +1,9 @@
-# gnss-spoof-guard
+# gnss-free-nav-V2
 
-GNSS-free drone navigation that knows when GNSS is lying. Built for the SF Hackathon (Oct 24, 2026) on top of the [gnss-free-nav prototype](https://gnss-free-nav.pages.dev).
-
-## Pitch
-
-Most GNSS-free navigation demos show a single dot. This one shows a cloud of hypotheses that collapses onto the truth, reports honestly how sure it is, and catches a GNSS spoofer that would otherwise fly the drone into a building.
-
-A particle filter localizes the drone by matching unlabeled camera detections (buildings, trees, towers) against an onboard OpenStreetMap landmark map. It never sees GNSS, so it acts as an independent witness: a spoof detector compares GNSS against it, rejects lying fixes, and falls back to vision.
-
-## Planned features
-
-- **Particle filter localizer** that replaces the prototype's mock localizer (truth plus noise) with real inference over ID-free landmark detections, including an `AMBIGUOUS` state when the belief is multimodal.
-- **Simulated detector** that projects map landmarks, strips their IDs, and adds pixel noise, misses and clutter.
-- **GNSS sensor and attacker** with slow drag-off spoofing, jump spoofing and jamming.
-- **SpoofGuard**, which combines a chi-square innovation gate with a CUSUM on the GNSS-minus-particle-filter residual, driving a `TRUSTED → SUSPECT → REJECTED` trust state machine.
-- **Dual-drone comparison**: a naive GNSS-trusting drone and a protected drone flown side by side under the same attack.
-- **Integrity metrics**: 2σ coverage, effective sample size, spoof detection latency and false alarms.
-- **Disturbance controls**: spoof slider, jam, camera blackout, kidnap and wind.
-
-## Stack
-
-TypeScript in the browser (Vite), three.js and Leaflet. No backend.
-
-## Contract
-
-`sensors/`, `estimation/`, `pipeline/`, `sim/`, and `ui/` are the shared contract. `sim/` is headless. `Conditions` carries one weather intensity, a wind force (speed, compass direction, and optional rotation), camera and lidar occlusion switches, a GNSS jam switch, and a GNSS spoof drift rate where zero is off. The naive baseline forwards a GNSS fix into the 6-state Kalman filter and coasts when that fix is missing. `npm run scenario -- --seed 42` records truth beside the estimate, and the dashboard plays that flight.
-
-```bash
-npm test
-npm run scenario -- --seed 42
-```
+GNSS-free quadcopter navigation in MuJoCo (hackathon prototype). Full setup instructions follow in milestone M6.
 
 ## Disclosure
 
-Prior work, built before the hackathon: the simulator and Kalman filter, the degradation levers (GNSS spoof drift, GNSS jam, weather noise and dropouts, wind force, camera loss, lidar loss), the dashboard, and the naive baseline that trusts GNSS whenever a fix exists. Built on Saturday, not in this repo yet: detection, trust ranking, and the decision policy.
+Prior work, built before the hackathon: the MuJoCo Skydio X2 simulation, the AHRS and EKF state estimation, the vision map-localizer, the Berkeley world, the autopilot and landing logic, the degradation levers, and the live viewer. Built on Saturday: detection, trust ranking, and the decision policy.
+
+The earlier TypeScript rig that previously lived on `main` is archived at tag [`ts-rig-archive`](https://github.com/MaxBingham/gnss-spoof-guard/tree/ts-rig-archive).

@@ -17,6 +17,7 @@ import numpy as np
 from .autopilot import Autopilot
 from .bus import Bus
 from .config import SAMPLE_WORLD_DIR, Config, default_config
+from .degradation.conditions import Conditions, ConditionsMsg
 from .messages import Disturbance
 from .perception.localizer import Localizer
 from .planning.mission import Mission, a_to_b_plan, fly_x2_plan
@@ -74,7 +75,11 @@ class FlightSystem:
         render_front: bool = False,
         recorder: Any | None = None,
         reuse_sim: MujocoSim | None = None,
+        conditions: Conditions | None = None,
+        schedule: list[tuple[float, dict[str, Any]]] | None = None,
     ) -> None:
+        """`conditions`: initial degradation levers (default `cfg.conditions`). `schedule`: lever changes
+        at sim times, [(t, {'gnss': 'drag:1.5@90', 'wind.speed': 6}), ...] (see sfhack.degradation.cli)."""
         self.cfg = cfg or default_config()
         self.bus = Bus()
         self.seed = seed
@@ -104,6 +109,10 @@ class FlightSystem:
         reuse = (reuse_sim.model, reuse_sim.data) if reuse_sim is not None else None
         self.sim = MujocoSim(self.cfg, self.bus, world, spawn_xy=(start[0], start[1]), spawn_yaw=yaw,
                              seed=seed, render_front=render_front, reuse=reuse)
+        if conditions is not None:
+            self.sim.set_conditions(conditions)
+        self.schedule = sorted(schedule or [], key=lambda e: e[0])
+        self.conditions_log: list[tuple[float, str]] = [(0.0, self.sim.conditions.summary())]  # harness log
         self.truth = TruthProvider(self.sim)
         start3 = np.array([start[0], start[1], 0.0])
         self.mission = Mission(plan, start3, yaw, mc)
@@ -146,11 +155,32 @@ class FlightSystem:
         self.autopilot.set_localizer(make_localizer(name, self.cfg, self.truth, self.seed))
         self.localizer_name = name
 
+    @property
+    def conditions(self) -> Conditions:
+        """A copy of the levers in effect (change them with set_conditions / update_conditions)."""
+        return self.sim.conditions.copy()
+
+    def set_conditions(self, conditions: Conditions) -> None:
+        """Replace all levers now (published on the `conditions` bus topic; the simulator adopts a copy)."""
+        from . import bus as topics
+        conditions.validate()
+        self.bus.publish(topics.CONDITIONS, ConditionsMsg(self.t, conditions.copy()))
+        self.conditions_log.append((self.t, conditions.summary()))
+
+    def update_conditions(self, assignments: dict[str, Any] | str | None = None, **kw: Any) -> Conditions:
+        """Change some levers now: update_conditions('gnss=drag:1.5@90,wind.speed=6') or
+        update_conditions(gnss__mode='jam'). Returns the new levers."""
+        c = self.conditions.update(assignments, **kw)
+        self.set_conditions(c)
+        return c
+
     def disturb(self, kind: str, value: Any = None, duration: float = 0.0) -> None:
         from . import bus as topics
         self.bus.publish(topics.DISTURBANCE, Disturbance(self.t, kind, value, duration))
 
     def step(self) -> None:
+        while self.schedule and self.t >= self.schedule[0][0]:
+            self.update_conditions(self.schedule.pop(0)[1])
         self.sim.step()
         if self.t >= self._next_log:
             self._next_log = self.t + 0.1

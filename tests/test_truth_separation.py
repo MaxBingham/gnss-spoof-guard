@@ -33,6 +33,25 @@ def test_onboard_code_never_touches_truth() -> None:
     assert not offenders, "truth access from onboard code:\n" + "\n".join(offenders)
 
 
+ONBOARD = ("autopilot.py", "estimation/", "control/", "planning/", "perception/", "world/onboard_map.py")
+LEVER_PATTERNS = [  # the degradation levers are simulated reality: the drone must not know it is spoofed
+    r"\bdegradation\b", r"\bConditions(Msg)?\b", r"\bCONDITIONS\b", r"\.conditions\b",
+]
+
+
+def test_onboard_code_never_reads_degradation_levers() -> None:
+    offenders = []
+    for f in PKG.rglob("*.py"):
+        rel = f.relative_to(PKG).as_posix()
+        if not rel.startswith(ONBOARD):
+            continue
+        src = f.read_text(encoding="utf-8")
+        hits = [p for p in LEVER_PATTERNS if re.search(p, src)]
+        if hits:
+            offenders.append(f"{rel}: {hits}")
+    assert not offenders, "degradation levers read by onboard code:\n" + "\n".join(offenders)
+
+
 def test_mock_localizer_is_marked() -> None:
     src = (PKG / "perception" / "mock_localizer.py").read_text(encoding="utf-8")
     assert "SIMULATION OF PERCEPTION - uses ground truth" in src

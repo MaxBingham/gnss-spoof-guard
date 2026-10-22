@@ -155,9 +155,9 @@ class Conditions:
         parts = []
         g = self.gnss
         if g.mode == "drag":
-            parts.append(f"GNSS DRAG {g.drag_rate:g} m/s @ {g.drag_heading_deg:g} deg")
+            parts.append(f"GNSS DRAG {g.drag_rate:g} m/s @ {g.drag_heading_deg:.0f} deg")
         elif g.mode == "jump":
-            parts.append(f"GNSS JUMP {g.jump_m:g} m @ {g.jump_heading_deg:g} deg")
+            parts.append(f"GNSS JUMP {g.jump_m:g} m @ {g.jump_heading_deg:.0f} deg")
         elif g.mode != "off":
             parts.append(f"GNSS {g.mode.upper()}")
         if self.weather.kind != "clear" and self.weather.intensity > 0:
@@ -166,7 +166,7 @@ class Conditions:
         if w.speed > 0 or w.gust > 0:
             rot = f" rot {w.rotation_deg_s:g} deg/s" if w.rotation_deg_s else ""
             gust = f" gust {w.gust:g}" if w.gust else ""
-            parts.append(f"WIND {w.speed:g} m/s @ {w.direction_deg:g} deg{rot}{gust}")
+            parts.append(f"WIND {w.speed:g} m/s @ {w.direction_deg:.0f} deg{rot}{gust}")
         if self.camera.lost:
             parts.append("CAMERA LOST")
         elif self.camera.drop_rate > 0:

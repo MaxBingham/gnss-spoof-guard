@@ -20,7 +20,7 @@ from .control.pose_source import EkfPoseSource, PoseSource
 from .estimation.ahrs import Ahrs
 from .estimation.ekf import Ekf
 from .messages import (
-    BaroMsg, CameraFrame, Decision, Health, HealthState, ImuMsg, MagMsg, MotorCmd, PoseEstimate, RangeMsg, Setpoint,
+    BaroMsg, CameraFrame, Decision, GnssMsg, Health, HealthState, ImuMsg, MagMsg, MotorCmd, PoseEstimate, RangeMsg, Setpoint,
     VisualFix,
 )
 from .perception.localizer import Localizer
@@ -73,6 +73,7 @@ class Autopilot:
         self.imu_still_s = 0.0  # how long the IMU has been stationary (touchdown check)
         self._next_pub = 0.0
         self.last_fix: VisualFix | None = None
+        self.last_gnss: GnssMsg | None = None
         self.health_state = HealthState(0.0, Health.NOMINAL, 0.0, 0.0, 1.0)
         self.setpoint: Setpoint | None = None
         # Localizer statistics (for eval): frames seen, fixes returned, processing time
@@ -87,6 +88,7 @@ class Autopilot:
         bus.subscribe(topics.RANGE, self.on_range)
         bus.subscribe(topics.MAG, self.on_mag)
         bus.subscribe(topics.CAMERA_DOWN, self.on_camera)
+        bus.subscribe(topics.GNSS, self.on_gnss)
 
     # ------------------------------------------------------------------ switches
 
@@ -158,6 +160,12 @@ class Autopilot:
         dt = 1.0 / self.cfg.sim.mag_hz if self._last_mag_t is None else msg.t - self._last_mag_t
         self._last_mag_t = msg.t
         self.ahrs.update_mag(msg, dt)
+
+    def on_gnss(self, msg: GnssMsg) -> None:
+        """NAIVE baseline: every GNSS fix is fused as reported (no spoof check)."""
+        self.ekf.update_gnss(msg.t, msg.pos, msg.cov)
+        self.health.on_gnss(msg.t, msg.pos)
+        self.last_gnss = msg
 
     def on_camera(self, frame: CameraFrame) -> None:
         if self.localizer is None or self.onboard_map is None or self.in_preflight:

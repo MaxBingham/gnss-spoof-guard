@@ -67,7 +67,8 @@ PIXEL_SIGMA = 25.0  # gray levels of image noise at intensity 1 (x kind factor)
 FRAME_DROP = 0.3  # chance a down-camera frame is lost at intensity 1 (x kind factor)
 RANGE_SIGMA_M = 1.5  # range noise at intensity 1 (TS reference: 1.5 m)
 RANGE_DROPOUT = 0.75  # chance a range return is lost at intensity 1 (TS reference: 0.75)
-CLEAR_VISIBILITY_M = 10000.0
+CLEAR_VISIBILITY_M = math.inf  # clear air: no haze
+VISUALS_MAX_VISIBILITY_M = 10000.0  # cap for the viewer values
 
 # kind: (pixel noise, frame drop, range noise, range dropout) factors, visibility at intensity 0 and 1 [m]
 # (log-interpolated), fog color (RGB 0..1)
@@ -120,8 +121,8 @@ class WeatherVisuals:
 
 def weather_visuals(w: WeatherConditions) -> WeatherVisuals:
     e = weather_effect(w)
-    return WeatherVisuals(w.kind, float(w.intensity), e.visibility_m, e.fog_rgb,
-                          fog_start_m=0.05 * e.visibility_m, fog_end_m=e.visibility_m,
+    vis = min(e.visibility_m, VISUALS_MAX_VISIBILITY_M)
+    return WeatherVisuals(w.kind, float(w.intensity), vis, e.fog_rgb, fog_start_m=0.05 * vis, fog_end_m=vis,
                           haze=1.0 - transmission(40.0, e.visibility_m))
 
 
@@ -185,11 +186,13 @@ class WindModel:
         ux, uy = compass_unit(self.heading_deg)
         return np.array([w.speed * ux, w.speed * uy, 0.0]) + self.gust
 
-    def force(self, w: WindConditions, body_vel: np.ndarray, drag: float, dt: float) -> np.ndarray:
-        air = self.air_velocity(w, dt)
+    @staticmethod
+    def force(w: WindConditions, air_velocity: np.ndarray, body_vel: np.ndarray, drag: float) -> np.ndarray:
+        """Drag force [N] on the airframe. Calm air (no wind, no gusts) applies nothing (no airframe drag
+        model in still air, as before the levers existed)."""
         if w.speed <= 0 and w.gust <= 0:
             return np.zeros(3)
-        return drag * (air - np.asarray(body_vel, float))
+        return drag * (np.asarray(air_velocity, float) - np.asarray(body_vel, float))
 
 
 def wind_from_vector(vx: float, vy: float) -> tuple[float, float]:

@@ -44,10 +44,20 @@ class MagMsg:
 
 @dataclass
 class GnssMsg:
-    """Exists for completeness; the simulator never publishes it while GNSS is disabled."""
+    """GNSS fix (only while the receiver is on, see sfhack.degradation). A jammed receiver publishes nothing."""
 
     t: float
-    pos: np.ndarray
+    pos: np.ndarray  # (3,) ENU
+    cov: np.ndarray = field(default_factory=lambda: np.eye(2) * 2.25)  # (2, 2) horizontal, receiver-reported
+
+
+@dataclass
+class LidarMsg:
+    """Nadir multi-beam lidar: a cross-track fan of ranges to the first surface (ground, roof, wall)."""
+
+    t: float
+    angles: np.ndarray  # (n,) rad from straight down, positive toward body-right
+    ranges: np.ndarray  # (n,) m; nan = no return
 
 
 @dataclass
@@ -143,7 +153,8 @@ class HealthState:
 
 @dataclass
 class Disturbance:
-    """kind: wind | camera_blackout | imu_bias_jump | comms_loss | clear.
+    """kind: wind | camera_blackout | imu_bias_jump | comms_loss | clear. Legacy events: wind and
+    camera_blackout map onto the degradation levers (sfhack.degradation.Conditions).
 
     wind: value = (vx, vy) wind speed [m/s]; camera_blackout / comms_loss: duration [s] (0 = until clear);
     imu_bias_jump: value = magnitude [m/s^2] (None = config default).

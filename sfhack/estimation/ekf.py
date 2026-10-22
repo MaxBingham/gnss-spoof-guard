@@ -39,6 +39,7 @@ class Ekf:
         self.n_fix_accepted = 0
         self.n_fix_rejected = 0
         self.n_relocalized = 0
+        self.n_gnss = 0
         self.last_fix_t: float | None = None
         self.nis_log: list[tuple[float, float, bool]] = []  # (t, NIS, accepted) for every visual fix
         self.last_decision = ""  # set when a fix is accepted by re-localization
@@ -130,6 +131,14 @@ class Ekf:
         self.last_fix_t = fix.t
         fix.accepted = True
         return True
+
+    def update_gnss(self, t: float, pos_xy: np.ndarray, cov: np.ndarray) -> None:
+        """NAIVE baseline: fuse every GNSS fix as reported, no gate (a spoofed fix is believed)."""
+        H = np.zeros((2, N_STATES))
+        H[:, :2] = np.eye(2)
+        self._update(H, np.asarray(pos_xy, float)[:2], np.asarray(cov, float))
+        self.n_gnss += 1
+        self.last_fix_t = t
 
     def pose(self, R: np.ndarray, omega: np.ndarray, yaw: float) -> PoseEstimate:
         return PoseEstimate(self.t, self.x[:3].copy(), self.x[3:6].copy(), yaw, self.P[:6, :6].copy(), R.copy(), omega.copy(), "ekf")

@@ -1,7 +1,7 @@
 import { clamp, wrapAngle } from "../estimation/angles.ts";
-import { compassUnit } from "../sensors/compass.ts";
-import type { Conditions } from "../sensors/types.ts";
 import { MISSION } from "./mission.ts";
+
+export { windAcceleration, WIND_ACCEL_PER_MPS } from "../sensors/wind.ts";
 
 export interface TruthPose {
   x: number;
@@ -17,21 +17,6 @@ export interface VelocityCommand {
   vx: number;
   vy: number;
   vz: number;
-}
-
-/**
- * Acceleration per 1 m/s of the wind speed lever.
- * Mass is normalized, so this is also the sideways force scale.
- */
-export const WIND_ACCEL_PER_MPS = 0.25;
-
-/** Sideways acceleration from the wind lever at time t. Speed 0 is calm. */
-export function windAcceleration(wind: Conditions["wind"], t: number): { ax: number; ay: number } {
-  if (wind.speedMS === 0) return { ax: 0, ay: 0 };
-  const theta = wind.directionRad + wind.rotationRadS * t;
-  const accel = wind.speedMS * WIND_ACCEL_PER_MPS;
-  const unit = compassUnit(theta);
-  return { ax: accel * unit.x, ay: accel * unit.y };
 }
 
 export interface DynamicsStep {

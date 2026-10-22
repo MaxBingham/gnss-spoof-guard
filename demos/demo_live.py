@@ -6,6 +6,7 @@
     python demos/demo_live.py --headless              # no window: run, print, score (verification)
     python demos/demo_live.py --record out.mp4        # offscreen backup video (chase cam + panels + text)
     python demos/demo_live.py --events "45:V,75:V"    # press keys at sim times (also in the viewer)
+    python demos/demo_live.py --gnss ok --cond-at "30:gnss=drag:1.5@90"   # degradation levers (README)
 
 What you see:
   drone = TRUTH (the simulator). Cyan sphere = where the drone THINKS it is (EKF), cyan ring = 2-sigma.
@@ -35,6 +36,8 @@ import numpy as np
 
 from sfhack import bus as topics
 from sfhack.config import data_dir
+from sfhack.degradation import Conditions
+from sfhack.degradation.cli import add_cli_args, conditions_from_args, parse_schedule
 from sfhack.runner import FlightSystem
 
 DEMO_SEED = 0
@@ -121,17 +124,20 @@ def _decimate(pts: list[np.ndarray], max_n: int) -> np.ndarray:
 class LiveDemo:
     """One flight plus everything the jury sees (3D overlay, text, panels). Truth: display + score only."""
 
-    def __init__(self, seed: int, localizer: str, reuse: FlightSystem | None = None) -> None:
+    def __init__(self, seed: int, localizer: str, reuse: FlightSystem | None = None,
+                 conditions: Conditions | None = None, schedule: list | None = None) -> None:
         self.seed = seed
         self.base_localizer = localizer if localizer != "off" else "mock"
         self.fs = FlightSystem(pose_source="ekf", localizer=localizer, seed=seed,
-                               reuse_sim=reuse.sim if reuse is not None else None)
+                               reuse_sim=reuse.sim if reuse is not None else None,
+                               conditions=conditions, schedule=list(schedule or []))
         self.loc_on = localizer != "off"
         self.truth_trail: list[np.ndarray] = []
         self.est_trail: list[np.ndarray] = []
         self._next_trail = 0.0
         self.cam_img = np.zeros((CAM_PANEL[1], CAM_PANEL[0], 3), np.uint8)
         self.gust_until: float | None = None
+        self.wind_before_gust: str | None = None
         self.blackout_until = -1.0
         self.done_at: float | None = None
         self.result = None
@@ -157,8 +163,11 @@ class LiveDemo:
             fs.set_localizer(self.base_localizer if self.loc_on else "off")
             msg = f"localizer {'ON' if self.loc_on else 'OFF (dead reckoning)'}"
         elif key == "W":
-            ang = np.random.default_rng(int(t * 1000)).uniform(0, 2 * np.pi)
-            fs.disturb("wind", (GUST_SPEED * math.cos(ang), GUST_SPEED * math.sin(ang)))
+            heading = np.random.default_rng(int(t * 1000)).uniform(0, 360)
+            if self.gust_until is None:
+                w = fs.conditions.wind
+                self.wind_before_gust = f"wind.speed={w.speed},wind.direction_deg={w.direction_deg}"
+            fs.update_conditions(f"wind.speed={GUST_SPEED},wind.direction_deg={heading}")
             self.gust_until = t + GUST_S
             msg = f"wind gust {GUST_SPEED:.0f} m/s for {GUST_S:.0f} s"
         elif key == "C":
@@ -179,7 +188,7 @@ class LiveDemo:
                 return
             fs.step()
             if self.gust_until is not None and self.t >= self.gust_until:
-                fs.disturb("wind", (0.0, 0.0))
+                fs.update_conditions(self.wind_before_gust)
                 self.gust_until = None
             if self.t >= self._next_trail:
                 self._next_trail = self.t + TRAIL_DT
@@ -428,7 +437,7 @@ def parse_events(spec: str) -> list[tuple[float, str]]:
 def run_viewer(args: argparse.Namespace) -> None:
     import mujoco.viewer
 
-    demo = LiveDemo(args.seed, args.localizer)
+    demo = LiveDemo(args.seed, args.localizer, conditions=args.conditions, schedule=args.schedule)
     m, d = demo.fs.sim.model, demo.fs.sim.data
     keys: deque[int] = deque()
     speed, paused = args.speed, False
@@ -470,7 +479,8 @@ def run_viewer(args: argparse.Namespace) -> None:
                     print(f"t={demo.t:6.1f}s RESTART")
                     with viewer.lock():
                         old = demo
-                        demo = LiveDemo(args.seed, args.localizer, reuse=old)
+                        demo = LiveDemo(args.seed, args.localizer, reuse=old, conditions=args.conditions,
+                                        schedule=args.schedule)
                         old.close()
                     reported = False
                     next_log = 0.0
@@ -540,7 +550,7 @@ def run_viewer(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------------------- headless / record
 
 def run_headless(args: argparse.Namespace) -> int:
-    demo = LiveDemo(args.seed, args.localizer)
+    demo = LiveDemo(args.seed, args.localizer, conditions=args.conditions, schedule=args.schedule)
     pending = parse_events(args.events)
     wall = time.time()
     next_print = 0.0
@@ -555,6 +565,8 @@ def run_headless(args: argparse.Namespace) -> int:
             row = dict(zip(left.split("\n"), right.split("\n")))
             print(f"t={demo.t:6.1f}s {row['Phase']:14s} {row['Health'][:10]:10s} 2-sigma {row['2-sigma radius'].strip():>8s}"
                   f"  err {row['Position error'].split('(')[0].strip():>8s}")
+    for t, text in demo.fs.conditions_log:
+        print(f"   {t:6.1f}s LEVERS {text}")
     for t, text in demo.fs.autopilot.decisions:
         print(f"   {t:6.1f}s {text}")
     r = demo.result
@@ -602,7 +614,7 @@ def compose_frame(demo: LiveDemo, renderer: mujoco.Renderer, cam: mujoco.MjvCame
 def run_record(args: argparse.Namespace) -> int:
     out = Path(args.record)
     out.parent.mkdir(parents=True, exist_ok=True)
-    demo = LiveDemo(args.seed, args.localizer)
+    demo = LiveDemo(args.seed, args.localizer, conditions=args.conditions, schedule=args.schedule)
     m = demo.fs.sim.model
     W, H, fps = 1280, 720, 30
     renderer = mujoco.Renderer(m, H, W)
@@ -655,7 +667,9 @@ def main() -> None:
     ap.add_argument("--quit-after", type=float, default=0.0, help=argparse.SUPPRESS)  # wall s, viewer smoke test
     ap.add_argument("--snap-at", default="", help=argparse.SUPPRESS)  # sim times: PNG of our own window
     ap.add_argument("--snap-dir", default=str(data_dir() / "demo"), help=argparse.SUPPRESS)
+    add_cli_args(ap)
     args = ap.parse_args()
+    args.conditions, args.schedule = conditions_from_args(args), parse_schedule(args.cond_at)
     if args.headless:
         sys.exit(run_headless(args))
     if args.record:

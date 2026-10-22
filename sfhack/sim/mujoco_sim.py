@@ -18,7 +18,9 @@ from .. import bus as topics
 from ..bus import Bus
 from ..config import X2_DIR, Config
 from ..control.mixer import VehicleParams
-from ..messages import BaroMsg, CameraFrame, Disturbance, GnssMsg, ImuMsg, MagMsg, MotorCmd, RangeMsg
+from ..degradation import models as lever
+from ..degradation.conditions import Conditions, ConditionsMsg
+from ..messages import BaroMsg, CameraFrame, Disturbance, GnssMsg, ImuMsg, LidarMsg, MagMsg, MotorCmd, RangeMsg
 
 GRAVITY = 9.81
 
@@ -77,6 +79,15 @@ class MujocoSim:
         self.rng = np.random.default_rng(seed)
         self.range_rng = np.random.default_rng(seed + 2000)  # own stream: adding it left the others unchanged
         self.render_front = render_front
+        # Degradation levers: own RNG streams, so nominal flights draw exactly what they drew before.
+        self.conditions = cfg.conditions.copy()
+        self.gnss = lever.GnssModel(np.random.default_rng(seed + 3000), cfg.noise.gnss_noise)
+        self.wind_model = lever.WindModel(np.random.default_rng(seed + 3001))
+        self.weather_rng = np.random.default_rng(seed + 3002)
+        self.range_lever_rng = np.random.default_rng(seed + 3003)
+        self.lidar_rng = np.random.default_rng(seed + 3004)
+        self.weather = lever.weather_effect(self.conditions.weather)
+        self.frames_dropped = 0
         if reuse is not None:
             self.model, self.data = reuse
             mujoco.mj_resetData(self.model, self.data)
@@ -113,15 +124,18 @@ class MujocoSim:
             "down": _RateTimer(s.down_cam_hz),
             "front": _RateTimer(s.front_cam_hz),
             "gnss": _RateTimer(s.gnss_hz),
+            "lidar": _RateTimer(s.lidar_hz),
         }
+        self.lidar_dirs = lever.lidar_beam_dirs_body()
 
         # Disturbance state
-        self.wind = np.zeros(3)
-        self.gust = np.zeros(3)
-        self.camera_blackout_until = -1.0  # sim time; math.inf = until cleared
+        self.air_velocity = np.zeros(3)  # wind + gust (world), for display
+        self.wind_force = np.zeros(3)
+        self.camera_blackout_until = -1.0  # sim time; math.inf = until cleared (legacy camera_blackout)
 
         bus.subscribe(topics.MOTOR, self._on_motor)
         bus.subscribe(topics.DISTURBANCE, self.apply_disturbance)
+        bus.subscribe(topics.CONDITIONS, self.set_conditions)
 
     # ------------------------------------------------------------------ model
 
@@ -168,11 +182,29 @@ class MujocoSim:
     def _on_motor(self, msg: MotorCmd) -> None:
         self.ctrl[:] = msg.thrust
 
+    def set_conditions(self, conditions: Conditions | ConditionsMsg) -> None:
+        """Adopt a copy of the degradation levers (also reachable via the `conditions` bus topic)."""
+        if isinstance(conditions, ConditionsMsg):
+            conditions = conditions.conditions
+        conditions.validate()
+        self.conditions = conditions.copy()
+        self.weather = lever.weather_effect(self.conditions.weather)
+
+    @property
+    def camera_lost(self) -> bool:
+        return self.conditions.camera.lost or self.time < self.camera_blackout_until
+
+    def weather_visuals(self) -> lever.WeatherVisuals:
+        return lever.weather_visuals(self.conditions.weather)
+
     def apply_disturbance(self, dist: Disturbance) -> None:
         t = self.data.time
         if dist.kind == "wind":
             vx, vy = (dist.value or (0.0, 0.0))[:2]
-            self.wind = np.array([vx, vy, 0.0])
+            speed, direction = lever.wind_from_vector(vx, vy)
+            self.conditions.wind.speed = speed
+            if speed > 0:
+                self.conditions.wind.direction_deg = direction
         elif dist.kind == "camera_blackout":
             self.camera_blackout_until = t + dist.duration if dist.duration > 0 else math.inf
         elif dist.kind == "imu_bias_jump":
@@ -180,7 +212,7 @@ class MujocoSim:
             ang = self.rng.uniform(0, 2 * math.pi)
             self.accel_bias += mag * np.array([math.cos(ang), math.sin(ang), 0.0])
         elif dist.kind == "clear":
-            self.wind[:] = 0.0
+            self.conditions.wind.speed = self.conditions.wind.gust = 0.0
             self.camera_blackout_until = -1.0
         # comms_loss is handled by the server (the drone keeps flying)
 
@@ -199,16 +231,10 @@ class MujocoSim:
         self._publish_sensors()
 
     def _apply_wind(self) -> None:
-        dc = self.cfg.disturbance
-        dt = self.cfg.sim.timestep
-        if np.any(self.wind):
-            # Ornstein-Uhlenbeck gust force with ~2 s correlation time
-            self.gust += -self.gust * dt / 2.0 + self.rng.normal(0, dc.wind_gust_std * math.sqrt(dt), 3)
-        else:
-            self.gust[:] = 0.0
-        rel = self.wind - self.data.qvel[0:3]
-        force = dc.wind_drag * rel * (1.0 if np.any(self.wind) else 0.0) + self.gust
-        self.data.xfrc_applied[self.body_id, 0:3] = force
+        w = self.conditions.wind
+        self.air_velocity = self.wind_model.air_velocity(w, self.cfg.sim.timestep)
+        self.wind_force = self.wind_model.force(w, self.air_velocity, self.data.qvel[0:3], self.cfg.disturbance.wind_drag)
+        self.data.xfrc_applied[self.body_id, 0:3] = self.wind_force
 
     def _update_biases(self) -> None:
         n, dt = self.cfg.noise, self.cfg.sim.timestep
@@ -227,22 +253,30 @@ class MujocoSim:
         if self.timers["baro"].due(t):
             alt = float(d.qpos[2]) + self.baro_bias + self.rng.normal(0, n.baro_noise)
             self.bus.publish(topics.BARO, BaroMsg(t, alt))
+        c = self.conditions
         if self.timers["range"].due(t):
             r = float(d.sensor("rangefinder").data[0])  # -1 = no hit
             if 0.0 <= r <= n.range_max:
                 r = max(0.0, r + self.range_rng.normal(0, n.range_noise + n.range_noise_rel * r))
             else:
                 r = math.nan
+            r = lever.degrade_range(r, self.weather, c.lidar.dropout, c.lidar.lost, self.range_lever_rng)
             self.bus.publish(topics.RANGE, RangeMsg(t, r))
+        if self.timers["lidar"].due(t):
+            self.bus.publish(topics.LIDAR, self._lidar_scan(t))
         if self.timers["mag"].due(t):
             yaw = yaw_from_R(d.xmat[self.body_id].reshape(3, 3)) + self.mag_bias
             yaw += math.radians(self.rng.normal(0, n.mag_noise_deg))
             self.bus.publish(topics.MAG, MagMsg(t, math.atan2(math.sin(yaw), math.cos(yaw))))
-        if self.cfg.sim.gnss_enabled and self.timers["gnss"].due(t):
-            pos = d.qpos[0:3] + self.rng.normal(0, n.gnss_noise, 3)
-            self.bus.publish(topics.GNSS, GnssMsg(t, pos))
+        if self.timers["gnss"].due(t):
+            fix = self.gnss.sample(t, d.qpos[0:3], c.gnss)
+            if fix is not None:
+                self.bus.publish(topics.GNSS, GnssMsg(t, fix.pos, fix.cov))
         if self.timers["down"].due(t):
-            self.bus.publish(topics.CAMERA_DOWN, self.render("down"))
+            if lever.camera_frame_kept(c, self.weather, self.weather_rng):
+                self.bus.publish(topics.CAMERA_DOWN, self.render("down"))
+            else:
+                self.frames_dropped += 1
         if self.render_front and self.timers["front"].due(t):
             self.bus.publish(topics.CAMERA_FRONT, self.render("front"))
 
@@ -264,12 +298,37 @@ class MujocoSim:
         self._cam_truth[self.frame_seq] = (self.data.cam_xpos[cid].copy(), self.data.cam_xmat[cid].reshape(3, 3).copy())
         while len(self._cam_truth) > 64:
             self._cam_truth.popitem(last=False)
-        if self.time < self.camera_blackout_until:
+        if name == "down" and self.camera_lost:
             img = np.zeros((h, w, 3), np.uint8)  # sensor failure: black frames
         else:
             self.renderer.update_scene(self.data, camera=name)
             img = self.renderer.render().copy()
+            if self.weather.visibility_m < lever.CLEAR_VISIBILITY_M:
+                img = lever.degrade_image(img, self.weather, self._view_distance(name), self.weather_rng)
         return CameraFrame(self.time, self.frame_seq, name, img, fovy)
+
+    def _view_distance(self, name: str) -> float:
+        """Air the camera looks through: the true distance to the surface below (down), ~60 m (front)."""
+        if name != "down":
+            return 60.0
+        r = float(self.data.sensor("rangefinder").data[0])
+        return r if r >= 0.0 else float(self.data.qpos[2])
+
+    def _lidar_scan(self, t: float) -> LidarMsg:
+        """Cast the nadir fan against the scene geometry (the X2 itself excluded), then apply the levers."""
+        m, d, c = self.model, self.data, self.conditions
+        origin = d.site_xpos[m.site("rangefinder").id].copy()
+        R = d.xmat[self.body_id].reshape(3, 3)
+        geomid = np.zeros(1, np.int32)
+        rmax = self.cfg.noise.lidar_range_max
+        ranges = np.full(len(self.lidar_dirs), math.nan)
+        for i, vb in enumerate(self.lidar_dirs):
+            r = mujoco.mj_ray(m, d, origin, R @ vb, None, 1, self.body_id, geomid)
+            r = r if 0.0 <= r <= rmax else math.nan
+            if math.isfinite(r):
+                r = max(0.0, r + self.lidar_rng.normal(0, self.cfg.noise.range_noise))
+            ranges[i] = lever.degrade_range(r, self.weather, c.lidar.dropout, c.lidar.lost, self.range_lever_rng)
+        return LidarMsg(t, np.asarray(lever.LIDAR_BEAMS), ranges)
 
     def close(self) -> None:
         if self.renderer is not None:

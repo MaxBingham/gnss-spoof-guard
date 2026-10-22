@@ -25,6 +25,8 @@ HEALTH = "health"
 SETPOINT = "setpoint"
 MOTOR = "motor"
 DISTURBANCE = "disturbance"
+CONDITIONS = "conditions"  # ConditionsMsg: degradation levers for the simulator (never read onboard)
+LIDAR = "lidar"  # nadir multi-beam lidar
 DECISION = "decision"  # (t, text): onboard decisions (re-localization, landing, timeout, ...)
 
 

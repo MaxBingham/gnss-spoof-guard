@@ -22,6 +22,10 @@ never imports the simulator or `sim/truth.py`. Truth leaves the simulator only v
 - `perception/mock_localizer.py`: marked `# SIMULATION OF PERCEPTION - uses ground truth`,
 - harness code that only scores / displays (`runner.py`, demos, tests).
 `tests/test_truth_separation.py` enforces it. Keep it green; never weaken it.
+The degradation levers (`sfhack/degradation/`, `Conditions`: GNSS spoof / jam, weather, wind, camera and
+lidar loss) are simulated reality too: only the simulator and harness read them; onboard code never imports
+`degradation` or the `conditions` topic (same test). The onboard GNSS fusion is the NAIVE baseline on purpose
+(every fix fused, no gate); see README "Degradation levers" and `demos/09_degradation_scenarios.py`.
 
 ## Estimation (decisions and why)
 

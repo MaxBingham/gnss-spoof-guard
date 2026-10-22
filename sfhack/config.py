@@ -10,6 +10,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .degradation.conditions import Conditions
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 X2_DIR = REPO_ROOT / "third_party" / "skydio_x2"
 SAMPLE_WORLD_DIR = Path(__file__).resolve().parent / "world" / "sample_berkeley"
@@ -31,8 +33,8 @@ class SimConfig:
     mag_hz: float = 20.0
     down_cam_hz: float = 5.0
     front_cam_hz: float = 5.0
-    gnss_hz: float = 5.0
-    gnss_enabled: bool = False  # GNSS exists but is DISABLED: this project is about flying without it
+    gnss_hz: float = 5.0  # GNSS receiver (off by default: Config.conditions.gnss.mode = "off")
+    lidar_hz: float = 10.0  # nadir multi-beam lidar
     max_time_s: float = 400.0
 
 
@@ -51,7 +53,8 @@ class SensorNoise:
     range_max: float = 40.0  # m, beyond this the rangefinder reports nothing (nan)
     mag_noise_deg: float = 2.0
     mag_bias_deg: float = 1.0  # constant heading bias std (uncalibrated declination / hard iron)
-    gnss_noise: float = 2.5  # m (unused while GNSS is disabled)
+    gnss_noise: float = 1.5  # m, white horizontal noise per GNSS fix (plus a slow Gauss-Markov error)
+    lidar_range_max: float = 100.0  # m, nadir multi-beam lidar
 
 
 @dataclass
@@ -184,7 +187,6 @@ class HealthConfig:
 @dataclass
 class DisturbanceConfig:
     wind_drag: float = 0.15  # N per m/s of relative air speed (linear drag model for wind force)
-    wind_gust_std: float = 0.3  # N, random gust force on top of the steady wind
     imu_bias_jump: float = 0.3  # m/s^2, magnitude of an accel bias jump
 
 
@@ -200,6 +202,8 @@ class Config:
     localizer: LocalizerConfig = field(default_factory=LocalizerConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
+    # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
+    conditions: Conditions = field(default_factory=Conditions)
 
 
 def default_config() -> Config:

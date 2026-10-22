@@ -29,6 +29,11 @@ class HealthMonitor:
             self.last_fix_t = fix.t
             self.last_fix_pos = fix.pos.copy()
 
+    def on_gnss(self, t: float, pos: np.ndarray) -> None:
+        """A GNSS fix counts as a position fix (naive baseline: GNSS is trusted whenever it exists)."""
+        self.last_fix_t = t
+        self.last_fix_pos = np.asarray(pos, float)[:2].copy()
+
     def reset_timer(self, t: float) -> None:
         """Start counting 'time since fix' from now (called when monitoring becomes relevant)."""
         if self.active_since is None:

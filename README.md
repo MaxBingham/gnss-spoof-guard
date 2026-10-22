@@ -1,6 +1,6 @@
 # gnss-spoof-guard
 
-GNSS-free drone navigation that knows when GNSS is lying. Built for the SF Hackathon (Oct 24, 2026) on top of the [gnss-free-nav prototype](https://gnss-free-nav.pages.dev) (password-protected).
+GNSS-free drone navigation that knows when GNSS is lying. Built for the SF Hackathon (Oct 24, 2026) on top of the [gnss-free-nav prototype](https://gnss-free-nav.pages.dev).
 
 ## Pitch
 
@@ -33,4 +33,4 @@ npm run scenario -- --seed 42
 
 ## Disclosure
 
-The simulator, drone dynamics, sensor models, Kalman filter, planner and Berkeley map package come from the earlier gnss-free-nav prototype. Everything listed under "Planned features" is built during the hackathon.
+Prior work, built before the hackathon: the simulator and Kalman filter, the degradation levers (GNSS spoof drift, GNSS jam, weather noise and dropouts, wind force, camera loss, lidar loss), the dashboard, and the naive baseline that trusts GNSS whenever a fix exists. Built on Saturday, not in this repo yet: detection, trust ranking, and the decision policy.

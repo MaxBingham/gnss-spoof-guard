@@ -8,6 +8,66 @@ Prior work, built before the hackathon: the MuJoCo Skydio X2 simulation, the AHR
 
 The earlier TypeScript rig that previously lived on `main` is archived at tag [`ts-rig-archive`](https://github.com/MaxBingham/gnss-spoof-guard/tree/ts-rig-archive).
 
+## Setup
+
+macOS / Linux (Windows: the `.ps1` twins in `scripts/`). Needs [uv](https://docs.astral.sh/uv/); Python 3.12
+is installed by uv. The venv lives in `~/.venvs/sf-hack`, generated data in `~/sf-hack-data`.
+
+```
+bash scripts/setup.sh                          # once
+. scripts/env.sh                               # every shell
+uv run python -m pytest tests -q               # all tests (~2 min)
+```
+
+## Live demo
+
+```
+bash scripts/demo.sh                           # viewer window: Berkeley A -> B, vision localizer, GNSS ok
+bash scripts/demo.sh --fullscreen              # same, fullscreen (Tab toggles)
+bash scripts/demo.sh --scenario-at 25          # plays the spoof scenario at t = 25 s (or press P any time)
+uv run python demos/demo_live.py --record out.mp4 --scenario-at 25   # same view, offscreen, 1920x1080 MP4
+uv run python demos/demo_live.py --headless --scenario-at 25         # no window: fly, print, score
+```
+
+The viewer is an OpenCV window over an offscreen MuJoCo render; run it with plain `python` (not `mjpython`).
+`--record` writes H.264 through `ffmpeg` when it is installed, else OpenCV's `mp4v`. `--size WxH` sets the
+frame size (viewer 1600x900, video 1920x1080), `--snap-at 30,60` saves PNGs at those sim times, `Z` saves
+one from the window. All lever flags below (`--gnss`, `--weather`, `--cond-at`, ...) work here too.
+
+What is on screen:
+- **Solid white X2** = the true drone (simulator), drawn 9x life size or more so it reads across a room.
+  **Cyan ghost** = where the drone thinks it is (EKF) with its 2σ bubble and ground ring. White / cyan
+  trails = true / estimated path, red dashes = the error between them. A green, B red.
+- **Sensors:** yellow frustum + live image = down camera, red beams = rangefinder + 8-beam lidar,
+  orange pin and ring = the GNSS fix. A lost sensor goes dark (gray frustum, `CAMERA LOST` image, no beams).
+- **Weather:** depth-based fog / haze from `sim.weather_visuals()` (visibility, color per kind), rain
+  streaks, dust, and a wind arrow plus drifting streaks that follow the wind lever.
+- **HUD:** mission phase and health, true error vs claimed 2σ (red `OVERCONFIDENT` when the error is
+  outside it), GNSS state from `fs.conditions.gnss.mode`, active degradations, sensor strip, lever panel,
+  wind compass. The violet **Detection / Trust ranking / Decision log** panel is deliberately empty and
+  badged *built at hackathon*.
+
+Truth is used only to draw and score (the true drone, true error, camera frustum pose); the autopilot
+never sees it.
+
+| Key | Lever / action | Key | Lever / action |
+| --- | --- | --- | --- |
+| `G` | GNSS: ok, drag, jump, jam, off | `C` | camera lost on / off |
+| `F` | weather intensity 0, 0.35, 0.65, 1 | `L` | lidar + rangefinder lost on / off |
+| `T` | weather kind: fog, rain, dust | `V` | localizer on / off (dead reckoning) |
+| `W` | wind 0, 4, 8, 12 m/s | `P` | play the spoof scenario |
+| `D` | wind direction +45 deg | `X` | reset all levers |
+| `U` | gusts on / off | `R` | restart the flight |
+| `SPACE` | pause | `1` `2` `4` | sim speed |
+| `O` | reset the camera | `Q` / `Esc` | quit |
+
+Mouse: drag to orbit, wheel to zoom, click a lever row to press its key.
+
+Spoof scenario (`P`, times after the press): GNSS drag 1.5 m/s east; +14 s fog 0.65 and a 7 m/s
+crosswind with gusts; +24 s camera lost; +34 s camera back and weather clears while the spoof keeps
+dragging. From t = 25 s (seed 0) the naive baseline lands about 120 m from B with 2σ near 1.2 m and health
+NOMINAL throughout.
+
 ## Degradation levers
 
 All levers live in one `Conditions` dataclass (`sfhack/degradation/`). They are simulated reality: the
@@ -18,8 +78,8 @@ compass degrees (0 = north, 90 = east), the direction the wind / false position 
 | --- | --- | --- |
 | GNSS | `gnss.mode` = `off` (default, no receiver) / `ok` / `jam` / `drag` / `jump`; `drag_rate`, `drag_heading_deg`, `jump_m`, `jump_heading_deg` | 5 Hz fixes, 1.5 m white + 0.7 m slow noise. `jam`: no fix. `drag`: false offset grows at `drag_rate` m/s. `jump`: false offset of `jump_m` at once. |
 | Weather | `weather.kind` = `clear` / `rain` / `fog` / `dust`, `weather.intensity` 0-1 | Down camera: haze toward the fog color by visibility, pixel noise, rain streaks, frame dropouts. Rangefinder + lidar: range noise and return dropouts. `sim.weather_visuals()` gives visibility / fog ramp / color for the viewer. |
-| Wind | `wind.speed`, `wind.direction_deg`, `wind.rotation_deg_s`, `wind.gust` | Drag force on the X2 in MuJoCo from steady wind (optionally turning) plus Ornstein-Uhlenbeck gusts. The live demo's `W` key is a 5 s case of this lever. |
-| Camera | `camera.lost`, `camera.drop_rate` | Lost: black down-camera frames (the `C` key's 10 s blackout still works). Drop rate: frames never delivered. |
+| Wind | `wind.speed`, `wind.direction_deg`, `wind.rotation_deg_s`, `wind.gust` | Drag force on the X2 in MuJoCo from steady wind (optionally turning) plus Ornstein-Uhlenbeck gusts. In the live demo, `W` steps the speed, `D` turns the direction, `U` toggles gusts. |
+| Camera | `camera.lost`, `camera.drop_rate` | Lost: black down-camera frames (`C` in the live demo). Drop rate: frames never delivered. |
 | Lidar | `lidar.lost`, `lidar.dropout` | Applies to the downward rangefinder and the new 8-beam nadir lidar (`lidar` topic). Touchdown falls back to the estimated-height rule without the rangefinder. |
 
 The onboard baseline is naive on purpose: whenever a GNSS fix exists it is fused into the EKF without a

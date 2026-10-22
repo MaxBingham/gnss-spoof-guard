@@ -9,7 +9,7 @@ V1 (browser prototype) is the separate repo `gnss-free-nav/` next to this one (g
 ```
 . scripts/env.ps1                                  # Windows (bash: . scripts/env.sh); venv + data live outside OneDrive
 uv run python -m pytest tests -q                   # all tests (~2 min)
-uv run python demos/demo_live.py                   # LIVE DEMO (viewer); --headless / --record; see DEMO.md
+uv run python demos/demo_live.py                   # LIVE DEMO (viewer); --headless / --record; see README
 uv run python demos/02_mission_ekf.py              # default Berkeley mission, EKF + mock localizer
 uv run python demos/06_ekf_diagnostics.py          # dead reckoning only, plot -> $SFHACK_DATA/diagnostics
 uv run python demos/07_eval_seeds.py --seeds 10    # success rate over seeds (parallel)

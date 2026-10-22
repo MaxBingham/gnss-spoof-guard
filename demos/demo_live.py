@@ -10,7 +10,7 @@ no truth in the control loop), with every degradation lever live.
     python demos/demo_live.py --events "45:C,55:C"    # press keys at sim times
 
 What you see:
-  Solid white X2 = TRUTH (the simulator), drawn 9x life size. Cyan ghost = where the drone THINKS it is (EKF),
+  Solid white X2 = TRUTH (the simulator), drawn 9x life size or more. Cyan ghost = where the drone THINKS it is (EKF),
   cyan bubble = its claimed 2-sigma. White trail = true path, cyan trail = estimated path. A green, B red.
   Yellow frustum = down camera (live image bottom-left), red beams = rangefinder / lidar returns,
   orange pin = GNSS fix. A lost sensor goes dark. Fog / rain / dust and the wind arrow follow the levers.
@@ -58,7 +58,7 @@ NAV_LABEL = {
     "off": "DEAD RECKONING (localizer off)",
 }
 TRAIL_DT = 0.25  # s between trail points
-DRONE_SCALE = 9.0  # the X2 is 0.4 m across; drawn 9x so it reads from across a room
+DRONE_SCALE = 9.0  # the X2 is 0.4 m across; drawn 9x (more when the camera pulls back) to read across a room
 
 CYAN = (0.0, 0.85, 1.0)
 WHITE = (1.0, 1.0, 1.0)
@@ -68,7 +68,7 @@ ORANGE = (1.0, 0.55, 0.1)
 YELLOW = (1.0, 0.85, 0.1)
 LASER = (1.0, 0.18, 0.15)
 DARK = (0.18, 0.18, 0.2)
-WIND_RGB = (0.5, 0.8, 1.0)
+WIND_RGB = (0.1, 0.45, 1.0)
 
 VIEW_SIZE = (1600, 900)
 RECORD_SIZE = (1920, 1080)
@@ -136,6 +136,7 @@ class LiveDemo:
         rng = np.random.default_rng(7)
         self.wind_pts = rng.uniform(-1, 1, (70, 3)) * [45, 45, 18]
         self.rain_pts = rng.uniform(-1, 1, (260, 3)) * [30, 30, 16]
+        self.draw_scale = DRONE_SCALE
 
     # ------------------------------------------------------------------ inputs (bus = what the sensors deliver)
 
@@ -216,7 +217,7 @@ class LiveDemo:
 
     # ------------------------------------------------------------------ 3D
 
-    def update_particles(self, dt: float, center: np.ndarray) -> None:
+    def update_particles(self, dt: float, center: np.ndarray, cam_dist: float = 36.0) -> None:
         w = self.c.wind
         ux, uy = math.sin(math.radians(w.direction_deg)), math.cos(math.radians(w.direction_deg))
         wind = np.array([w.speed * ux, w.speed * uy, 0.0])
@@ -227,6 +228,7 @@ class LiveDemo:
         self.rain_pts += (np.array([0.0, 0.0, -14.0]) + 0.5 * wind) * dt
         self.rain_pts = (self.rain_pts + rhalf) % (2 * rhalf) - rhalf
         self._center = center
+        self.draw_scale = float(np.clip(cam_dist / 4.0, DRONE_SCALE, 30.0))
 
     def draw_geoms(self, scn: mujoco.MjvScene) -> None:
         g = Geoms(scn)
@@ -244,8 +246,9 @@ class LiveDemo:
             g.tube(_decimate(self.truth_trail, 220), 0.3, WHITE, 0.95, emission=0.3)
             g.tube(_decimate(self.est_trail, 220), 0.3, CYAN, 0.9, emission=0.4)
         # the true drone and its ghost
-        g.drone(tr.pos, tr.R, DRONE_SCALE, (0.93, 0.93, 0.96), (0.12, 0.12, 0.14), 1.0, nose_rgb=ORANGE)
-        g.drone(est.pos, est.R, DRONE_SCALE, CYAN, CYAN, 0.38)
+        scale = self.draw_scale
+        g.drone(tr.pos, tr.R, scale, (0.93, 0.93, 0.96), (0.12, 0.12, 0.14), 1.0, nose_rgb=ORANGE)
+        g.drone(est.pos, est.R, scale, CYAN, CYAN, 0.38)
         cov = est.cov[:3, :3]
         evals, evecs = np.linalg.eigh(0.5 * (cov[:2, :2] + cov[:2, :2].T))
         radii = np.clip(2.0 * np.sqrt(np.maximum(evals, 0.0)), 0.8, 400.0)
@@ -322,9 +325,10 @@ class LiveDemo:
         if w.speed <= 0 and w.gust <= 0:
             return
         u = np.array([math.sin(math.radians(w.direction_deg)), math.cos(math.radians(w.direction_deg)), 0.0])
-        L = 3.0 + 0.9 * w.speed
-        base = pos + np.array([0.0, 0.0, 7.0])
-        g.arrow(base - u * L / 2, base + u * L / 2, 0.6, WIND_RGB, 0.95, emission=0.5)
+        k = self.draw_scale / DRONE_SCALE
+        L = (4.0 + 1.1 * w.speed) * k
+        base = pos + np.array([0.0, 0.0, 8.0 * k])
+        g.arrow(base - u * L / 2, base + u * L / 2, 0.9 * k, WIND_RGB, 0.95, emission=0.6)
         center = getattr(self, "_center", pos)
         streak = u * (0.6 + 0.35 * w.speed)
         for q in self.wind_pts:
@@ -366,7 +370,7 @@ class LiveDemo:
             if pe is not None:
                 out.append((pe, "THINKS IT IS HERE", (0, 217, 255, 255)))
         if self.gnss_fixes and self.gnss_state() not in ("off",):
-            pg = project(self.gnss_fixes[-1] + np.array([0, 0, 1.5]))
+            pg = project(self.gnss_fixes[-1] - np.array([0, 0, 9.0]))  # below the pin: clear of the ghost label
             if pg is not None and (pt is None or math.dist(pg, pt) > 40):
                 txt = "GNSS (no fix)" if self.gnss_state() == "jam" else "GNSS FIX"
                 out.append((pg, txt, (255, 140, 30, 255) if self.gnss_state() != "jam" else (140, 140, 150, 255)))
@@ -539,12 +543,13 @@ class Composer:
     def frame(self, demo: LiveDemo, dt: float, speed: int, paused: bool, recording: bool) -> np.ndarray:
         tr, est = demo.fs.truth.state(), demo.fs.autopilot.pose()
         cam = self.chase.update(dt, tr.pos, tr.vel, est.pos)
-        demo.update_particles(0.0 if paused else dt * speed, np.array(cam.lookat))
+        demo.update_particles(0.0 if paused else dt * speed, np.array(cam.lookat), cam.distance)
         wv = demo.fs.sim.weather_visuals()
         vis = wv.visibility_m if wv.kind != "clear" and wv.intensity > 0 else None
-        # Fog thickens from just in front of the drone outward: the drone stays readable, the world fades
-        # with the weather lever (the camera itself sits 30-60 m behind the drone, in the same fog).
-        fog_start = wv.fog_start_m + 0.85 * cam.distance
+        # Fog thickens from just in front of the drone and its ghost outward: both stay readable, the world
+        # fades with the weather lever (the camera itself sits 30-150 m behind the drone, in the same fog).
+        sep = float(np.linalg.norm(est.pos[:2] - tr.pos[:2]))
+        fog_start = wv.fog_start_m + 0.85 * cam.distance + 0.8 * sep
         img = self.sr.render(demo.fs.sim.data, cam, demo.draw_geoms, vis, wv.fog_rgb, fog_start)
         st = demo.hud_state(speed, paused, recording, demo.labels(self.sr.project))
         p = self.hud.px
@@ -604,7 +609,7 @@ def run_viewer(args: argparse.Namespace) -> None:
         elif event == cv2.EVENT_MOUSEWHEEL:
             comp.chase.zoom = float(np.clip(comp.chase.zoom * (0.9 if flags > 0 else 1.1), 0.3, 6.0))
 
-    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_NORMAL)
     cv2.resizeWindow(WINDOW, W, H)
     cv2.setMouseCallback(WINDOW, on_mouse)
     fullscreen = args.fullscreen
@@ -779,7 +784,7 @@ def run_record(args: argparse.Namespace) -> int:
             print(f"t={demo.t:6.1f}s KEY {pending[0][1]}: {demo.press(pending.pop(0)[1])}", flush=True)
         demo.advance(steps)
         if args.snap_only:
-            if not snaps:
+            if not snaps or demo.result is not None:
                 break
             if demo.t < snaps[0] - 1.0:
                 tr, est = demo.fs.truth.state(), demo.fs.autopilot.pose()
@@ -823,8 +828,8 @@ def main() -> None:
     ap.add_argument("--events", default="", help="key presses at sim times, e.g. '45:C,55:C,30:P'")
     ap.add_argument("--scenario-at", type=float, default=None, help="play the spoof scenario at this sim time")
     ap.add_argument("--headless", action="store_true", help="no window: fly, print, score")
-    ap.add_argument("--record", nargs="?", const=str(data_dir() / "demo" / "demo_live.mp4"), default=None,
-                    help="render offscreen to an mp4 (default $SFHACK_DATA/demo/demo_live.mp4)")
+    ap.add_argument("--record", nargs="?", const=str(data_dir() / "demo" / "v2_demo.mp4"), default=None,
+                    help="render offscreen to an mp4 (default $SFHACK_DATA/demo/v2_demo.mp4)")
     ap.add_argument("--until", type=float, default=0.0, help="with --record: stop at this sim time")
     ap.add_argument("--size", type=_size, default=None, help="frame size WxH (viewer 1600x900, video 1920x1080)")
     ap.add_argument("--fullscreen", action="store_true", help="viewer: start fullscreen (Tab toggles)")

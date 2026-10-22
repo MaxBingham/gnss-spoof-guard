@@ -5,7 +5,6 @@
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 export UV_OFFLINE=1
-# The MuJoCo viewer on macOS needs mjpython (ships with the mujoco wheel).
-runner=python
-if [[ "$(uname)" == "Darwin" && " $* " != *" --headless "* && " $* " != *" --record"* ]]; then runner=mjpython; fi
-exec uv run --frozen --project "$SFHACK_ROOT" "$runner" "$SFHACK_ROOT/demos/demo_live.py" "$@"
+# Plain python on every OS: the viewer is an OpenCV window over an offscreen MuJoCo render (no mjpython;
+# its Cocoa window has to stay on the main thread).
+exec uv run --frozen --project "$SFHACK_ROOT" python "$SFHACK_ROOT/demos/demo_live.py" "$@"

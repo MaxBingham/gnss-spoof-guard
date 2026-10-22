@@ -1,4 +1,6 @@
 export { compassUnit } from "./compass.ts";
+export { GNSS_RATE_HZ, GNSS_SIGMA_M, sampleGnss } from "./gnss.ts";
+export type { GnssState } from "./gnss.ts";
 export { gaussian, mulberry32 } from "./rng.ts";
 export {
   CAMERA,

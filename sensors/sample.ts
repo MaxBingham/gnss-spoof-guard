@@ -1,4 +1,5 @@
-import { compassUnit } from "./compass.ts";
+import { sampleGnss } from "./gnss.ts";
+import type { GnssState } from "./gnss.ts";
 import { gaussian, mulberry32 } from "./rng.ts";
 import type { BodyState, Conditions, SensorFrame } from "./types.ts";
 
@@ -23,7 +24,6 @@ export const LANDMARKS = [
 /** Nadir cross-track beam angles, radians from straight down. */
 export const LIDAR_BEAMS = [-0.14, -0.1, -0.06, -0.02, 0.02, 0.06, 0.1, 0.14] as const;
 
-const GNSS_SIGMA_M = 1.5;
 const BARO_SIGMA_M = 0.5;
 const COMPASS_SIGMA_RAD = (2 * Math.PI) / 180;
 const IMU_ACCEL_SIGMA = 0.02;
@@ -32,10 +32,8 @@ const WEATHER_PIXEL_SIGMA = 6;
 const WEATHER_RANGE_SIGMA_M = 1.5;
 const WEATHER_DROPOUT = 0.75;
 
-export interface SensorState {
+export interface SensorState extends GnssState {
   uniform: () => number;
-  spoofXM: number;
-  spoofYM: number;
   biasAx: number;
   biasAy: number;
 }
@@ -46,6 +44,7 @@ export function createSensorState(seed: number): SensorState {
     uniform,
     spoofXM: 0,
     spoofYM: 0,
+    gnssWaitS: 0,
     biasAx: gaussian(uniform) * 0.03,
     biasAy: gaussian(uniform) * 0.03,
   };
@@ -77,7 +76,8 @@ function weatherScale(intensity: number): { pixelSigma: number; rangeSigma: numb
 
 /**
  * Build one frame from the body state and the levers.
- * Jam omits GNSS. Occlusion omits that sensor. Spoof rate 0 leaves the fix unbiased.
+ * GNSS is 5 Hz: jam omits the fix, and a zero spoof rate leaves it unbiased.
+ * Occlusion omits that sensor.
  * Weather noise and dropout apply only to camera landmark positions and lidar ranges.
  */
 export function sampleFrame(
@@ -100,22 +100,8 @@ export function sampleFrame(
     compass: { yawRad: wrap(pose.yaw + gaussian(state.uniform) * COMPASS_SIGMA_RAD) },
   };
 
-  if (conditions.gnss.spoofRateMS === 0) {
-    state.spoofXM = 0;
-    state.spoofYM = 0;
-  } else {
-    const drift = compassUnit(conditions.gnss.spoofDirectionRad);
-    state.spoofXM += conditions.gnss.spoofRateMS * dt * drift.x;
-    state.spoofYM += conditions.gnss.spoofRateMS * dt * drift.y;
-  }
-  if (!conditions.gnss.jammed) {
-    frame.gnss = {
-      x: pose.x + state.spoofXM + gaussian(state.uniform) * GNSS_SIGMA_M,
-      y: pose.y + state.spoofYM + gaussian(state.uniform) * GNSS_SIGMA_M,
-      cov: [GNSS_SIGMA_M * GNSS_SIGMA_M, 0, GNSS_SIGMA_M * GNSS_SIGMA_M],
-      quality: 1,
-    };
-  }
+  const gnss = sampleGnss(pose, conditions.gnss, state, state.uniform, dt);
+  if (gnss) frame.gnss = gnss;
 
   if (!conditions.camera.occluded) {
     const landmarks = [];

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { GNSS_RATE_HZ } from "../sensors/gnss.ts";
 import { CLEAR } from "../sensors/types.ts";
 import { parseSeed } from "./args.ts";
 import { runScenario } from "./scenario.ts";
@@ -19,9 +20,13 @@ describe("scenario", () => {
     expect(first.steps).toBe(second.steps);
     expect(first.finalErrorM).toBe(second.finalErrorM);
     expect(first.traces.at(-1)?.estimate.x).toBe(second.traces.at(-1)?.estimate.x);
-    expect(first.traces.every((trace) => trace.fixes.length === 1 && trace.fixes[0]?.source === "gnss")).toBe(
-      true,
-    );
+    const gnss = first.traces.filter((trace) => trace.fixes.length > 0);
+    expect(gnss.length).toBeGreaterThan(1);
+    expect(gnss.length).toBeLessThan(first.traces.length);
+    expect(gnss.every((trace) => trace.fixes.length === 1 && trace.fixes[0]?.source === "gnss")).toBe(true);
+    for (let i = 1; i < gnss.length; i++) {
+      expect(gnss[i]!.t - gnss[i - 1]!.t).toBeCloseTo(1 / GNSS_RATE_HZ, 6);
+    }
   });
 
   it("still finishes when a steady crosswind is blowing", () => {

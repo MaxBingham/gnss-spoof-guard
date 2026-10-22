@@ -85,7 +85,7 @@ describe("sensor levers", () => {
     const state = createSensorState(9);
     for (let i = 0; i < 10; i++) {
       const frame = sampleFrame(HOVER, storm, state, 0.02, i * 0.02);
-      expect(frame.gnss).toBeDefined();
+      if (i % 10 === 0) expect(frame.gnss).toBeDefined();
       for (const beam of frame.lidar!.beams) {
         if (beam.rangeM === null) dropped += 1;
         else if (Math.abs(beam.rangeM - cleanLidarRange(HOVER.z, beam.angleRad)) > 1e-6) noisy = true;

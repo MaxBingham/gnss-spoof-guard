@@ -27,7 +27,10 @@ export interface MockFlight {
 }
 
 /**
- * Deterministic naive flight for the dashboard.
+ * Hand-written stand-in. The dashboard plays `scenarioFlight` instead, which
+ * runs the headless baseline. These samples stay here so the chart tests do
+ * not need a full flight.
+ *
  * The estimate trusts a GNSS fix whenever one exists, so a spoof carries it off
  * the truth. Jam drops that fix. Camera and lidar fixes remain on the trace and
  * are used only while GNSS is absent. Weather noise hits those two sensors.

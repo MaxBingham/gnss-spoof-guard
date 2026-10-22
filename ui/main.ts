@@ -4,10 +4,10 @@ import "./styles.css";
 import { ChartPanel } from "./chart-view.ts";
 import { positionErrorM, uncertaintyRadiusM } from "./geometry.ts";
 import { mountLevers } from "./lever-panel.ts";
-import { initialLevers, type LeverState } from "./levers.ts";
+import { initialLevers, leversToConditions, type LeverState } from "./levers.ts";
 import { MapView } from "./map-view.ts";
-import { mockFlight, type MockFlight } from "./mock-flight.ts";
 import { clampCursor, sliceToCursor, stepCursor } from "./playback.ts";
+import { scenarioFlight, type ScenarioFlight, type ScenarioViewSample } from "./scenario-flight.ts";
 import { conditionRows, errorSeries, uncertaintySeries } from "./series.ts";
 import { PIPELINE_SLOTS } from "./slots.ts";
 
@@ -20,7 +20,7 @@ shell.innerHTML = `
   <header class="header">
     <div>
       <h1>GNSS Spoof Guard</h1>
-      <p>Degradation test rig. Mock baseline over a local ENU map, in meters.</p>
+      <p>Naive baseline, seed 42. Trusts a GNSS fix, and coasts when that fix is gone.</p>
     </div>
     <div class="badge">Pre-built test rig</div>
   </header>
@@ -86,17 +86,24 @@ const map = new MapView(mapEl);
 const charts = new ChartPanel(errorCanvas, sigmaCanvas);
 
 let levers: LeverState = initialLevers();
-let flight: MockFlight = mockFlight(levers);
+let flight: ScenarioFlight = scenarioFlight(levers);
 let cursor = flight.samples.length - 1;
 let playing = false;
 let timer: ReturnType<typeof setInterval> | undefined;
+let rerun: ReturnType<typeof setTimeout> | undefined;
 
 mountLevers(leversEl, levers, (next) => {
   levers = next;
-  flight = mockFlight(levers);
-  cursor = flight.samples.length - 1;
-  playing = false;
-  sync(true);
+  flight = { conditions: leversToConditions(levers), samples: flight.samples };
+  paintConditions();
+  if (rerun !== undefined) clearTimeout(rerun);
+  rerun = setTimeout(() => {
+    rerun = undefined;
+    playing = false;
+    flight = scenarioFlight(levers);
+    cursor = flight.samples.length - 1;
+    sync(true);
+  }, 80);
 });
 
 playButton.addEventListener("click", () => {
@@ -124,7 +131,7 @@ function required<T extends Element>(selector: string): T {
 function sync(refit: boolean): void {
   cursor = clampCursor(flight.samples.length, cursor);
   if (playing) {
-    if (timer === undefined) timer = setInterval(tick, 80);
+    if (timer === undefined) timer = setInterval(tick, 40);
   } else if (timer !== undefined) {
     clearInterval(timer);
     timer = undefined;
@@ -157,7 +164,7 @@ function paintConditions(): void {
   }
 }
 
-function paintReadout(sample: MockFlight["samples"][number] | undefined): void {
+function paintReadout(sample: ScenarioViewSample | undefined): void {
   if (!sample) {
     readoutEl.textContent = "";
     sourcesEl.textContent = "";
@@ -167,5 +174,8 @@ function paintReadout(sample: MockFlight["samples"][number] | undefined): void {
   const sigma = uncertaintyRadiusM(sample.trace.estimate.cov);
   readoutEl.textContent = `t ${sample.trace.t.toFixed(1)} s · error ${error.toFixed(1)} m · 2σ ${sigma.toFixed(1)} m · truth ${sample.truth.x.toFixed(1)}, ${sample.truth.y.toFixed(1)} · est ${sample.trace.estimate.x.toFixed(1)}, ${sample.trace.estimate.y.toFixed(1)}`;
   const sources = sample.trace.fixes.map((fix) => fix.source);
-  sourcesEl.textContent = sources.length > 0 ? `Fixes: ${sources.join(", ")}` : "Fixes: none";
+  const fixText = sources.length > 0 ? `Fixes: ${sources.join(", ")}` : "Fixes: none";
+  const camera = sample.cameraBlobs === null ? "camera off" : `camera ${sample.cameraBlobs}`;
+  const lidar = sample.lidarReturns === null ? "lidar off" : `lidar ${sample.lidarReturns}/${sample.lidarBeams}`;
+  sourcesEl.textContent = `${fixText} · ${camera} · ${lidar}`;
 }

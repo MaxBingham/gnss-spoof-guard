@@ -20,6 +20,12 @@ describe("scenario", () => {
     expect(first.steps).toBe(second.steps);
     expect(first.finalErrorM).toBe(second.finalErrorM);
     expect(first.traces.at(-1)?.estimate.x).toBe(second.traces.at(-1)?.estimate.x);
+    expect(first.samples).toHaveLength(first.steps);
+    const last = first.samples.at(-1)!;
+    expect(last.truth.z).toBe(0);
+    expect(Math.hypot(last.trace.estimate.x - last.truth.x, last.trace.estimate.y - last.truth.y)).toBeLessThan(5);
+    expect(last.trace).toBe(first.traces.at(-1));
+    expect(last.trace).not.toHaveProperty("truth");
     const gnss = first.traces.filter((trace) => trace.fixes.length > 0);
     expect(gnss.length).toBeGreaterThan(1);
     expect(gnss.length).toBeLessThan(first.traces.length);

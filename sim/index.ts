@@ -5,4 +5,4 @@ export { stepDynamics, windAcceleration, WIND_ACCEL_PER_MPS } from "./dynamics.t
 export type { DynamicsStep, TruthPose, VelocityCommand } from "./dynamics.ts";
 export { MISSION } from "./mission.ts";
 export { runScenario } from "./scenario.ts";
-export type { FlightResult, ScenarioOptions } from "./scenario.ts";
+export type { FlightResult, ScenarioOptions, ScenarioSample } from "./scenario.ts";

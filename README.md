@@ -22,6 +22,15 @@ A particle filter localizes the drone by matching unlabeled camera detections (b
 
 TypeScript in the browser (Vite), three.js and Leaflet. No backend.
 
+## Contract
+
+`sensors/`, `estimation/`, `pipeline/`, `sim/`, and `ui/` are the shared contract. `sim/` is headless. `Conditions` carries one weather intensity, a wind force (speed, compass direction, and optional rotation), camera and lidar occlusion switches, a GNSS jam switch, and a GNSS spoof drift rate where zero is off. The pass-through pipeline forwards a GNSS fix into the 6-state Kalman filter.
+
+```bash
+npm test
+npm run scenario -- --seed 42
+```
+
 ## Disclosure
 
 The simulator, drone dynamics, sensor models, Kalman filter, planner and Berkeley map package come from the earlier gnss-free-nav prototype. Everything listed under "Planned features" is built during the hackathon.

@@ -1,0 +1,15 @@
+{
+  "name": "gnss-spoof-guard",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "tsc --noEmit && vitest run",
+    "scenario": "node sim/run.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

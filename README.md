@@ -24,7 +24,7 @@ TypeScript in the browser (Vite), three.js and Leaflet. No backend.
 
 ## Contract
 
-`sensors/`, `estimation/`, `pipeline/`, `sim/`, and `ui/` are the shared contract. `sim/` is headless. `Conditions` carries one weather intensity, a wind force (speed, compass direction, and optional rotation), camera and lidar occlusion switches, a GNSS jam switch, and a GNSS spoof drift rate where zero is off. The pass-through pipeline forwards a GNSS fix into the 6-state Kalman filter.
+`sensors/`, `estimation/`, `pipeline/`, `sim/`, and `ui/` are the shared contract. `sim/` is headless. `Conditions` carries one weather intensity, a wind force (speed, compass direction, and optional rotation), camera and lidar occlusion switches, a GNSS jam switch, and a GNSS spoof drift rate where zero is off. The naive baseline forwards a GNSS fix into the 6-state Kalman filter and coasts when that fix is missing. `npm run scenario -- --seed 42` records truth beside the estimate, and the dashboard plays that flight.
 
 ```bash
 npm test

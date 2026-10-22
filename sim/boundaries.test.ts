@@ -23,11 +23,11 @@ describe("module boundaries", () => {
     expect(src).not.toMatch(/from ["'](?:three|leaflet)/);
   });
 
-  it("keeps sensors, estimation, and the pipeline off the sim", () => {
+  it("lets the dashboard call the headless sim, and keeps the other layers apart", () => {
     expect(imports("sensors", "sim")).toBe(false);
     expect(imports("estimation", "sim")).toBe(false);
     expect(imports("pipeline", "sim")).toBe(false);
-    expect(imports("ui", "sim")).toBe(false);
+    expect(imports("sim", "ui")).toBe(false);
     expect(imports("sensors", "estimation")).toBe(false);
     expect(imports("sensors", "pipeline")).toBe(false);
     expect(imports("estimation", "pipeline")).toBe(false);

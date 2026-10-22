@@ -8,7 +8,7 @@ const FRAME: SensorFrame = {
   baro: { altM: 12 },
   compass: { yawRad: 0.2 },
   gnss: { x: 4, y: -3, cov: [2.25, 0, 2.25], quality: 1 },
-  camera: { landmarks: [{ u: 10, v: 20 }], intrinsics: { fx: 1, fy: 1, cx: 0, cy: 0, width: 10, height: 10 } },
+  camera: { landmarks: [{ type: "tree", u: 10, v: 20 }], intrinsics: { fx: 1, fy: 1, cx: 0, cy: 0, width: 10, height: 10 } },
   lidar: { beams: [{ angleRad: 0, rangeM: 12 }] },
 };
 

@@ -1,5 +1,5 @@
 import { gaussian } from "./rng.ts";
-import type { SensorFrame } from "./types.ts";
+import type { CameraLandmark, SensorFrame } from "./types.ts";
 
 /** Pixel sigma on camera landmarks at weather intensity 1. */
 export const WEATHER_PIXEL_SIGMA = 6;
@@ -58,10 +58,10 @@ export function degradeRange(rangeM: number, effect: WeatherEffect, uniform: () 
 export function applyWeather(frame: SensorFrame, intensity: number, uniform: () => number): void {
   const effect = weatherEffect(intensity);
   if (frame.camera) {
-    const landmarks = [];
+    const landmarks: CameraLandmark[] = [];
     for (const landmark of frame.camera.landmarks) {
       const degraded = degradeLandmark(landmark, effect, uniform);
-      if (degraded) landmarks.push(degraded);
+      if (degraded) landmarks.push({ ...landmark, u: degraded.u, v: degraded.v });
     }
     frame.camera = { landmarks, intrinsics: frame.camera.intrinsics };
   }

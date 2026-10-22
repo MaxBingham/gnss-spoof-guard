@@ -65,11 +65,14 @@ describe("sensor levers", () => {
 
   it("reports clean camera and lidar readings at weather intensity zero", () => {
     const frame = sampleFrame(HOVER, CLEAR, createSensorState(4), 0.02, 0);
-    const expected = LANDMARKS.map((landmark) => projectLandmark(HOVER, landmark)).filter(
-      (point): point is { u: number; v: number } => point !== null,
-    );
+    const expected = LANDMARKS.flatMap((landmark) => {
+      const projected = projectLandmark(HOVER, landmark);
+      if (!projected) return [];
+      return [{ type: landmark.type, u: projected.u, v: projected.v }];
+    });
     expect(expected.length).toBeGreaterThan(0);
     expect(frame.camera?.landmarks).toEqual(expected);
+    expect(frame.camera?.landmarks.every((blob) => !("id" in blob))).toBe(true);
     expect(frame.lidar?.beams.map((beam) => beam.rangeM)).toEqual(
       LIDAR_BEAMS.map((angle) => cleanLidarRange(HOVER.z, angle)),
     );
@@ -82,6 +85,7 @@ describe("sensor levers", () => {
     const state = createSensorState(9);
     for (let i = 0; i < 10; i++) {
       const frame = sampleFrame(HOVER, storm, state, 0.02, i * 0.02);
+      if (i % 10 === 0) expect(frame.gnss).toBeDefined();
       for (const beam of frame.lidar!.beams) {
         if (beam.rangeM === null) dropped += 1;
         else if (Math.abs(beam.rangeM - cleanLidarRange(HOVER.z, beam.angleRad)) > 1e-6) noisy = true;

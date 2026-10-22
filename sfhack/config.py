@@ -27,6 +27,7 @@ class SimConfig:
     timestep: float = 0.002
     imu_hz: float = 200.0
     baro_hz: float = 20.0
+    range_hz: float = 20.0  # downward rangefinder
     mag_hz: float = 20.0
     down_cam_hz: float = 5.0
     front_cam_hz: float = 5.0
@@ -45,6 +46,9 @@ class SensorNoise:
     accel_bias_rw: float = 3e-4  # m/s^2/sqrt(s)
     baro_noise: float = 0.3  # m
     baro_bias_rw: float = 0.01  # m/sqrt(s)
+    range_noise: float = 0.02  # m, rangefinder white noise ...
+    range_noise_rel: float = 0.01  # ... plus this fraction of the range
+    range_max: float = 40.0  # m, beyond this the rangefinder reports nothing (nan)
     mag_noise_deg: float = 2.0
     mag_bias_deg: float = 1.0  # constant heading bias std (uncalibrated declination / hard iron)
     gnss_noise: float = 2.5  # m (unused while GNSS is disabled)
@@ -78,15 +82,25 @@ class MissionConfig:
     cruise_speed: float = 8.0  # m/s
     climb_speed: float = 3.0
     descent_speed: float = 2.5
-    flare_alt: float = 6.0  # below this, descend at land_speed
-    land_speed: float = 0.7  # the slower final landing from fly_x2.py
+    # Vision fixes stop at ~4-5 m (0.5 m/px ortho vs a tiny footprint): flare low and land briskly so the
+    # final blind stretch is ~4 s (was 6 m at 0.7 m/s = 9 s, which drifted 4-10 m).
+    flare_alt: float = 4.0  # below this, descend at land_speed
+    land_speed: float = 1.0
     wp_radius: float = 1.0  # m, waypoint reached (horizontal, on the estimate)
     preflight_s: float = 4.0  # on the ground: IMU calibration + zero-velocity updates (gyro bias error ~ 1/sqrt(t))
-    landed_alt: float = 0.35  # estimated z below which touchdown is checked
+    # Touchdown: rangefinder height (minus its at-rest reading, calibrated in preflight) below touchdown_range
+    # AND IMU stationary, both for touchdown_s. Fallback without rangefinder: the estimated height rule.
+    touchdown_range: float = 0.3  # m
+    ground_idle: float = 0.3  # fraction of hover thrust, uniform on all motors, while in ground contact
+    still_acc: float = 0.3  # m/s^2, IMU stationary: | |a| - g | below this ...
+    still_rate: float = 0.2  # rad/s, ... and |omega| below this
+    landed_alt: float = 0.35  # (fallback) estimated z below which touchdown is checked
     touchdown_vz: float = 0.25  # m/s, |estimated vertical speed| below this ...
     touchdown_s: float = 0.5  # ... for this long (while descending) = touchdown -> motors off, LANDED
     precision_sigma2: float = 3.0  # m, at B: descend only if the 2-sigma radius is below this ...
     precision_wait_s: float = 10.0  # ... or after hovering this long waiting for a fix
+    descend_xy_tol: float = 1.5  # m, DESCEND / LAND: pause the descent while the estimate is farther than
+    # this from B horizontally (a late fix moved it, or wind): re-center first, then continue down
     success_radius: float = 3.0  # landed within this distance of B = success (evaluation)
 
 
@@ -96,8 +110,10 @@ class EkfConfig:
     init_pos_std: float = 1.0
     init_vel_std: float = 0.1
     # Horizontal accel bias states (world frame): absorb AHRS tilt error x g (1 deg = 0.17 m/s^2).
-    init_acc_bias_std: float = 0.05  # m/s^2 (the AHRS starts level-calibrated on the ground)
-    acc_bias_rw: float = 0.02  # m/s^2/sqrt(s), random walk: tilt error drifts with the residual gyro bias
+    # Sized to the measured dead reckoning (~15 m / 30 s): 0.05 / 0.02 put 2-sigma at 45 m (health LAND)
+    # after 20 s without fixes.
+    init_acc_bias_std: float = 0.03  # m/s^2 (the AHRS starts level-calibrated on the ground)
+    acc_bias_rw: float = 0.01  # m/s^2/sqrt(s), random walk: tilt error drifts with the residual gyro bias
     baro_std: float = 0.4
     zupt_std: float = 0.05  # zero-velocity update on the ground
     gate_chi2: float = 9.21  # 99 % for 2 dof: visual fixes beyond this Mahalanobis distance are rejected
@@ -122,6 +138,24 @@ class LocalizerConfig:
     # 2, not 3: at 40 m cruise the 70 deg footprint holds 3+ mapped landmarks on only ~15 % of the
     # Berkeley route (V1 needed the same relaxation); 2 is still a 'real localizer could match here'.
     mock_min_landmarks: int = 2
+    # VISION localizer (perception/map_localizer.py): NCC of the ortho-rectified down camera vs the ortho
+    vision_min_alt: float = 4.0  # m, below this the footprint is too small to be distinctive
+    vision_tpl_px: int = 64  # template size in pixels (resolution follows the footprint)
+    vision_tpl_frac: float = 0.4  # template half size = this x height (footprint half height ~0.7 x h)
+    vision_tpl_min_m: float = 2.0
+    vision_tpl_max_m: float = 20.0
+    vision_min_std: float = 4.0  # gray levels: a uniform template (roof, blank ground) cannot match
+    vision_search_margin_m: float = 4.0  # search radius = 3 sigma(prior) + margin ...
+    vision_search_min_m: float = 6.0  # ... clipped to [min, max]
+    vision_search_max_m: float = 40.0
+    vision_search_max_px: int = 128  # wider than this many template pixels -> no fix (too uncertain for
+    # the altitude: a capped window produced confident wrong fixes 40 m off in the benchmark)
+    vision_min_score: float = 0.5  # NCC peak below this -> no fix
+    vision_peak_excl_m: float = 3.0  # second peak is searched outside this radius around the best ...
+    vision_min_margin: float = 0.08  # ... and must be this much lower (else ambiguous -> no fix)
+    vision_curv_ref: float = 0.05  # NCC peak curvature [1/px^2] that counts as a sharp peak
+    vision_sigma_floor: float = 0.5  # m
+    vision_tilt_std_deg: float = 0.5  # AHRS attitude error projected to the ground: height x this
     orb_features: int = 1500
     orb_min_inliers: int = 12
     orb_ratio: float = 0.8

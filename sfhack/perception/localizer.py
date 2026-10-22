@@ -1,8 +1,8 @@
 """Localizer interface: down-camera frame + onboard map + prior -> VisualFix (or None).
 
 Implementations:
-  - MockLocalizer   (mock_localizer.py): MOCK, truth + noise when >= 3 landmarks are in view.
-  - OrbMapLocalizer (orb_localizer.py):  real map matching (ORB + RANSAC homography).
+  - MockLocalizer (mock_localizer.py): MOCK, truth + noise when >= 2 mapped landmarks are in view.
+  - MapLocalizer  (map_localizer.py):  VISION, NCC of the ortho-rectified camera vs the onboard ortho.
 They live in separate files so that only the mock module touches the truth.
 """
 

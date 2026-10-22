@@ -9,6 +9,7 @@ V1 (browser prototype) is the separate repo `gnss-free-nav/` next to this one (g
 ```
 . scripts/env.ps1                                  # Windows (bash: . scripts/env.sh); venv + data live outside OneDrive
 uv run python -m pytest tests -q                   # all tests (~2 min)
+uv run python demos/demo_live.py                   # LIVE DEMO (viewer); --headless / --record; see DEMO.md
 uv run python demos/02_mission_ekf.py              # default Berkeley mission, EKF + mock localizer
 uv run python demos/06_ekf_diagnostics.py          # dead reckoning only, plot -> $SFHACK_DATA/diagnostics
 uv run python demos/07_eval_seeds.py --seeds 10    # success rate over seeds (parallel)
@@ -49,13 +50,29 @@ never imports the simulator or `sim/truth.py`. Truth leaves the simulator only v
   a covariance floor of (0.5 m/s * seconds blind) keeps correct fixes from being gated out. After 5
   consecutive rejections the next fix is accepted with its noise inflated to NIS = gate (re-localization),
   logged as a `RELOCALIZE` decision.
-- **Mock localizer** `mock_min_landmarks = 2`: at 40 m cruise only ~15 % of frames on the Berkeley route
+- **Vision localizer** (`perception/map_localizer.py`, `--localizer vision`, the demo default): ortho-
+  rectify the down camera with AHRS attitude + EKF height, NCC (`cv2.matchTemplate`) against the onboard
+  ortho within 3 sigma of the prior. No fix when: score < 0.5, a second LOCAL max is within 0.08 (the
+  shoulders of a broad true peak are not), the template is uniform, or the prior is too wide for the
+  search window at that altitude (a capped window gave confident 40 m-wrong fixes). Works ~4-40 m.
+  Benchmark: `demos/08_bench_localizer.py`. 10 seeds closed loop: 10/10 within 3 m, mean 0.8 m.
+- **Roofs** (`world/scene.py`): each building gets a roof plane textured with the ortho under its
+  footprint. Gray box tops rendered white and left the camera blind over the whole campus core
+  (health HOLD -> LAND); a real roof looks like its aerial photo.
+- **Mock localizer** is blind near B (no OSM landmarks there): the final descent is dead reckoning and
+  lands 5-50 m off. Closed-loop dead reckoning has a neutral mode (drag-limited drift ~2-3 m/s), so
+  landing precision needs fixes down to ~4 m. Keep `mock_min_landmarks = 2`: at 40 m cruise only ~15 % of frames on the Berkeley route
   hold 3+ mapped landmarks, which left the EKF blind most of the flight.
 
 ## Mission end
 
-- Touchdown (any descending phase): estimated height < `landed_alt` and |vz| < `touchdown_vz` for
-  `touchdown_s` -> motors off, LANDED, zero-velocity updates from then on.
+- Touchdown (any descending phase): downward rangefinder (sim sensor, own RNG stream, at-rest reading
+  calibrated in preflight) < `touchdown_range` -> GROUND_CONTACT, motors to uniform idle; still low and
+  IMU stationary for `touchdown_s` -> motors off, LANDED, zero-velocity updates. The idle stage matters:
+  with position control on, the drone hopped and skidded on the ground chasing its estimate and the IMU
+  never looked still. Fallback without rangefinder: estimated height < `landed_alt`.
+- Flare at 4 m, land at 1 m/s (vision stops at ~4 m); DESCEND/LAND pause while the estimate is > 1.5 m
+  from B horizontally (`RECENTER`).
 - Above B: descend only if the 2-sigma radius <= `precision_sigma2`, else hover up to `precision_wait_s`
   for a fix (`WAIT_FOR_FIX` / `DESCEND` decisions).
 - Decisions go to `autopilot.decisions` and the `decision` bus topic. The runner adds the scored outcome

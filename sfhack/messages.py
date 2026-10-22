@@ -27,6 +27,14 @@ class BaroMsg:
 
 
 @dataclass
+class RangeMsg:
+    """Downward rangefinder: distance along the body -z axis to the first surface (ground, roof, tree)."""
+
+    t: float
+    range: float  # m; nan = nothing within the maximum range
+
+
+@dataclass
 class MagMsg:
     """Compass heading, already converted to an ENU yaw angle (0 = east, CCW positive)."""
 

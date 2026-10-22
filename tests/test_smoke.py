@@ -21,3 +21,14 @@ def test_berkeley_ekf_loop_takes_off_and_gets_fixes() -> None:
     assert fs.truth.state().pos[2] > 30.0
     assert ap.loc_fixes > 0
     assert err < 10.0
+
+
+def test_berkeley_vision_mission_lands_at_b() -> None:
+    """Full default mission on the EKF with the VISION localizer (no truth in the loop) lands within 3 m
+    of B, and touchdown comes from the rangefinder."""
+    fs = FlightSystem(pose_source="ekf", localizer="vision", seed=0)
+    r = fs.run()
+    decisions = [text for _, text in fs.autopilot.decisions]
+    fs.close()
+    assert r.success, r.summary()
+    assert any(d.startswith("TOUCHDOWN (rangefinder") for d in decisions), decisions

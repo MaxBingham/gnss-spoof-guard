@@ -14,6 +14,7 @@ Callback = Callable[[str, Any], None]
 # Topic names (one place, so typos fail loudly at import time rather than silently at runtime).
 IMU = "imu"
 BARO = "baro"
+RANGE = "range"  # downward rangefinder
 MAG = "mag"
 GNSS = "gnss"
 CAMERA_DOWN = "camera/down"

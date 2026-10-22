@@ -18,7 +18,7 @@ from .. import bus as topics
 from ..bus import Bus
 from ..config import X2_DIR, Config
 from ..control.mixer import VehicleParams
-from ..messages import BaroMsg, CameraFrame, Disturbance, GnssMsg, ImuMsg, MagMsg, MotorCmd
+from ..messages import BaroMsg, CameraFrame, Disturbance, GnssMsg, ImuMsg, MagMsg, MotorCmd, RangeMsg
 
 GRAVITY = 9.81
 
@@ -68,13 +68,21 @@ class MujocoSim:
         spawn_yaw: float = 0.0,
         seed: int = 0,
         render_front: bool = False,
+        reuse: tuple[mujoco.MjModel, mujoco.MjData] | None = None,
     ) -> None:
+        """`reuse` = (model, data) of an earlier flight in the same world: skips the model build and resets
+        that data in place (the live demo restarts inside one open viewer window)."""
         self.cfg = cfg
         self.bus = bus
         self.rng = np.random.default_rng(seed)
+        self.range_rng = np.random.default_rng(seed + 2000)  # own stream: adding it left the others unchanged
         self.render_front = render_front
-        self.model = self._build_model(world)
-        self.data = mujoco.MjData(self.model)
+        if reuse is not None:
+            self.model, self.data = reuse
+            mujoco.mj_resetData(self.model, self.data)
+        else:
+            self.model = self._build_model(world)
+            self.data = mujoco.MjData(self.model)
         m, d = self.model, self.data
         self.body_id = m.body("x2").id
         self.cam_ids = {"down": m.camera("down").id, "front": m.camera("front").id}
@@ -100,6 +108,7 @@ class MujocoSim:
         self.timers = {
             "imu": _RateTimer(s.imu_hz),
             "baro": _RateTimer(s.baro_hz),
+            "range": _RateTimer(s.range_hz),
             "mag": _RateTimer(s.mag_hz),
             "down": _RateTimer(s.down_cam_hz),
             "front": _RateTimer(s.front_cam_hz),
@@ -124,11 +133,16 @@ class MujocoSim:
         # MuJoCo cameras look along their -z axis. Down camera: image top = forward, image right = right.
         drone.add_camera(name="down", pos=[0, 0, -0.02], fovy=cam.down_fovy_deg,
                          quat=_quat_from_axes([0, -1, 0], [1, 0, 0]))
+        # Downward rangefinder: MuJoCo casts along the site's +z axis (flipped to point down), ignoring the X2.
+        drone.add_site(name="rangefinder", pos=[0, 0, 0.01], quat=[0, 1, 0, 0])
+        rf = spec.add_sensor(name="rangefinder", type=mujoco.mjtSensor.mjSENS_RANGEFINDER,
+                             objtype=mujoco.mjtObj.mjOBJ_SITE, objname="rangefinder")
+        rf.intprm[0] = 1  # output: distance only
         tilt = math.radians(15.0)  # front camera pitched 15 deg down
         drone.add_camera(name="front", pos=[0.12, 0, 0.03], fovy=cam.front_fovy_deg,
                          quat=_quat_from_axes([0, -1, 0], [math.sin(tilt), 0, math.cos(tilt)]))
-        spec.visual.global_.offwidth = max(cam.down_width, cam.front_width, 640)
-        spec.visual.global_.offheight = max(cam.down_height, cam.front_height, 480)
+        spec.visual.global_.offwidth = max(cam.down_width, cam.front_width, 1280)  # 1280x720: demo video
+        spec.visual.global_.offheight = max(cam.down_height, cam.front_height, 720)
         # Large outdoor scene: near/far planes are fractions of stat.extent.
         spec.stat.extent = 100.0
         spec.visual.map.znear = 0.001  # 0.1 m
@@ -213,6 +227,13 @@ class MujocoSim:
         if self.timers["baro"].due(t):
             alt = float(d.qpos[2]) + self.baro_bias + self.rng.normal(0, n.baro_noise)
             self.bus.publish(topics.BARO, BaroMsg(t, alt))
+        if self.timers["range"].due(t):
+            r = float(d.sensor("rangefinder").data[0])  # -1 = no hit
+            if 0.0 <= r <= n.range_max:
+                r = max(0.0, r + self.range_rng.normal(0, n.range_noise + n.range_noise_rel * r))
+            else:
+                r = math.nan
+            self.bus.publish(topics.RANGE, RangeMsg(t, r))
         if self.timers["mag"].due(t):
             yaw = yaw_from_R(d.xmat[self.body_id].reshape(3, 3)) + self.mag_bias
             yaw += math.radians(self.rng.normal(0, n.mag_noise_deg))

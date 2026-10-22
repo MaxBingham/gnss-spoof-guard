@@ -56,9 +56,9 @@ def make_localizer(name: str, cfg: Config, truth: TruthProvider, seed: int = 0) 
     if name == "mock":
         from .perception.mock_localizer import MockLocalizer
         return MockLocalizer(cfg.localizer, truth, seed=seed)
-    if name in ("orb", "vision"):
-        from .perception.orb_localizer import OrbMapLocalizer
-        return OrbMapLocalizer(cfg.localizer)
+    if name == "vision":
+        from .perception.map_localizer import MapLocalizer
+        return MapLocalizer(cfg.localizer)
     raise ValueError(f"unknown localizer {name!r} (off | mock | vision)")
 
 
@@ -73,6 +73,7 @@ class FlightSystem:
         seed: int = 0,
         render_front: bool = False,
         recorder: Any | None = None,
+        reuse_sim: MujocoSim | None = None,
     ) -> None:
         self.cfg = cfg or default_config()
         self.bus = Bus()
@@ -100,8 +101,9 @@ class FlightSystem:
             yaw = math.atan2(d[1], d[0])
             plan = a_to_b_plan(start, self.goal_xy, mc)
 
+        reuse = (reuse_sim.model, reuse_sim.data) if reuse_sim is not None else None
         self.sim = MujocoSim(self.cfg, self.bus, world, spawn_xy=(start[0], start[1]), spawn_yaw=yaw,
-                             seed=seed, render_front=render_front)
+                             seed=seed, render_front=render_front, reuse=reuse)
         self.truth = TruthProvider(self.sim)
         start3 = np.array([start[0], start[1], 0.0])
         self.mission = Mission(plan, start3, yaw, mc)

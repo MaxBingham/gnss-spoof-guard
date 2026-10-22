@@ -57,6 +57,10 @@ class Mission:
         self.landed_timer = 0.0
         self.emergency = False
         self.wait_at_b_since: float | None = None
+        self.recentering = False
+        self.range_agl: float | None = None  # rangefinder height (autopilot), None = no reading
+        self.imu_still_s = 0.0
+        self.ground_contact = False  # rangefinder says we are down: the autopilot idles the motors
         self.events: list[tuple[float, str]] = []  # onboard decisions; the autopilot forwards them to the bus
 
     def log(self, t: float, text: str) -> None:
@@ -69,6 +73,10 @@ class Mission:
     @property
     def goal(self) -> np.ndarray:
         return self.waypoints[-1].pos
+
+    def set_ground_sensing(self, range_agl: float | None, imu_still_s: float) -> None:
+        self.range_agl = range_agl
+        self.imu_still_s = imu_still_s
 
     def start(self) -> None:
         if self.phase == "PREFLIGHT":
@@ -120,6 +128,14 @@ class Mission:
         wp = self.waypoints[self.idx]
         self.phase = wp.phase
         scale = speed_scale if wp.phase == "CRUISE" else 1.0
+        off = math.hypot(wp.pos[0] - pose.pos[0], wp.pos[1] - pose.pos[1])
+        if wp.phase in ("DESCEND", "LAND") and off > self.cfg.descend_xy_tol:
+            if not self.recentering:
+                self.recentering = True
+                self.log(t, f"RECENTER: {off:.1f} m off B horizontally, descent paused")
+            self._check_touchdown(t, pose, dt)
+            return Setpoint(t, self.setpoint.copy(), np.zeros(3), self.yaw, self.phase)
+        self.recentering = False
         vel, reached = self._move_setpoint(wp.pos, wp.speed * scale, dt)
         last = self.idx == len(self.waypoints) - 1
         if reached and not last:
@@ -152,11 +168,23 @@ class Mission:
         return False
 
     def _check_touchdown(self, t: float, pose: PoseEstimate, dt: float) -> None:
-        """Touchdown = estimated height below landed_alt and vertical speed ~0 for touchdown_s."""
-        if pose.pos[2] < self.cfg.landed_alt and abs(pose.vel[2]) < self.cfg.touchdown_vz:
-            self.landed_timer += dt
-            if self.landed_timer >= self.cfg.touchdown_s:
-                self.phase = "LANDED"
-                self.log(t, f"TOUCHDOWN: motors off at estimated ({pose.pos[0]:.1f}, {pose.pos[1]:.1f})")
+        """Touchdown = rangefinder height < touchdown_range AND IMU stationary, both for touchdown_s
+        (independent of the estimated height, whose baro drift left drones sliding on the ground with
+        motors on). Without rangefinder readings: estimated height < landed_alt and |vz| small."""
+        c = self.cfg
+        if self.range_agl is not None:
+            low = self.range_agl < c.touchdown_range
+            if low and not self.ground_contact:
+                self.log(t, f"GROUND_CONTACT: rangefinder {self.range_agl:.2f} m, motors to idle")
+            # Idle (no position control) while down: chasing the estimate made the drone hop and skid,
+            # so the IMU never looked stationary. Range rising again -> normal control resumes.
+            self.ground_contact = low
+            how = f"rangefinder {self.range_agl:.2f} m, IMU still {self.imu_still_s:.1f} s"
         else:
-            self.landed_timer = 0.0
+            low = pose.pos[2] < c.landed_alt and abs(pose.vel[2]) < c.touchdown_vz
+            how = f"no rangefinder: estimated height {pose.pos[2]:.2f} m"
+        self.landed_timer = self.landed_timer + dt if low else 0.0
+        still = self.range_agl is None or self.imu_still_s >= c.touchdown_s
+        if self.landed_timer >= c.touchdown_s and still:
+            self.phase = "LANDED"
+            self.log(t, f"TOUCHDOWN ({how}): motors off at estimated ({pose.pos[0]:.1f}, {pose.pos[1]:.1f})")

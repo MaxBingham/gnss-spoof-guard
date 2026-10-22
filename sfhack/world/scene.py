@@ -72,9 +72,27 @@ def building_boxes(landmarks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return boxes
 
 
+def roof_image(ortho: np.ndarray, extent: dict[str, float], box: dict[str, Any], mpp: float = 0.5) -> np.ndarray:
+    """Ortho crop under a building box, resampled into the box frame (row 0 = box +y edge, like the floor)."""
+    hx, hy = box["half"]
+    cx, cy = box["center"]
+    W, H = max(2, int(round(2 * hx / mpp))), max(2, int(round(2 * hy / mpp)))
+    a = -hx + (np.arange(W) + 0.5) * (2 * hx / W)
+    b = hy - (np.arange(H) + 0.5) * (2 * hy / H)
+    A, Bm = np.meshgrid(a, b)
+    c, s = math.cos(box["yaw"]), math.sin(box["yaw"])
+    X, Y = cx + A * c - Bm * s, cy + A * s + Bm * c
+    h, w = ortho.shape[:2]
+    u = (X - extent["min_x"]) / (extent["max_x"] - extent["min_x"]) * w - 0.5
+    v = (extent["max_y"] - Y) / (extent["max_y"] - extent["min_y"]) * h - 0.5
+    return np.ascontiguousarray(cv2.remap(ortho, u.astype(np.float32), v.astype(np.float32), cv2.INTER_LINEAR,
+                                          borderMode=cv2.BORDER_REPLICATE))
+
+
 class PackageWorld:
     def __init__(self, pkg_dir: Path | str, texture_file: str | None = None,
-                 render_trees: bool = True) -> None:
+                 render_trees: bool = True, roof_textures: bool = True) -> None:
+        self.roof_textures = roof_textures
         self.dir = Path(pkg_dir).resolve()
         self.manifest: dict[str, Any] = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8"))
         self.landmarks: list[dict[str, Any]] = json.loads((self.dir / "landmarks.json").read_text(encoding="utf-8"))
@@ -112,11 +130,24 @@ class PackageWorld:
         mat_t = spec.add_material(name="tower", rgba=[0.85, 0.82, 0.74, 1])
         for box in building_boxes(self.landmarks):
             h = box["height"]
+            quat = [math.cos(box["yaw"] / 2), 0, 0, math.sin(box["yaw"] / 2)]
             world.add_geom(name=f"lm{box['id']}", type=mujoco.mjtGeom.mjGEOM_BOX,
                            size=[box["half"][0], box["half"][1], h / 2],
-                           pos=[box["center"][0], box["center"][1], h / 2],
-                           quat=[math.cos(box["yaw"] / 2), 0, 0, math.sin(box["yaw"] / 2)],
+                           pos=[box["center"][0], box["center"][1], h / 2], quat=quat,
                            material=mat_t.name if box["type"] == "tower" else mat_b.name)
+            if self.roof_textures:
+                # Roof = the orthophoto under the footprint (a real roof looks like its aerial photo; a blank
+                # gray box top gave the down camera nothing to match over the whole campus core).
+                rname = f"roof{box['id']}"
+                rtex = spec.add_texture(name=rname, type=mujoco.mjtTexture.mjTEXTURE_2D)
+                roof = roof_image(img, e, box)
+                rtex.width, rtex.height, rtex.nchannel = roof.shape[1], roof.shape[0], 3
+                rtex.data = roof.tobytes()
+                rmat = spec.add_material(name=rname, texrepeat=[1, 1], texuniform=False, reflectance=0.0)
+                rmat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = rname
+                world.add_geom(type=mujoco.mjtGeom.mjGEOM_PLANE, size=[box["half"][0], box["half"][1], 1.0],
+                               pos=[box["center"][0], box["center"][1], h + 0.02], quat=quat,
+                               material=rname, contype=0, conaffinity=0)
         if self.render_trees:
             trunk = [0.36, 0.27, 0.18, 1]
             crown = [0.20, 0.42, 0.18, 1]

@@ -20,7 +20,8 @@ from .control.pose_source import EkfPoseSource, PoseSource
 from .estimation.ahrs import Ahrs
 from .estimation.ekf import Ekf
 from .messages import (
-    BaroMsg, CameraFrame, Decision, Health, HealthState, ImuMsg, MagMsg, MotorCmd, PoseEstimate, Setpoint, VisualFix,
+    BaroMsg, CameraFrame, Decision, Health, HealthState, ImuMsg, MagMsg, MotorCmd, PoseEstimate, RangeMsg, Setpoint,
+    VisualFix,
 )
 from .perception.localizer import Localizer
 from .planning.health import HealthMonitor
@@ -65,6 +66,11 @@ class Autopilot:
         self._baro_sum = 0.0
         self._baro_n = 0
         self.baro_offset = 0.0
+        self._range_rest: list[float] = []  # preflight rangefinder readings (sensor height when standing)
+        self.range_offset = 0.0
+        self.range_agl: float | None = None  # rangefinder height above the surface below, None = no reading
+        self._range_t = -1.0
+        self.imu_still_s = 0.0  # how long the IMU has been stationary (touchdown check)
         self._next_pub = 0.0
         self.last_fix: VisualFix | None = None
         self.health_state = HealthState(0.0, Health.NOMINAL, 0.0, 0.0, 1.0)
@@ -78,6 +84,7 @@ class Autopilot:
 
         bus.subscribe(topics.IMU, self.on_imu)
         bus.subscribe(topics.BARO, self.on_baro)
+        bus.subscribe(topics.RANGE, self.on_range)
         bus.subscribe(topics.MAG, self.on_mag)
         bus.subscribe(topics.CAMERA_DOWN, self.on_camera)
 
@@ -110,6 +117,10 @@ class Autopilot:
         dt = 0.0 if self._last_imu_t is None else msg.t - self._last_imu_t
         self._last_imu_t = msg.t
         self.ahrs.update_imu(msg)
+        mc = self.cfg.mission
+        still = (abs(float(np.linalg.norm(msg.accel - self.ahrs.accel_bias)) - 9.81) < mc.still_acc
+                 and float(np.linalg.norm(self.ahrs.omega)) < mc.still_rate)
+        self.imu_still_s = self.imu_still_s + dt if still else 0.0
         if self.ahrs.calibrating:
             self.ekf.t = msg.t
             if msg.t >= self.preflight_until:  # end of the on-ground phase
@@ -132,6 +143,16 @@ class Autopilot:
             self._baro_n += 1
             return
         self.ekf.update_baro(msg.alt - self.baro_offset)
+
+    def on_range(self, msg: RangeMsg) -> None:
+        if self.in_preflight:
+            if np.isfinite(msg.range):
+                self._range_rest.append(msg.range)
+            return
+        if self._range_rest and not self.range_offset:
+            self.range_offset = float(np.median(self._range_rest))
+        self.range_agl = msg.range - self.range_offset if np.isfinite(msg.range) else None
+        self._range_t = msg.t
 
     def on_mag(self, msg: MagMsg) -> None:
         dt = 1.0 / self.cfg.sim.mag_hz if self._last_mag_t is None else msg.t - self._last_mag_t
@@ -165,6 +186,8 @@ class Autopilot:
             self.health.reset_timer(t)
         hs = self.health.update(t, est)
         self.health_state = hs
+        fresh = self.range_agl is not None and t - self._range_t < 0.2
+        self.mission.set_ground_sensing(self.range_agl if fresh else None, self.imu_still_s)
         # Health actions are enforced only when flying on the estimate (truth mode = tuning).
         enforce = self.pose_source == "ekf"
         sp = self.mission.update(
@@ -178,6 +201,8 @@ class Autopilot:
             self.log_decision(*self.mission.events.pop(0))
         if self.mission.phase in ("PREFLIGHT", "LANDED"):
             motors = np.zeros(4)
+        elif self.mission.ground_contact and self.pose_source == "ekf":
+            motors = np.full(4, self.cfg.mission.ground_idle * self.controller.mass * self.controller.g / 4)
         else:
             motors = self.controller(ctrl_pose, sp)
         self.bus.publish(topics.MOTOR, MotorCmd(t, motors))

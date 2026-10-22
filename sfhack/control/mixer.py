@@ -16,6 +16,7 @@ class VehicleParams:
     ctrl_max: float  # N, per-motor thrust limit
     rotor_xy: np.ndarray  # (4, 2) rotor positions in the body frame [m]
     yaw_coeff: np.ndarray  # (4,) reaction torque per N of thrust
+    imu_offset: np.ndarray | None = None  # (3,) IMU position relative to the centre of mass, body frame [m]
 
 
 class Mixer:

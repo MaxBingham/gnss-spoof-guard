@@ -133,10 +133,10 @@ class NavFlightSystem:
             m = self.autopilot.mission
             if m.arrival_t is not None and math.isnan(self.arrival_error):
                 self.arrival_error = float(np.hypot(*(tr.pos[:2] - self.goal_xy)))
-            # crash check (harness, truth): below the simulated surface while flying
+            # crash check (harness, truth): below the simulated surface (ray cast) or touching it while flying
             if m.phase not in ("PREFLIGHT", "LANDED", "LAND") and self.t > self.cfg.mission.preflight_s + 3:
-                if tr.pos[2] < float(self.world.surface_z(tr.pos[:2])) - 0.5 or (
-                        self.truth.in_contact() and m.phase not in ("DESCEND", "EMERGENCY_LAND")):
+                if tr.pos[2] < self.sim.surface_height(tr.pos[:2]) - 0.5 or (
+                        self.truth.in_contact() and m.phase not in ("DESCEND", "LAND", "EMERGENCY_LAND")):
                     self.crashed = True
                     self.autopilot.log_decision(self.t, f"CRASH (harness, truth) at ({tr.pos[0]:.0f}, {tr.pos[1]:.0f})")
 

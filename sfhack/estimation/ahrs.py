@@ -110,6 +110,11 @@ class Ahrs:
         err = _wrap(msg.yaw - self.yaw)
         self.R = _rot_z(min(1.0, gain * dt) * err) @ self.R
 
+    def correct_tilt_world(self, phi_world: np.ndarray) -> None:
+        """Rotate the attitude by a small world-frame rotation (tilt error estimated by the EKF, V2 port)."""
+        if np.any(phi_world):
+            self.R = _expm_so3(phi_world) @ self.R
+
     def rotate_accel(self, accel: np.ndarray) -> np.ndarray:
         """Bias-corrected specific force rotated to world, minus gravity = world acceleration."""
         return self.R @ (accel - self.accel_bias) - np.array([0.0, 0.0, G])

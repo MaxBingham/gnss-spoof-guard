@@ -27,6 +27,8 @@ class GeometricController:
         self.kR = np.array(gains.kR)
         self.kw = np.array(gains.kw)
         self.max_acc = gains.max_acc
+        self.drag_ff = gains.drag_ff
+        self.drag_ff_quad = gains.drag_ff_quad
         self.last_acc_cmd = np.zeros(3)
 
     def __call__(self, pose: PoseEstimate, sp: Setpoint) -> np.ndarray:
@@ -35,7 +37,10 @@ class GeometricController:
         acc = self.kp_pos * (sp.pos - pose.pos) + self.kd_pos * (sp.vel - pose.vel)
         acc = np.clip(acc, -self.max_acc, self.max_acc)
         self.last_acc_cmd = acc  # commanded acceleration (V3: the AHRS uses it to detect steady flight)
-        f_world = self.mass * (acc + np.array([0.0, 0.0, self.g]))
+        # rotor-drag feedforward on the setpoint velocity (calm air): cruise needs a steady tilt against it
+        vh = np.array([sp.vel[0], sp.vel[1], 0.0])
+        ff = vh * (self.drag_ff + self.drag_ff_quad * float(np.linalg.norm(vh)))
+        f_world = self.mass * (acc + ff + np.array([0.0, 0.0, self.g]))
 
         # 2) desired attitude from force direction and yaw
         z_d = f_world / np.linalg.norm(f_world)

@@ -37,6 +37,14 @@ class AltimeterMsg:
 
 
 @dataclass
+class RangeMsg:
+    """Short-range landing rangefinder (V2 port): distance along the body -z axis to the first surface."""
+
+    t: float
+    range: float  # m; nan = nothing within the maximum range
+
+
+@dataclass
 class CameraControl:
     """Onboard -> camera payload: start / stop capturing down-camera frames. Frames cost power and CPU;
     IBN only needs them inside image-based update zones and for the precision landing."""

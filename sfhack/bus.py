@@ -26,6 +26,7 @@ MOTOR = "motor"
 DISTURBANCE = "disturbance"
 DECISION = "decision"  # (t, text): onboard decisions (re-localization, landing, timeout, ...)
 ALTIMETER = "altimeter"  # V3: downward laser / radar altimeter
+RANGE = "range"  # short-range landing rangefinder (touchdown)
 CAMERA_CONTROL = "camera/control"  # V3: onboard -> camera payload, start / stop down frames
 
 

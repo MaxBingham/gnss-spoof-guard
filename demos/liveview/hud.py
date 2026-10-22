@@ -65,7 +65,7 @@ class HudState:
     gnss_line: str
     gnss_level: int
     degradations: list[tuple[str, int]]
-    levers: list[tuple[str, str, str, int, bool]]  # key, name, value, level, visual only
+    levers: list[tuple[str, str, str, int]]  # key, name, value, level
     controls: list[tuple[str, str, str]]  # key, label, value
     sensors: list[tuple[str, str]]  # name, ok | degraded | lost | off
     wind: tuple[float, float, float]  # speed m/s, compass deg toward, gust m/s
@@ -187,21 +187,21 @@ class Hud:
         d.text((w - self.px(14), self.px(14)), "press key or click", font=self.f(12), fill=MUTED, anchor="ra")
         y = self.px(46)
         self.hits = []
-        for key, name, value, lvl, visual_only in st.levers:
-            self._lever_row(d, y, row_h, w, key, name, value, LEVEL_COLOR[lvl], visual_only)
+        for key, name, value, lvl in st.levers:
+            self._lever_row(d, y, row_h, w, key, name, value, LEVEL_COLOR[lvl])
             self.hits.append((ox, oy + y, ox + w, oy + y + row_h, key))
             y += row_h
         d.line((self.px(14), y + self.px(3), w - self.px(14), y + self.px(3)), fill=mix(WHITE, 0.16), width=1)
         y += self.px(6)
         for key, label, value in st.controls:
-            self._lever_row(d, y, row_h, w, key, label, value, CYAN if key == "P" else TEXT, False, dot=False)
+            self._lever_row(d, y, row_h, w, key, label, value, CYAN if key == "P" else TEXT, dot=False)
             self.hits.append((ox, oy + y, ox + w, oy + y + row_h, key))
             y += row_h
         d.text((w // 2, h - self.px(16)), "R restart   SPACE pause   1 2 4 speed   O camera   Q quit",
                font=self.f(12), fill=MUTED, anchor="mm")
         return im
 
-    def _lever_row(self, d, y, row_h, w, key, name, value, color, visual_only, dot=True) -> None:
+    def _lever_row(self, d, y, row_h, w, key, name, value, color, dot=True) -> None:
         x0 = self.px(16)
         kf = self.f(13, True)
         kw = max(self.px(24), int(d.textlength(key, font=kf)) + self.px(12))
@@ -211,9 +211,6 @@ class Hud:
         d.text((x0 + kw + self.px(10), y + row_h // 2), name, font=self.f(15), fill=TEXT, anchor="lm")
         vx = w - self.px(34) if dot else w - self.px(16)
         d.text((vx, y + row_h // 2), value, font=self.f(15, True), fill=color, anchor="rm")
-        if visual_only:
-            tw = d.textlength(value, font=self.f(15, True))
-            d.text((vx - tw - self.px(8), y + row_h // 2), "visual only", font=self.f(10), fill=MUTED, anchor="rm")
         if dot:
             cx, cy, r = w - self.px(20), y + row_h // 2, self.px(6)
             d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)

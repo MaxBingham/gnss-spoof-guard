@@ -46,9 +46,8 @@ from liveview.levers import LEVERS, LeverDeck
 from liveview.render import SceneRenderer
 from sfhack import bus as topics
 from sfhack.config import data_dir
-from sfhack.degradation import Conditions, weather_visuals
+from sfhack.degradation import Conditions
 from sfhack.degradation.cli import add_cli_args, conditions_from_args, parse_schedule
-from sfhack.degradation.models import lidar_beam_dirs_body
 from sfhack.runner import FlightSystem
 
 DEMO_SEED = 0
@@ -88,8 +87,10 @@ def _decimate(pts: list[np.ndarray], max_n: int) -> np.ndarray:
 
 
 def _label(img: np.ndarray, text: str, org: tuple[int, int], scale: float, color=(255, 255, 255)) -> None:
-    cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
+    (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, scale, 1)
+    x, y = org
+    cv2.rectangle(img, (x - 6, y - th - 6), (x + tw + 6, y + base + 4), (10, 14, 22), -1)
+    cv2.putText(img, text, org, cv2.FONT_HERSHEY_DUPLEX, scale, color, 1, cv2.LINE_AA)
 
 
 # ---------------------------------------------------------------------------------------- the demo
@@ -102,10 +103,10 @@ class LiveDemo:
         self.seed = seed
         self.base_localizer = localizer if localizer != "off" else "mock"
         self.fs = FlightSystem(pose_source="ekf", localizer=localizer, seed=seed,
-                               reuse_sim=reuse.sim if reuse is not None else None)
+                               reuse_sim=reuse.sim if reuse is not None else None,
+                               conditions=conditions, schedule=list(schedule or []))
         self.loc_on = localizer != "off"
-        self.deck = LeverDeck(conditions, schedule)
-        self.deck.apply(self.fs)
+        self.deck = LeverDeck(self.fs)
         self.truth_trail: list[np.ndarray] = []
         self.est_trail: list[np.ndarray] = []
         self._next_trail = 0.0
@@ -114,6 +115,7 @@ class LiveDemo:
         self.range_m = math.nan
         self.range_t = -1.0
         self.lidar_ranges: np.ndarray | None = None
+        self.lidar_dirs = np.zeros((0, 3))
         self.lidar_t = -1.0
         self.gnss_fixes: deque[np.ndarray] = deque(maxlen=30)
         self.gnss_t = -1.0
@@ -131,7 +133,6 @@ class LiveDemo:
         cc = self.fs.cfg.camera
         self.cam_tan = (math.tan(math.radians(cc.down_fovy_deg) / 2) * cc.down_width / cc.down_height,
                         math.tan(math.radians(cc.down_fovy_deg) / 2))
-        self.beams_body = lidar_beam_dirs_body()
         rng = np.random.default_rng(7)
         self.wind_pts = rng.uniform(-1, 1, (70, 3)) * [45, 45, 18]
         self.rain_pts = rng.uniform(-1, 1, (260, 3)) * [30, 30, 16]
@@ -150,10 +151,10 @@ class LiveDemo:
         self.gnss_t = msg.t
 
     def _on_lidar(self, msg) -> None:
-        ranges = getattr(msg, "ranges", None)
-        if ranges is not None:
-            self.lidar_ranges = np.asarray(ranges, float)
-            self.lidar_t = msg.t
+        a = np.asarray(msg.angles, float)
+        self.lidar_dirs = np.column_stack([np.zeros_like(a), -np.sin(a), -np.cos(a)])  # body FLU, + = right
+        self.lidar_ranges = np.asarray(msg.ranges, float)
+        self.lidar_t = msg.t
 
     @property
     def t(self) -> float:
@@ -181,7 +182,6 @@ class LiveDemo:
             if self.result is not None:
                 return
             self.deck.tick(self.t)
-            self.deck.apply(fs)
             fs.step()
             if self.t >= self._next_trail:
                 self._next_trail = self.t + TRAIL_DT
@@ -292,7 +292,7 @@ class LiveDemo:
         down = tr.R @ np.array([0.0, 0.0, -1.0])
         beams: list[tuple[np.ndarray, float]] = [(down, self.range_m)]
         if self.lidar_ranges is not None and self.t - self.lidar_t < 0.5:
-            dirs = (tr.R @ self.beams_body.T).T
+            dirs = (tr.R @ self.lidar_dirs.T).T
             beams += list(zip(dirs, self.lidar_ranges))
         max_r = self.fs.cfg.noise.range_max
         for u, rng_m in beams:
@@ -394,9 +394,6 @@ class LiveDemo:
             off = float(np.linalg.norm(self.gnss_fixes[-1][:2] - tr.pos[:2]))
             gnss_line = f"fix {off:.0f} m from truth" + ("  (SPOOFED)" if gs == "spoof" else "")
             gnss_lvl = 2 if gs == "spoof" else 0
-        if not self.gnss_fixes and c.gnss.mode != "off" and not self.deck.sim_effect(fs, "gnss"):
-            gnss_line, gnss_lvl = f"{c.gnss.mode.upper()}  (simulator has no GNSS yet)", 1
-            gs = "off"
         degr: list[tuple[str, int]] = []
         for lv in LEVERS:
             lvl = lv.level(c)
@@ -404,8 +401,7 @@ class LiveDemo:
                 degr.append((f"{lv.name.upper()} {lv.value(c)}", lvl))
         if not self.loc_on:
             degr.append(("LOCALIZER OFF", 2))
-        levers = [(lv.key.upper(), lv.name, lv.value(c), lv.level(c), not self.deck.sim_effect(fs, lv.path))
-                  for lv in LEVERS]
+        levers = [(lv.key.upper(), lv.name, lv.value(c), lv.level(c)) for lv in LEVERS]
         controls = [("P", "Play spoof scenario", "RUNNING" if self.deck.scenario_t0 is not None else ""),
                     ("V", "Localizer", "ON" if self.loc_on else "OFF"),
                     ("X", "Reset all levers", "")]
@@ -416,7 +412,7 @@ class LiveDemo:
                    ("IMU", "ok"), ("BARO", "ok"), ("COMPASS", "ok")]
         w = c.wind
         weather = ("CLEAR" if c.weather.kind == "clear" or c.weather.intensity == 0
-                   else f"{c.weather.kind.upper()} {c.weather.intensity:.0%}  vis {weather_visuals(c.weather).visibility_m:.0f} m")
+                   else f"{c.weather.kind.upper()} {c.weather.intensity:.0%}  vis {fs.sim.weather_visuals().visibility_m:.0f} m")
         banner = None
         if self.deck.banner is not None:
             banner = (self.deck.banner[1], self.t - self.deck.banner[0])
@@ -544,7 +540,7 @@ class Composer:
         tr, est = demo.fs.truth.state(), demo.fs.autopilot.pose()
         cam = self.chase.update(dt, tr.pos, tr.vel, est.pos)
         demo.update_particles(0.0 if paused else dt * speed, np.array(cam.lookat))
-        wv = weather_visuals(demo.c.weather)
+        wv = demo.fs.sim.weather_visuals()
         vis = wv.visibility_m if wv.kind != "clear" and wv.intensity > 0 else None
         # Fog thickens from just in front of the drone outward: the drone stays readable, the world fades
         # with the weather lever (the camera itself sits 30-60 m behind the drone, in the same fog).

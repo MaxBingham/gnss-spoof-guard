@@ -330,17 +330,73 @@ def _label(img: np.ndarray, text: str, org: tuple[int, int], scale: float, color
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
 
 
+def _own_viewer_hwnd() -> int | None:
+    """Windows: handle of THIS process's visible MuJoCo viewer window (never another app's window)."""
+    import ctypes
+    import os
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    me, found = os.getpid(), []
+
+    def enum(hwnd, _lp):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == me and user32.IsWindowVisible(hwnd):
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(hwnd, buf, 256)
+            if buf.value.startswith("MuJoCo"):
+                found.append(hwnd)
+        return True
+
+    user32.EnumWindows(proto(enum), 0)
+    return found[0] if found else None
+
+
+def _snap_own_window(path: Path) -> None:
+    """Windows: save a PNG of our own viewer window only (PrintWindow, so other apps never show up)."""
+    import ctypes
+    from ctypes import wintypes
+    from PIL import Image
+    hwnd = _own_viewer_hwnd()
+    if hwnd is None:
+        return
+    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+    r = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(r))
+    w, h = r.right - r.left, r.bottom - r.top
+    hdc = user32.GetDC(hwnd)
+    mdc = gdi32.CreateCompatibleDC(hdc)
+    bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
+    gdi32.SelectObject(mdc, bmp)
+    user32.PrintWindow(hwnd, mdc, 3)  # PW_CLIENTONLY | PW_RENDERFULLCONTENT (OpenGL content)
+    buf = ctypes.create_string_buffer(w * h * 4)
+    hdr = (ctypes.c_uint32 * 10)(40, w, ctypes.c_uint32(-h).value, 1 | (32 << 16), 0, 0, 0, 0, 0, 0)
+    gdi32.GetDIBits(mdc, bmp, 0, h, buf, hdr, 0)
+    Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB").save(path)
+    gdi32.DeleteObject(bmp)
+    gdi32.DeleteDC(mdc)
+    user32.ReleaseDC(hwnd, hdc)
+
+
 def _maximize_window() -> None:
     """Windows: maximize the MuJoCo window (it opens taller than a laptop screen, hiding the panels)."""
     if sys.platform != "win32":
         return
     import ctypes
+    import os
+    from ctypes import wintypes
     user32 = ctypes.windll.user32
-    proto = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    me = os.getpid()
     for _ in range(50):
         found: list[int] = []
 
         def enum(hwnd, _lp):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value != me:  # only OUR viewer window, never another MuJoCo app on the desktop
+                return True
             buf = ctypes.create_unicode_buffer(256)
             user32.GetWindowTextW(hwnd, buf, 256)
             if buf.value.startswith("MuJoCo") and user32.IsWindowVisible(hwnd):
@@ -389,6 +445,11 @@ def run_viewer(args: argparse.Namespace) -> None:
         wall0 = time.time()
         reported = False
         next_log = 0.0
+        sim_budget = 0.0  # sim seconds owed to the wall clock (real-time pacing at `speed`)
+        last_wall = time.perf_counter()
+        next_panels = 0.0
+        rtf_mark = (time.perf_counter(), 0.0)
+        snaps = sorted(float(x) for x in args.snap_at.split(",") if x.strip())
         _maximize_window()
         while viewer.is_running():
             if args.quit_after and time.time() - wall0 > args.quit_after:
@@ -413,16 +474,27 @@ def run_viewer(args: argparse.Namespace) -> None:
                         old.close()
                     reported = False
                     next_log = 0.0
+                    rtf_mark = (time.perf_counter(), 0.0)
                     pending = [e for e in events if e[1] != "R"]
                 elif 0 <= code < 256:
                     msg = demo.press(chr(code))
                     if msg:
                         print(f"t={demo.t:6.1f}s KEY {chr(code)}: {msg}")
+            now = time.perf_counter()
+            wall_dt, last_wall = min(now - last_wall, 0.1), now  # cap: a stall must not cause a burst
             if not paused:
-                demo.advance(int(round(speed / 60.0 / m.opt.timestep)))
+                # Advance by wall clock x speed (a fixed number of steps per frame ran at ~0.4x, since a
+                # frame with panels costs ~35 ms).
+                sim_budget += wall_dt * speed
+                n = int(sim_budget / m.opt.timestep)
+                sim_budget -= n * m.opt.timestep
+                demo.advance(n)
                 if demo.t >= next_log:
                     next_log = demo.t + 5.0
-                    print(demo.console_line(), flush=True)
+                    w0, s0 = rtf_mark
+                    rtf = (demo.t - s0) / max(now - w0, 1e-6)
+                    rtf_mark = (now, demo.t)
+                    print(f"{demo.console_line()}  real-time x{rtf:.2f}", flush=True)
                 if demo.result is not None and not reported:
                     reported = True
                     print(f"t={demo.t:6.1f}s {demo.result.summary()}")
@@ -445,15 +517,22 @@ def run_viewer(args: argparse.Namespace) -> None:
                 texts.append((mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOP, demo.banner(), None))
             viewer.set_texts(texts)
             vp = viewer.viewport
-            if vp is not None and vp.height > 0:
+            if vp is not None and vp.height > 0 and now >= next_panels:
+                next_panels = now + 1.0 / 15.0  # image panels at 15 Hz (texture upload is the costly part)
                 side = max(160, int(0.36 * vp.height))  # panels scale with the (HiDPI) framebuffer
                 cw, ch = side * 4 // 3, side
+                # Drawn at base size (labels readable), then scaled to the HiDPI framebuffer.
                 viewer.set_images([
-                    (mujoco.MjrRect(PANEL_GAP, PANEL_GAP, side, side), demo.map_panel(side)),
-                    (mujoco.MjrRect(2 * PANEL_GAP + side, PANEL_GAP, cw, ch), demo.cam_panel(cw, ch)),
+                    (mujoco.MjrRect(PANEL_GAP, PANEL_GAP, side, side),
+                     cv2.resize(demo.map_panel(), (side, side), interpolation=cv2.INTER_LINEAR)),
+                    (mujoco.MjrRect(2 * PANEL_GAP + side, PANEL_GAP, cw, ch),
+                     cv2.resize(demo.cam_panel(), (cw, ch), interpolation=cv2.INTER_LINEAR)),
                 ])
             sys.stdout.flush()
             viewer.sync()
+            if snaps and demo.t >= snaps[0] and sys.platform == "win32":
+                snaps.pop(0)
+                _snap_own_window(Path(args.snap_dir) / f"viewer_t{demo.t:05.1f}.png")
             time.sleep(max(0.0, 1.0 / 60.0 - (time.perf_counter() - frame_start)))
     demo.close()
 
@@ -574,6 +653,8 @@ def main() -> None:
                     help="render offscreen to an mp4 (default $SFHACK_DATA/demo/v2_demo.mp4)")
     ap.add_argument("--gif", action="store_true", help="with --record: also write a GIF next to the mp4")
     ap.add_argument("--quit-after", type=float, default=0.0, help=argparse.SUPPRESS)  # wall s, viewer smoke test
+    ap.add_argument("--snap-at", default="", help=argparse.SUPPRESS)  # sim times: PNG of our own window
+    ap.add_argument("--snap-dir", default=str(data_dir() / "demo"), help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.headless:
         sys.exit(run_headless(args))

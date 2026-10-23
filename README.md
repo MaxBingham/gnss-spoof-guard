@@ -8,6 +8,29 @@ Prior work, built before the hackathon: the MuJoCo Skydio X2 simulation, the AHR
 
 The earlier TypeScript rig that previously lived on `main` is archived at tag [`ts-rig-archive`](https://github.com/MaxBingham/gnss-spoof-guard/tree/ts-rig-archive).
 
+## Pre-hackathon status (branch `v4-target-selection`, as of 2026-10-23)
+
+Also built BEFORE Saturday, on this branch (disclosed for judging): V4 target selection + marker landing.
+A randomized scene (white car, brown car, brown truck with an ArUco landing pad, tent, hut, tree; `easy` /
+`hard` = car parked next to the truck, tree crown over its cab), an onboard detector (change detection vs
+the onboard ortho, lidar heights, tracks, class probabilities), the decision logic (decide only with a clear
+margin, otherwise fly over and look closer), and a marker-confirmed landing (marker fused into the EKF as an
+anchor; no marker -> reject the candidate, try the next; never touch down unconfirmed).
+
+```
+uv run python demos/10_target_landing.py --standalone --seed 3 --difficulty hard     # viewer
+uv run python demos/10_target_landing.py --standalone --seed 3 --headless            # print + truth score
+uv run python demos/11_bench_target_detector.py --seeds 10                            # detector only
+uv run python demos/12_eval_target_landing.py --seeds 20 --difficulty easy hard       # closed loop
+```
+
+Numbers (2026-10-23): detector at 30 m, 10 easy seeds: brown truck ranked first 10/10, all six objects found
+8/10 (the tree missed twice). Closed loop, `--nav gnss` (honest GNSS; the subject is target selection),
+20 easy + 20 hard seeds: correct target 40/40, landed on the 2 m pad 40/40 (pad error <= 0.40 m), wrong
+landings 0. GNSS-free `--nav vision` (same 40 seeds): on the pad 29/40, wrong landings 0; the other 11 never land:
+the vision localizer loses lock over the procedural grass and the EKF diverges (km), the drone times out
+in the air. That is the biggest open problem.
+
 ## Degradation levers
 
 All levers live in one `Conditions` dataclass (`sfhack/degradation/`). They are simulated reality: the

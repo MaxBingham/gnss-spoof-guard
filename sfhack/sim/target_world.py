@@ -155,6 +155,9 @@ class TargetExtension:
         truth = fs.truth.state().pos
 
         def kind_at(xy: np.ndarray) -> str | None:
+            inside = lay.object_at(xy, 0.5)  # footprint first: a crown over the truck cab is nearer by center
+            if inside is not None:
+                return inside.kind
             o, d = lay.nearest(xy)
             return o.kind if d < 0.5 * o.length + 1.5 else None
 

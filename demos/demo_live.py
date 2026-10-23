@@ -8,6 +8,7 @@ no truth in the control loop), with every degradation lever live.
     python demos/demo_live.py --headless              # no window: run, print, score (verification)
     python demos/demo_live.py --gnss drag:2@90 --weather fog:0.5 --wind 6@270   # start with levers set
     python demos/demo_live.py --events "45:C,55:C"    # press keys at sim times
+    python demos/demo_live.py --mission berkeley      # a mission from the planner (python -m sfhack.missionprep)
 
 What you see:
   Solid white X2 = TRUTH (the simulator), drawn 9x life size or more. Cyan ghost = where the drone THINKS it is (EKF),
@@ -112,12 +113,13 @@ class LiveDemo:
     """One flight plus everything the jury sees. Truth: display + score only."""
 
     def __init__(self, seed: int, localizer: str, conditions: Conditions,
-                 schedule: list | None = None, reuse: FlightSystem | None = None) -> None:
+                 schedule: list | None = None, reuse: FlightSystem | None = None, mission: str | None = None) -> None:
         self.seed = seed
+        self.mission = mission
         self.base_localizer = localizer if localizer != "off" else "mock"
         self.fs = FlightSystem(pose_source="ekf", localizer=localizer, seed=seed,
                                reuse_sim=reuse.sim if reuse is not None else None,
-                               conditions=conditions, schedule=list(schedule or []))
+                               conditions=conditions, schedule=list(schedule or []), mission=mission)
         self.loc_on = localizer != "off"
         self.deck = LeverDeck(self.fs)
         self.truth_trail: list[np.ndarray] = []
@@ -142,6 +144,9 @@ class LiveDemo:
         self.goal = self.fs.goal_xy
         self.start = self.fs.onboard_map.a_enu if self.fs.onboard_map is not None else np.zeros(2)
         self.route = np.array([w.pos for w in self.fs.mission.waypoints])
+        # display only: A / B pads and labels sit on the true terrain (0 in the flat sample world)
+        self.start_z = self.fs.true_ground_z(*self.start)
+        self.goal_z = self.fs.true_ground_z(*self.goal)
         self.cam_id = self.fs.sim.model.camera("down").id
         cc = self.fs.cfg.camera
         self.cam_tan = (math.tan(math.radians(cc.down_fovy_deg) / 2) * cc.down_width / cc.down_height,
@@ -248,9 +253,9 @@ class LiveDemo:
         fs, d = self.fs, self.fs.sim.data
         est, tr = fs.autopilot.pose(), fs.truth.state()
         # start / goal pads with light columns, planned route
-        for xy, rgb in ((self.start, GREEN), (self.goal, RED)):
-            g.cylinder([xy[0], xy[1], 0.08], 3.5, 0.06, rgb, 0.95, emission=0.3)
-            g.cylinder([xy[0], xy[1], 30.0], 0.35, 30.0, rgb, 0.22, emission=0.6)
+        for xy, z0, rgb in ((self.start, self.start_z, GREEN), (self.goal, self.goal_z, RED)):
+            g.cylinder([xy[0], xy[1], z0 + 0.08], 3.5, 0.06, rgb, 0.95, emission=0.3)
+            g.cylinder([xy[0], xy[1], z0 + 30.0], 0.35, 30.0, rgb, 0.22, emission=0.6)
         if len(self.route) > 1:
             g.stroke(self.route, WHITE, 3.0, 0.55)  # one line per leg, not a capsule per dash
         # trails
@@ -399,8 +404,9 @@ class LiveDemo:
             if pg is not None and (gs == "spoof" or pt is None or math.dist(pg, pt) > 40):
                 txt = "GNSS (no fix)" if gs == "jam" else "GNSS FIX"
                 out.append((pg, txt, (255, 140, 30, 255) if gs != "jam" else (140, 140, 150, 255)))
-        for xy, name, col in ((self.start, "A", (70, 215, 120, 255)), (self.goal, "B", (255, 75, 65, 255))):
-            pp = project(np.array([xy[0], xy[1], 62.0]))
+        for xy, z0, name, col in ((self.start, self.start_z, "A", (70, 215, 120, 255)),
+                                  (self.goal, self.goal_z, "B", (255, 75, 65, 255))):
+            pp = project(np.array([xy[0], xy[1], z0 + 62.0]))
             if pp is not None:
                 out.append((pp, name, col))
         return out
@@ -455,7 +461,7 @@ class LiveDemo:
             gnss_line=gnss_line, gnss_level=gnss_lvl, degradations=degr, levers=levers, controls=controls,
             sensors=sensors, wind=(w.speed, w.direction_deg, w.gust), weather=weather, banner=banner,
             scenario=self.deck.scenario_progress(), result=result, speed=speed, paused=paused,
-            recording=recording, labels=labels)
+            recording=recording, labels=labels, place=f"mission {self.mission}" if self.mission else "Berkeley")
 
     def map_panel(self, size: int) -> np.ndarray:
         om = self.fs.onboard_map
@@ -573,7 +579,7 @@ class Composer:
     @staticmethod
     def _new_chase(demo: LiveDemo) -> ChaseCam:
         h = demo.goal - demo.start
-        return ChaseCam(math.degrees(math.atan2(h[1], h[0])), np.array([demo.start[0], demo.start[1], 1.0]))
+        return ChaseCam(math.degrees(math.atan2(h[1], h[0])), np.array([demo.start[0], demo.start[1], demo.start_z + 1.0]))
 
     def reset(self, demo: LiveDemo) -> None:
         old = self.chase
@@ -626,7 +632,7 @@ def _events(args) -> list[tuple[float, str]]:
 
 def _make_demo(args, reuse: LiveDemo | None = None) -> LiveDemo:
     return LiveDemo(args.seed, args.localizer, args.conditions, parse_schedule(args.cond_at) if args.cond_at else None,
-                    reuse=reuse.fs if reuse is not None else None)
+                    reuse=reuse.fs if reuse is not None else None, mission=args.mission)
 
 
 # ---------------------------------------------------------------------------------------- viewer mode
@@ -897,6 +903,8 @@ def _size(s: str) -> tuple[int, int]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=DEMO_SEED)
+    ap.add_argument("--mission", default=None, help="fly a mission prepared by sfhack.missionprep (id under "
+                    "$SFHACK_DATA/missions); default: the built-in Berkeley sample")
     ap.add_argument("--localizer", choices=["vision", "mock", "off"], default=DEMO_LOCALIZER)
     ap.add_argument("--speed", type=int, choices=[1, 2, 4], default=2, help="sim speed (viewer and video)")
     ap.add_argument("--events", default="", help="key presses at sim times, e.g. '45:C,55:C,30:P'")

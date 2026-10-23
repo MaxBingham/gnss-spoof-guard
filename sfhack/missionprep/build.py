@@ -47,11 +47,16 @@ HFIELD_RES = 2.0  # m, world terrain.npz (MuJoCo height field)
 CLOUD_VOXEL = 1.0  # m, map_cloud.ply (0.75 m gave 2.2 M points / 28 MB on the Berkeley default)
 LIDAR_SPACING = 0.5  # m, EPT depth to read
 LIDAR_TIMEBOX_S = 90.0  # per prepare; past this the synthetic cloud is used
-# Route (planned on the ONBOARD map, the drone has nothing else): legs of at most LEG_MAX_M, each at
-# max(DSM in a corridor + CLEARANCE, DTM + MIN_AGL). MIN_AGL also bounds which buildings the onboard
-# map may "forget" (see ONBOARD_DROP_FRAC), so a missing building can never be in the flight path.
+# Route (planned on the ONBOARD map, the drone has nothing else). Required altitude per 4 m cell =
+# max(DSM within OBSTACLE_MARGIN_M + CLEARANCE_M, DTM within the margin + MIN_AGL_M). Dijkstra finds the
+# path A -> B where every metre costs 1 + (altitude it forces above what A and B need) / CLIMB_PENALTY_M,
+# so the route goes around a tower instead of 100 m over it (vision fixes need < ~60 m). Legs of at most
+# LEG_MAX_M, each flown at the highest requirement along it and the next one. MIN_AGL also bounds which
+# buildings the onboard map may "forget" (ONBOARD_DROP_FRAC): a missing building is never in the way.
+ROUTE_CELL_M = 4.0
+OBSTACLE_MARGIN_M = 15.0
+CLIMB_PENALTY_M = 5.0
 LEG_MAX_M = 120.0
-CORRIDOR_HALF_M = 25.0
 CLEARANCE_M = 15.0
 MIN_AGL_M = 30.0
 # Onboard map = imperfect copy of the truth (docs/MAP_PACKAGE.md, "Onboard vs truth")
@@ -195,35 +200,85 @@ def lidar_dsm(xyz: np.ndarray, g: Grid) -> np.ndarray:
     return out.reshape(g.shape)
 
 
+def required_z(dsm: np.ndarray, dtm: np.ndarray, g: Grid) -> tuple[np.ndarray, Grid]:
+    """Altitude the drone needs over each ROUTE_CELL_M cell (obstacles within OBSTACLE_MARGIN_M count)."""
+    k = max(1, int(round(ROUTE_CELL_M / g.res)))
+    R, C = g.rows // k, g.cols // k
+
+    def pool(a: np.ndarray) -> np.ndarray:  # block max: k x k cells -> one
+        return a[:R * k, :C * k].reshape(R, k, C, k).max(axis=(1, 3))
+
+    r = int(math.ceil(OBSTACLE_MARGIN_M / (k * g.res)))
+    disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+    surf = cv2.dilate(pool(dsm), disk)
+    ground = cv2.dilate(pool(dtm), disk)
+    return np.maximum(surf + CLEARANCE_M, ground + MIN_AGL_M), Grid(g.min_x, g.max_y, k * g.res, R, C)
+
+
 def plan_route(a: np.ndarray, b: np.ndarray, a_z: float, b_z: float, dsm: np.ndarray, dtm: np.ndarray, g: Grid,
                mc: MissionConfig) -> tuple[list[dict[str, Any]], list[dict[str, float]]]:
     """Waypoints A -> B on the onboard DSM: takeoff, stepped cruise legs, descend, land (ENU, z absolute)."""
-    d = b - a
-    dist = float(np.hypot(*d))
-    n = max(1, math.ceil(dist / LEG_MAX_M))
-    u = d / max(dist, 1e-9)
-    perp = np.array([-u[1], u[0]])
-    req = []
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import dijkstra
+
+    req, g4 = required_z(dsm, dtm, g)
+    R, C = g4.shape
+
+    def cell(p: np.ndarray) -> tuple[int, int]:
+        c, r = np.round(g4.to_px(p)).astype(int)
+        return int(np.clip(r, 0, R - 1)), int(np.clip(c, 0, C - 1))
+
+    def seg_req(p: np.ndarray, q: np.ndarray) -> float:
+        s = np.linspace(0, 1, max(2, int(np.hypot(*(q - p)) / 2.0) + 1))[:, None]
+        cr = np.round(g4.to_px(p + s * (q - p))).astype(int)
+        return float(req[np.clip(cr[:, 1], 0, R - 1), np.clip(cr[:, 0], 0, C - 1)].max())
+
+    ra, rb = cell(a), cell(b)
+    z_ref = max(req[ra], req[rb])
+    cost = 1.0 + np.maximum(req - z_ref, 0.0) / CLIMB_PENALTY_M
+    idx = np.arange(R * C).reshape(R, C)
+    src, dst, w = [], [], []
+    pairs = ((idx[:, :-1], idx[:, 1:], 1.0), (idx[:-1, :], idx[1:, :], 1.0),  # 8-connected grid
+             (idx[:-1, :-1], idx[1:, 1:], math.sqrt(2)), (idx[:-1, 1:], idx[1:, :-1], math.sqrt(2)))
+    for a_, b_, k in pairs:
+        src.append(a_.ravel())
+        dst.append(b_.ravel())
+        w.append(ROUTE_CELL_M * k * 0.5 * (cost.ravel()[a_.ravel()] + cost.ravel()[b_.ravel()]))
+    G = coo_matrix((np.concatenate(w), (np.concatenate(src), np.concatenate(dst))), shape=(R * C, R * C)).tocsr()
+    _, pred = dijkstra(G, directed=False, indices=int(idx[ra]), return_predecessors=True)
+    path = [int(idx[rb])]
+    while path[-1] != int(idx[ra]) and pred[path[-1]] >= 0:
+        path.append(int(pred[path[-1]]))
+    X, Y = g4.centers()
+    pts = [a] + [np.array([X.flat[k], Y.flat[k]]) for k in path[::-1][1:-1]] + [b]
+    # string pulling: skip ahead while the straight line needs no more altitude than the path it replaces
+    keep, i = [pts[0]], 0
+    while i < len(pts) - 1:
+        j = len(pts) - 1
+        while j > i + 1:
+            along = max(seg_req(pts[k], pts[k + 1]) for k in range(i, j))
+            if seg_req(pts[i], pts[j]) <= along + 0.5:
+                break
+            j -= 1
+        keep.append(pts[j])
+        i = j
+    wps = [keep[0]]
+    for p in keep[1:]:  # split long legs
+        n = max(1, math.ceil(float(np.hypot(*(p - wps[-1]))) / LEG_MAX_M))
+        q0 = wps[-1]
+        wps += [q0 + (p - q0) * (k + 1) / n for k in range(n)]
+    n = len(wps) - 1
+    leg_req = [seg_req(wps[i], wps[i + 1]) for i in range(n)]
+    z = [math.ceil(max(leg_req[i], leg_req[i + 1] if i + 1 < n else -np.inf)) for i in range(n)]
+    route = [{"phase": "TAKEOFF", "enu": [a[0], a[1], math.ceil(leg_req[0])], "speed_m_s": mc.climb_speed}]
     for i in range(n):
-        p0, p1 = a + d * i / n, a + d * (i + 1) / n
-        s = np.linspace(0, 1, max(2, int(dist / n / 2.0) + 1))
-        o = np.arange(-CORRIDOR_HALF_M, CORRIDOR_HALF_M + 0.1, 2.0)
-        S, O = np.meshgrid(s, o)
-        pts = p0 + S.ravel()[:, None] * (p1 - p0) + O.ravel()[:, None] * perp
-        surf = float(sample_bilinear(dsm, g, pts).max())
-        ground = float(sample_bilinear(dtm, g, pts).max())
-        req.append(max(surf + CLEARANCE_M, ground + MIN_AGL_M))
-    z = [math.ceil(max(req[i], req[i + 1] if i + 1 < n else -np.inf)) for i in range(n)]
-    z0 = math.ceil(req[0])
-    route = [{"phase": "TAKEOFF", "enu": [a[0], a[1], z0], "speed_m_s": mc.climb_speed}]
-    for i in range(n):
-        p = a + d * (i + 1) / n
+        p = wps[i + 1]
         route.append({"phase": "CRUISE", "enu": [float(p[0]), float(p[1]), float(z[i])], "speed_m_s": mc.cruise_speed})
     route.append({"phase": "DESCEND", "enu": [b[0], b[1], b_z + mc.flare_alt], "speed_m_s": mc.descent_speed})
     route.append({"phase": "LAND", "enu": [b[0], b[1], b_z - 0.3], "speed_m_s": mc.land_speed})
-    for w in route:
-        w["enu"] = [round(float(v), 2) for v in w["enu"]]
-    legs = [{"leg": i + 1, "required_z": round(req[i], 1), "z": float(z[i])} for i in range(n)]
+    for wp in route:
+        wp["enu"] = [round(float(v), 2) for v in wp["enu"]]
+    legs = [{"leg": i + 1, "required_z": round(leg_req[i], 1), "z": float(z[i])} for i in range(n)]
     return route, legs
 
 
@@ -502,7 +557,7 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
         "b": {"lat": b.lat, "lon": b.lon, "enu": [round(float(v), 2) for v in b_xy], "ground_z": round(b_ground, 2),
               "search_radius_m": float(radius_m)},
         "cruise": {"speed_m_s": mc.cruise_speed, "clearance_m": CLEARANCE_M, "min_agl_m": MIN_AGL_M,
-                   "corridor_half_width_m": CORRIDOR_HALF_M, "max_leg_m": LEG_MAX_M,
+                   "obstacle_margin_m": OBSTACLE_MARGIN_M, "max_leg_m": LEG_MAX_M,
                    "max_z": max(w["enu"][2] for w in route), "legs": legs},
         "route": route,
         "target_scene": {

@@ -78,6 +78,7 @@ class HudState:
     paused: bool
     recording: bool
     labels: list[tuple[tuple[int, int], str, tuple[int, int, int, int]]] = field(default_factory=list)
+    place: str = "Berkeley"  # subtitle: "Skydio X2 over <place>"
 
 
 class Hud:
@@ -139,7 +140,7 @@ class Hud:
         w, h = self.px(self.COL_W), self.px(58)
         im, d = self._card(w, h, CYAN)
         d.text((self.px(14), self.px(6)), "GNSS SPOOF GUARD", font=self.f(22, True), fill=TEXT)
-        sub = "Skydio X2 over Berkeley, flying A to B  |  MuJoCo live"
+        sub = f"Skydio X2 over {st.place}, flying A to B  |  MuJoCo live"
         d.text((self.px(14), self.px(32)), sub, font=self._fit(sub, w - self.px(70), 12), fill=MUTED)
         rec = "REC  " if st.recording else ""
         d.text((w - self.px(12), self.px(10)), f"{rec}t {st.t:5.1f} s", font=self.f(15, True),

@@ -253,7 +253,8 @@ $("upBtn").onclick = async () => {
         const b = $("ub-" + e.layer); if (b) b.firstChild.style.width = (100 * e.layer_sent / Math.max(e.layer_bytes, 1)).toFixed(1) + "%";
       } else if (e.type === "layer_done") {
         const b = $("ub-" + e.layer); if (b) { b.firstChild.style.width = "100%"; b.classList.add(e.ok ? "ok" : "bad"); }
-        $("us-" + e.layer).innerHTML = `${fmtMB(e.bytes)} <span class="${e.ok ? "chk" : "err"}">${e.ok ? "&#10003; sha256" : "MISMATCH"}</span>`;
+        $("us-" + e.layer).innerHTML = e.layer === "manifest" ? `${fmtMB(e.bytes)} <span class="muted">index</span>`
+          : `${fmtMB(e.bytes)} <span class="${e.ok ? "chk" : "err"}">${e.ok ? "&#10003; sha256" : "MISMATCH"}</span>`;
       } else if (e.type === "done") {
         $("upTxt").textContent = e.ok ? `uploaded in ${e.seconds} s, all checksums verified` : "checksum mismatch: upload failed";
       }

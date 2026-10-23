@@ -185,6 +185,20 @@ class PackageWorld:
 
     # ------------------------------------------------------------------ mission worlds (terrain + extruded)
 
+    def _terrain_pad(self, x: float, y: float, half: float, half_z: float) -> dict[str, list[float]]:
+        """pos / quat of a box whose top face lies in the least-squares terrain plane around (x, y), 1 cm proud."""
+        s = np.linspace(-half, half, 9)
+        dx, dy = (v.ravel() for v in np.meshgrid(s, s))
+        z = np.array([self.ground_z(x + a, y + b) for a, b in zip(dx, dy)])
+        (gx, gy, z0), *_ = np.linalg.lstsq(np.column_stack([dx, dy, np.ones_like(dx)]), z, rcond=None)
+        n = np.array([-gx, -gy, 1.0]) / math.sqrt(gx * gx + gy * gy + 1.0)
+        ang = math.acos(float(n[2]))
+        axis = np.cross([0.0, 0.0, 1.0], n)
+        axis = axis / np.linalg.norm(axis) if np.linalg.norm(axis) > 1e-9 else np.array([1.0, 0.0, 0.0])
+        quat = [math.cos(ang / 2), *(axis * math.sin(ang / 2))]
+        pos = np.array([x, y, z0]) + n * (0.01 - half_z)
+        return {"pos": pos.tolist(), "quat": quat}
+
     def _add_mission_world(self, spec: mujoco.MjSpec) -> None:
         _no_shadows(spec)
         e = self.manifest["ortho"]["extent_enu"]
@@ -219,12 +233,13 @@ class PackageWorld:
             floor.pos = [cx, cy, zmin - 1.0]
             floor.rgba = [0.42, 0.42, 0.40, 1]
             floor.material = ""
-            # Launch pad at A (the builder levels the terrain there): an invisible box flush with the ground.
-            # On the height field alone the X2 rested 9 deg tilted (hfield-vs-convex contacts), which the
-            # preflight IMU calibration then took for level.
-            ax, ay = self.a_enu
-            world.add_geom(name="launch_pad", type=mujoco.mjtGeom.mjGEOM_BOX, size=[2.0, 2.0, 0.25],
-                           pos=[ax, ay, self.ground_z(ax, ay) - 0.25], group=3, rgba=[0, 0, 0, 0])
+            # Contact pads at A and B: invisible boxes in the local terrain plane. On the height field alone
+            # the X2 (a small box + rotor ellipsoids underneath) rested 9 deg tilted at A, which the preflight
+            # IMU calibration took for level, and rocked at B so the IMU never looked still after touchdown.
+            # (The builder also levels the terrain under A: a launch pad.)
+            for name, (px_, py_), half in (("pad_a", self.a_enu, 2.5), ("pad_b", self.b_enu, 4.0)):
+                world.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_BOX, size=[half, half, 0.25], group=3,
+                               rgba=[0, 0, 0, 0], **self._terrain_pad(px_, py_, half, 0.25))
         else:
             floor.size = [(e["max_x"] - e["min_x"]) / 2, (e["max_y"] - e["min_y"]) / 2, 1.0]
             floor.pos = [(e["min_x"] + e["max_x"]) / 2, (e["min_y"] + e["max_y"]) / 2, 0.0]

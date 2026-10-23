@@ -124,6 +124,12 @@ class EkfConfig:
     gate_chi2: float = 9.21  # 99 % for 2 dof: visual fixes beyond this Mahalanobis distance are rejected
     nofix_inflate_after_s: float = 2.0  # without accepted fixes for this long, apply a covariance floor ...
     nofix_inflation: float = 0.5  # ... of (this * seconds blind) m std, so a correct fix is not gated out
+    # Reported horizontal 1σ floor (m). Formal P falls to ~0.3 m (2σ ~0.7 m) while an honest
+    # seed-0 cruise actually flies ~2 m at the 95th percentile: GNSS multipath is correlated and
+    # the vision update treats each fix as sharper than that error. The reported major axis is
+    # held at this floor (2σ = 2.5 m). It does not grow with a spoof offset, so a drag still
+    # claims a few metres against a hundred-metre error.
+    horiz_std_floor: float = 1.25
 
 
 @dataclass

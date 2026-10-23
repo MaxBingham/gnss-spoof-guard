@@ -140,8 +140,24 @@ class Ekf:
         self.n_gnss += 1
         self.last_fix_t = t
 
-    def pose(self, R: np.ndarray, omega: np.ndarray, yaw: float) -> PoseEstimate:
-        return PoseEstimate(self.t, self.x[:3].copy(), self.x[3:6].copy(), yaw, self.P[:6, :6].copy(), R.copy(), omega.copy(), "ekf")
+    def pose(self, R: np.ndarray, omega: np.ndarray, yaw: float, *, report: bool = True) -> PoseEstimate:
+        P = self.P[:6, :6].copy()
+        if report:
+            self._floor_horizontal(P)
+        return PoseEstimate(self.t, self.x[:3].copy(), self.x[3:6].copy(), yaw, P, R.copy(), omega.copy(), "ekf")
+
+    def _floor_horizontal(self, P: np.ndarray) -> None:
+        """Raise the reported horizontal covariance so its major-axis 2σ is at least the honest-flight floor.
+
+        Added as d·I on the position block (eigenvalues shift by d), which keeps the matrix PSD.
+        The filter's internal P is left alone, so a spoof is still fused and the claim does not swell to cover it.
+        """
+        floor = self.cfg.horiz_std_floor ** 2
+        ev = float(np.linalg.eigvalsh(0.5 * (P[:2, :2] + P[:2, :2].T)).max())
+        short = floor - ev
+        if short > 0.0:
+            P[0, 0] += short
+            P[1, 1] += short
 
     @property
     def acc_bias(self) -> np.ndarray:

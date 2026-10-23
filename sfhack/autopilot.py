@@ -106,8 +106,8 @@ class Autopilot:
 
     # ------------------------------------------------------------------ estimate
 
-    def pose(self) -> PoseEstimate:
-        return self.ekf.pose(self.ahrs.R, self.ahrs.omega, self.ahrs.yaw)
+    def pose(self, *, report: bool = True) -> PoseEstimate:
+        return self.ekf.pose(self.ahrs.R, self.ahrs.omega, self.ahrs.yaw, report=report)
 
     @property
     def in_preflight(self) -> bool:
@@ -170,7 +170,9 @@ class Autopilot:
     def on_camera(self, frame: CameraFrame) -> None:
         if self.localizer is None or self.onboard_map is None or self.in_preflight:
             return
-        prior = self.pose()
+        # Search on the filter covariance. The reporting floor would widen this window and can
+        # hand a spoofed prior a look at the truth.
+        prior = self.pose(report=False)
         t0 = time.perf_counter()
         fix = self.localizer.update(frame, self.onboard_map, prior)
         self.loc_frames += 1

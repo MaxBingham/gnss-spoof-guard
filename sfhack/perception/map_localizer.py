@@ -147,4 +147,4 @@ class MapLocalizer:
         corners = [(float(u[a, b]) + 0.5, float(v[a, b]) + 0.5) for a, b in ((0, 0), (0, n - 1), (n - 1, n - 1), (n - 1, 0))]
         return VisualFix(frame.t, np.array([cam_x, cam_y]), np.eye(2) * sig * sig, "vision",
                          matched_px=corners, n_inliers=int(round(100 * best)),
-                         proc_ms=(time.perf_counter() - t0) * 1000.0, frame_seq=frame.seq)
+                         proc_ms=(time.perf_counter() - t0) * 1000.0, frame_seq=frame.seq, quality=best)

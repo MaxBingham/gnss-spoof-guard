@@ -9,6 +9,10 @@
   the corrected attitude too.
 - Update: barometer (z), visual fix (x, y) with Mahalanobis gating, zero-velocity on the ground.
 - Yaw is not a state: it comes from the compass via the AHRS.
+- GNSS -> GNSS-free transition (V3.2): one update may move (bx, by) by at most `acc_bias_step_max` (a naive
+  50 m GNSS jump otherwise became a 5 deg AHRS tilt). `gnss_lost_now` detects the end of GNSS fixes; the
+  autopilot then either adopts its GNSS-free track (`adopt`) or calls `inflate_for_gnss_loss` (covariance
+  floor; the first STRONG vision fix, quality >= `reloc_min_quality`, re-localizes, weaker fixes wait).
 
 The model is linear, so this is a plain KF in practice; it is named EKF because the upgrade path
 (attitude + IMU bias states, nonlinear camera measurement) makes it one. Covariance grows during
@@ -41,8 +45,13 @@ class Ekf:
         self.n_relocalized = 0
         self.n_gnss = 0
         self.last_fix_t: float | None = None
+        self.last_gnss_t: float | None = None
+        self.gnss_lost = False  # had GNSS, then none for gnss_loss_after_s
+        self.relocalizing = False  # after GNSS loss, until the first strong fix is accepted
+        self.n_weak_skipped = 0  # vision fixes not used while relocalizing (quality too low)
         self.nis_log: list[tuple[float, float, bool]] = []  # (t, NIS, accepted) for every visual fix
         self.last_decision = ""  # set when a fix is accepted by re-localization
+        self.bias_handed = np.zeros(2)  # (bx, by) handed to the AHRS by the last take_tilt_correction
 
     def predict(self, acc_world: np.ndarray, dt: float, t: float) -> None:
         self.t = t
@@ -69,6 +78,7 @@ class Ekf:
         """Error-state reset: hand the learned bias to the attitude as a world-frame tilt correction
         phi (gravity leak g (phi x z) = -b) and zero the bias. Returns phi for Ahrs.correct_tilt_world."""
         bx, by = self.x[6], self.x[7]
+        self.bias_handed = np.array([bx, by])  # a parallel filter on the same AHRS subtracts this (see autopilot)
         self.x[6:8] = 0.0
         return np.array([by / g, -bx / g, 0.0])
 
@@ -76,7 +86,11 @@ class Ekf:
         y = z - H @ self.x
         S = H @ self.P @ H.T + R
         K = self.P @ H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ y
+        dx = K @ y
+        db = float(np.hypot(dx[6], dx[7]))
+        if db > self.cfg.acc_bias_step_max:  # one fix cannot tilt the AHRS by degrees (see module doc)
+            dx[6:8] *= self.cfg.acc_bias_step_max / db
+        self.x = self.x + dx
         I_KH = np.eye(N_STATES) - K @ H
         self.P = I_KH @ self.P @ I_KH.T + K @ R @ K.T  # Joseph form
 
@@ -109,6 +123,11 @@ class Ekf:
             floor = (self.cfg.nofix_inflation * blind) ** 2
             for i in (0, 1):
                 self.P[i, i] = max(self.P[i, i], floor)
+        was_relocalizing = self.relocalizing
+        if self.relocalizing and fix.quality < self.cfg.reloc_min_quality:
+            self.n_weak_skipped += 1
+            fix.accepted = False
+            return False
         H = np.zeros((2, N_STATES))
         H[:, :2] = np.eye(2)
         d2 = self.mahalanobis2(fix)
@@ -124,6 +143,11 @@ class Ekf:
             self.n_relocalized += 1
             self.last_decision = (f"RELOCALIZE: accepted fix after {self.consecutive_rejects} rejections "
                                   f"(NIS {d2:.1f}, offset {np.linalg.norm(fix.pos - self.x[:2]):.1f} m)")
+        self.relocalizing = False
+        if was_relocalizing and not self.last_decision:  # (a forced accept above already logged itself)
+            self.n_relocalized += 1
+            self.last_decision = (f"RELOCALIZE: first strong vision fix after GNSS loss (quality {fix.quality:.2f}, "
+                                  f"NIS {d2:.1f}, offset {np.linalg.norm(fix.pos - self.x[:2]):.1f} m)")
         self._update(H, fix.pos, R)
         self.nis_log.append((fix.t, d2, True))
         self.consecutive_rejects = 0
@@ -139,6 +163,42 @@ class Ekf:
         self._update(H, np.asarray(pos_xy, float)[:2], np.asarray(cov, float))
         self.n_gnss += 1
         self.last_fix_t = t
+        self.last_gnss_t = t
+        self.gnss_lost = False
+        self.relocalizing = False
+
+    def gnss_lost_now(self, t: float) -> bool:
+        """True exactly once: on the first step `gnss_loss_after_s` after the last GNSS fix (until GNSS returns)."""
+        if self.last_gnss_t is None or self.gnss_lost or t - self.last_gnss_t < self.cfg.gnss_loss_after_s:
+            return False
+        self.gnss_lost = True
+        return True
+
+    def inflate_for_gnss_loss(self) -> str:
+        """Floor the position / velocity covariance (the GNSS fixes may have been spoofed: their tiny covariance
+        is no promise) and wait for a strong vision fix to re-localize. Returns the decision text."""
+        c = self.cfg
+        self.relocalizing = True
+        s_before = float(np.sqrt(max(self.P[0, 0], self.P[1, 1])))
+        for i in (0, 1):
+            self.P[i, i] = max(self.P[i, i], c.gnss_loss_pos_std**2)
+        for i in (3, 4):
+            self.P[i, i] = max(self.P[i, i], c.gnss_loss_vel_std**2)
+        return (f"GNSS_LOST: no healthy GNSS-free track, position std {s_before:.1f} -> {c.gnss_loss_pos_std:.0f} m, "
+                f"waiting for a strong vision fix")
+
+    def adopt(self, other: "Ekf") -> float:
+        """Take over another filter's state and covariance (GNSS-free track handover). Returns the jump (m)."""
+        jump = float(np.linalg.norm(other.x[:2] - self.x[:2]))
+        self.x = other.x.copy()
+        self.P = other.P.copy()
+        self.last_fix_t = other.last_fix_t
+        self.consecutive_rejects = 0
+        self.relocalizing = False
+        return jump
+
+    def sigma2_horizontal(self) -> float:
+        return 2.0 * float(np.sqrt(max(np.linalg.eigvalsh(self.P[:2, :2]).max(), 0.0)))
 
     def pose(self, R: np.ndarray, omega: np.ndarray, yaw: float) -> PoseEstimate:
         return PoseEstimate(self.t, self.x[:3].copy(), self.x[3:6].copy(), yaw, self.P[:6, :6].copy(), R.copy(), omega.copy(), "ekf")

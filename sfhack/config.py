@@ -124,6 +124,24 @@ class EkfConfig:
     gate_chi2: float = 9.21  # 99 % for 2 dof: visual fixes beyond this Mahalanobis distance are rejected
     nofix_inflate_after_s: float = 2.0  # without accepted fixes for this long, apply a covariance floor ...
     nofix_inflation: float = 0.5  # ... of (this * seconds blind) m std, so a correct fix is not gated out
+    # V3.2 GNSS -> GNSS-free transition. A naive GNSS jump (50 m in one epoch) moved the accel-bias states by
+    # ~1 m/s^2, which the error-state reset handed to the AHRS as a 5 deg tilt: after the jam the drone flew
+    # off at 20 m/s with 2-sigma ~2 m. Normal per-update bias steps are <= 0.022 m/s^2 (vision + GNSS).
+    acc_bias_step_max: float = 0.03  # m/s^2, max change of (bx, by) from one measurement update
+    gnss_loss_after_s: float = 1.0  # no GNSS fix this long after having had them = GNSS lost
+    # GNSS-free track: a second EKF (IMU + baro + vision, never GNSS) started at the first GNSS fix and run in
+    # parallel. On GNSS loss the main filter adopts it when it is healthy (HANDOVER). A spoof the naive
+    # main filter swallowed (lever jump: 50 m) is then gone at once; inflating the main covariance instead
+    # cannot reach that far: a 60 m NCC window at 40 m altitude is ambiguous almost everywhere (no fixes for
+    # 27 s, then a confident fix 65 m wrong).
+    gnss_free_track: bool = True
+    handover_max_fix_age_s: float = 5.0  # GNSS-free track is healthy: an accepted vision fix this recent ...
+    handover_max_sigma2: float = 10.0  # ... and its 2-sigma below this (m)
+    # Fallback (no healthy GNSS-free track, e.g. camera lost at the jam): floor the main covariance here, the
+    # GNSS-made ~0.4 m is no promise once the receiver is gone, then re-localize on the first STRONG fix.
+    gnss_loss_pos_std: float = 5.0  # m
+    gnss_loss_vel_std: float = 1.0  # m/s
+    reloc_min_quality: float = 0.6  # NCC peak score a fix needs to re-localize after GNSS loss
 
 
 @dataclass
@@ -183,6 +201,9 @@ class HealthConfig:
     return_after_hold_s: float = 10.0  # HOLD this long without recovery -> RETURN_TO_LAST_FIX
     land_sigma2: float = 45.0
     land_no_fix_s: float = 60.0
+    # V3.2: sigma2 > land_sigma2 means HOLD (hover and keep searching), not LAND, while blind. LAND only
+    # after land_no_fix_s without any fix. False = the old rule (sigma-based LAND).
+    hold_when_blind: bool = True
     degraded_speed_scale: float = 0.5
 
 

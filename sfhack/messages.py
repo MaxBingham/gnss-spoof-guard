@@ -94,6 +94,7 @@ class VisualFix:
     proc_ms: float = 0.0
     frame_seq: int = -1
     accepted: bool = True  # set by the EKF after Mahalanobis gating
+    quality: float = 1.0  # localizer confidence 0..1 (vision: NCC peak score); gates re-localization
 
 
 @dataclass

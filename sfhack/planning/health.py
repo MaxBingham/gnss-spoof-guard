@@ -3,7 +3,8 @@
 NOMINAL -> DEGRADED (slow down) -> HOLD (hover) -> RETURN_TO_LAST_FIX -> LAND,
 driven by the 2-sigma horizontal radius of the estimate and the time since the last accepted
 visual fix. Thresholds live in config.HealthConfig. HOLD / RETURN recover to NOMINAL as soon as
-fixes come back; LAND is terminal.
+fixes come back; LAND is terminal. With `hold_when_blind` (default) a huge 2-sigma alone keeps the drone in
+HOLD / RETURN (hover and search); only `land_no_fix_s` without any fix lands it.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ class HealthMonitor:
 
         if self.state == Health.LAND:
             pass
-        elif s2 > c.land_sigma2 or tsf > c.land_no_fix_s:
+        elif tsf > c.land_no_fix_s or (s2 > c.land_sigma2 and not c.hold_when_blind):
             self._set(Health.LAND, f"sigma2 {s2:.0f} m / no fix {tsf:.0f} s", t)
         elif self.state in (Health.HOLD, Health.RETURN_TO_LAST_FIX):
             if good:

@@ -12,7 +12,7 @@ no truth in the control loop), with every degradation lever live.
 What you see:
   Solid white X2 = TRUTH (the simulator), drawn 9x life size or more. Cyan ghost = where the drone THINKS it is (EKF).
   Two rings: cyan = claimed 2-sigma, orange = GNSS-fix 2-sigma. A short dim white trail is the true path, a short
-  dim cyan trail the estimated path, and one orange line is the GNSS-fix offset. A green, B red.
+  dim cyan trail the estimated path, and one orange line is the GNSS-fix offset. A and B are ground pads.
   The down-camera image is the bottom panel. Orange pin = GNSS fix.
   Fog / rain / dust and the wind arrow follow the levers.
 
@@ -262,10 +262,9 @@ class LiveDemo:
         g = Geoms(scn)
         fs = self.fs
         est, tr = fs.autopilot.pose(), fs.truth.state()
-        # start / goal pads with light columns. The route stroke is not drawn: the two trails are the paths.
+        # Ground pads at A and B. The tall columns read as a full-frame stem through the drone.
         for xy, rgb in ((self.start, GREEN), (self.goal, RED)):
             g.cylinder([xy[0], xy[1], 0.08], 3.5, 0.06, rgb, 0.95, emission=0.3)
-            g.cylinder([xy[0], xy[1], 30.0], 0.35, 30.0, rgb, 0.22, emission=0.6)
         # Short, dim tails. The map panel keeps the whole path.
         if len(self.truth_trail) > 1:
             g.stroke(_trail_tail(self.truth_trail), WHITE, 1.6, 0.40)

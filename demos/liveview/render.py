@@ -18,10 +18,21 @@ SKY_HORIZON = np.array([0.80, 0.86, 0.92], np.float32)
 # Chase-view only. Sensor haze and weather_effect stay on the visibility curve; this floor keeps
 # fog 0.65 as haze so building edges survive (transmission never falls below this).
 FOG_TRANSMISSION_FLOOR = np.float32(0.35)
+# Live 720p renders the 3D view at 3/4 linear (fog and the raster both shrink; the HUD stays
+# full resolution). 1080p stills stay native so the comparison frames do not go soft.
+LIVE_OFFSCREEN_SCALE = 0.75
+
+
+def offscreen_size(width: int, height: int) -> tuple[int, int]:
+    if width <= 1280 and height <= 720:
+        return max(160, int(round(width * LIVE_OFFSCREEN_SCALE))), max(90, int(round(height * LIVE_OFFSCREEN_SCALE)))
+    return width, height
 
 
 class SceneRenderer:
     def __init__(self, model: mujoco.MjModel, width: int, height: int) -> None:
+        self.out_w, self.out_h = width, height
+        width, height = offscreen_size(width, height)
         model.vis.global_.offwidth = max(model.vis.global_.offwidth, width)
         model.vis.global_.offheight = max(model.vis.global_.offheight, height)
         model.vis.headlight.ambient[:] = [0.45, 0.45, 0.45]
@@ -31,7 +42,12 @@ class SceneRenderer:
         self.r = mujoco.Renderer(model, height, width, max_geom=20000)
         self.opt = mujoco.MjvOption()
         self.opt.geomgroup[:] = 0
-        self.opt.geomgroup[:3] = 1  # world, trees, X2 visual mesh (3 = X2 collision shapes)
+        # Group 0: ground, buildings, roofs. Group 2: the X2 mesh. Group 1 is trees
+        # (trunk + crown, about 300 geoms) and it dominates this raster; the down-camera
+        # renderer does not use this option, so the localizer still sees the trees.
+        # Group 3 is the X2 collision shapes.
+        self.opt.geomgroup[0] = 1
+        self.opt.geomgroup[2] = 1
         self._rgb = np.zeros((height, width, 3), np.uint8)
         self._depth = np.zeros((height, width), np.float32)
         ext = model.stat.extent
@@ -88,7 +104,12 @@ class SceneRenderer:
             out = out * tr + fog * (np.float32(1.0) - tr)
         self.t_view = t1 - t0
         self.t_fog = time.perf_counter() - t1
-        return np.clip(out, 0, 255).astype(np.uint8)
+        frame = np.clip(out, 0, 255).astype(np.uint8)
+        if frame.shape[1] != self.out_w or frame.shape[0] != self.out_h:
+            t2 = time.perf_counter()
+            frame = cv2.resize(frame, (self.out_w, self.out_h), interpolation=cv2.INTER_LINEAR)
+            self.t_view += time.perf_counter() - t2
+        return frame
 
     def project(self, p) -> tuple[int, int] | None:
         """World point -> pixel (x right, y down) of the last rendered frame, None if behind the camera."""
@@ -103,7 +124,8 @@ class SceneRenderer:
         xn, yn = float(v @ right) * near / zc, float(v @ up) * near / zc
         u = (xn - (center - width)) / (2 * width) * self.W
         vv = (top - yn) / (top - bottom) * self.H
-        return int(round(u)), int(round(vv))
+        # project() is in window pixels. The raster may be a smaller buffer that we upscale.
+        return int(round(u * self.out_w / self.W)), int(round(vv * self.out_h / self.H))
 
     def close(self) -> None:
         self.r.close()

@@ -17,10 +17,31 @@ from .conditions import Conditions, GnssConditions, WeatherConditions, WindCondi
 
 # ---------------------------------------------------------------------------------------- GNSS
 
-GNSS_SIGMA_M = 1.5  # white horizontal noise per fix (TS reference: 1.5 m)
-GNSS_SLOW_SIGMA_M = 0.7  # slowly varying error (multipath / atmosphere), Gauss-Markov ...
-GNSS_SLOW_TAU_S = 30.0  # ... with this correlation time
-GNSS_VERT_SIGMA_M = 3.0
+# A reported consumer fix is a filtered position, not a raw pseudorange.
+# Open sky is the tight end of about 1-5 m CEP (u-blox NEO-M8 spec is 2.0 m; phones and
+# weather / multipath sit toward 5 m). CEP ≈ 1.18 σ. This model is that open-sky end:
+# σ ≈ 0.8 m, CEP ≈ 1.0 m. Most of it is multipath / atmosphere (Gauss-Markov, 30 s).
+# Epoch jitter is a few decimetres. The old 1.5 m of white noise every 5 Hz fix made the
+# pin jump metres while the filter averaged it away. The reported covariance is the
+# variance actually added (jitter² + slow²).
+GNSS_JITTER_M = 0.4  # epoch-to-epoch white noise at the receiver rate
+GNSS_SLOW_SIGMA_M = 0.7  # Gauss-Markov, stationary σ
+GNSS_SLOW_TAU_S = 30.0  # correlation time of the slow error
+# Vertical is about 2× horizontal and is not fused (the reported cov is 2×2). Same split,
+# so the pin does not hop by metres every fix.
+GNSS_VERT_SIGMA_M = 1.5
+GNSS_VERT_JITTER_M = 0.3
+GNSS_SIGMA_M = GNSS_JITTER_M  # name kept for callers that pass a white-noise sigma
+
+
+def gnss_horizontal_variance(jitter_m: float = GNSS_JITTER_M) -> float:
+    """Variance the receiver reports, and the variance actually added to the fix (steady state)."""
+    return jitter_m**2 + GNSS_SLOW_SIGMA_M**2
+
+
+def gnss_sigma2_m(jitter_m: float = GNSS_JITTER_M) -> float:
+    """2-sigma horizontal radius. The drawn GNSS ring and the reported covariance share this."""
+    return 2.0 * math.sqrt(gnss_horizontal_variance(jitter_m))
 
 
 @dataclass
@@ -37,13 +58,16 @@ class GnssModel:
         self.sigma = sigma
         self.offset = np.zeros(2)  # false offset applied by the attacker (drag / jump)
         self.slow = np.zeros(2)
+        self.slow_z = 0.0
         self._last_t: float | None = None
 
     def sample(self, t: float, true_pos: np.ndarray, lever: GnssConditions) -> GnssFix | None:
         dt = 0.0 if self._last_t is None else max(0.0, t - self._last_t)
         self._last_t = t
         a = math.exp(-dt / GNSS_SLOW_TAU_S) if dt > 0 else 1.0
-        self.slow = a * self.slow + self.rng.normal(0.0, GNSS_SLOW_SIGMA_M * math.sqrt(max(1 - a * a, 0.0)), 2)
+        innov = math.sqrt(max(1.0 - a * a, 0.0))
+        self.slow = a * self.slow + self.rng.normal(0.0, GNSS_SLOW_SIGMA_M * innov, 2)
+        self.slow_z = a * self.slow_z + self.rng.normal(0.0, GNSS_VERT_SIGMA_M * innov)
         if lever.mode == "drag":
             ux, uy = compass_unit(lever.drag_heading_deg)
             self.offset += lever.drag_rate * dt * np.array([ux, uy])
@@ -55,10 +79,10 @@ class GnssModel:
         if lever.mode in ("off", "jam"):
             return None
         pos = np.asarray(true_pos, float).copy()
+        # Jitter is the only white term. The slow state and the attacker offset carry the metres.
         pos[:2] += self.offset + self.slow + self.rng.normal(0.0, self.sigma, 2)
-        pos[2] += self.rng.normal(0.0, GNSS_VERT_SIGMA_M)
-        s2 = self.sigma**2 + GNSS_SLOW_SIGMA_M**2
-        return GnssFix(pos, np.eye(2) * s2)
+        pos[2] += self.slow_z + self.rng.normal(0.0, GNSS_VERT_JITTER_M)
+        return GnssFix(pos, np.eye(2) * gnss_horizontal_variance(self.sigma))
 
 
 # ---------------------------------------------------------------------------------------- weather

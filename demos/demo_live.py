@@ -48,6 +48,7 @@ from sfhack import bus as topics
 from sfhack.config import data_dir
 from sfhack.degradation import Conditions
 from sfhack.degradation.cli import add_cli_args, conditions_from_args, parse_schedule
+from sfhack.degradation.models import gnss_sigma2_m
 from sfhack.runner import FlightSystem
 from sfhack.sim.mujoco_sim import announce_scene_compile
 
@@ -251,36 +252,35 @@ class LiveDemo:
             g.cylinder([xy[0], xy[1], 0.08], 3.5, 0.06, rgb, 0.95, emission=0.3)
             g.cylinder([xy[0], xy[1], 30.0], 0.35, 30.0, rgb, 0.22, emission=0.6)
         if len(self.route) > 1:
-            for a, b in zip(self.route[:-1], self.route[1:]):
-                g.dashed(a, b, 0.12, WHITE, 0.35, dash=3.0)
+            g.stroke(self.route, WHITE, 3.0, 0.55)  # one line per leg, not a capsule per dash
         # trails
         if len(self.truth_trail) > 1:
-            g.stroke(_decimate(self.truth_trail, 80), WHITE, 4.0, 0.95)
-            g.stroke(_decimate(self.est_trail, 80), CYAN, 4.0, 0.9)
+            g.stroke(_decimate(self.truth_trail, 40), WHITE, 4.0, 0.95)
+            g.stroke(_decimate(self.est_trail, 40), CYAN, 4.0, 0.9)
         # the true drone and its ghost
         scale = self.draw_scale
         g.drone(tr.pos, tr.R, scale, (0.93, 0.93, 0.96), (0.12, 0.12, 0.14), 1.0, nose_rgb=ORANGE)
         g.drone(est.pos, est.R, scale, CYAN, CYAN, 0.38)
         cov = est.cov[:3, :3]
         evals, evecs = np.linalg.eigh(0.5 * (cov[:2, :2] + cov[:2, :2].T))
-        radii = np.clip(2.0 * np.sqrt(np.maximum(evals, 0.0)), 0.8, 400.0)
-        rz = float(np.clip(2.0 * math.sqrt(max(cov[2, 2], 0.0)), 0.8, 60.0))
+        # Same 2σ the HUD prints (filter posterior). No 0.8 m floor: a tight claim stays tight.
+        radii = np.clip(2.0 * np.sqrt(np.maximum(evals, 0.0)), 0.05, 400.0)
+        rz = float(np.clip(2.0 * math.sqrt(max(cov[2, 2], 0.0)), 0.05, 60.0))
         mat = np.eye(3)
         mat[:2, :2] = evecs
         if np.linalg.det(mat) < 0:
             mat[:, 0] *= -1
         g.ellipsoid(est.pos, [radii[0], radii[1], rz], mat, CYAN, 0.13)
         s2 = est.sigma2_horizontal()
-        g.ring([est.pos[0], est.pos[1], 0.25], max(s2, 0.8), 0.18, CYAN, 0.8, n=24)
-        # True-radius ring at the ghost, no inflated minimum: a 1 m claim stays visible on the scaled body.
         if s2 > 0.05:
-            # Above the scaled rotors, true radius: a 1 m claim reads on the body instead of inside it.
+            g.line_ring([est.pos[0], est.pos[1], 0.25], float(s2), CYAN, 0.85, width=4.0, n=24)
+            # Above the scaled rotors, same radius: a 1 m claim reads on the body instead of inside it.
             halo = np.array([est.pos[0], est.pos[1], est.pos[2] + 0.22 * scale])
-            g.line_ring(halo, float(s2), (0.75, 1.0, 1.0), 1.0, width=6.0, n=40)
-        g.dashed(est.pos, [est.pos[0], est.pos[1], 0.25], 0.06, CYAN, 0.6, dash=1.5)
-        g.dashed(tr.pos, [tr.pos[0], tr.pos[1], 0.25], 0.06, WHITE, 0.5, dash=1.5)
+            g.line_ring(halo, float(s2), (0.75, 1.0, 1.0), 1.0, width=6.0, n=24)
+        g.line(est.pos, [est.pos[0], est.pos[1], 0.25], CYAN, 2.0, 0.6)
+        g.line(tr.pos, [tr.pos[0], tr.pos[1], 0.25], WHITE, 2.0, 0.5)
         if np.linalg.norm(est.pos - tr.pos) > 1.5:
-            g.dashed(tr.pos, est.pos, 0.1, RED, 0.9, dash=1.0)
+            g.line(tr.pos, est.pos, RED, 3.0, 0.9)
         self._draw_camera(g, d)
         self._draw_lidar(g, tr)
         self._draw_gnss(g)
@@ -336,9 +336,11 @@ class LiveDemo:
             fade = (i + 1) / (n_tail + 1)
             g.sphere(f, 0.22, rgb, 0.12 + 0.40 * fade)
         g.sphere(last, 1.0, rgb, 0.95, emission=0.0 if state == "jam" else 0.6)
-        g.ring(last, 3.3, 0.12, rgb, 0.85)
-        g.capsule(last, [last[0], last[1], 0.3], 0.1, rgb, 0.6)
-        g.ring([last[0], last[1], 0.3], 3.3, 0.12, rgb, 0.6)
+        # 2σ of the covariance the receiver reports, which is the noise the model injects.
+        r2 = gnss_sigma2_m(self.fs.cfg.noise.gnss_noise)
+        g.line_ring(last, r2, rgb, 0.9, width=5.0, n=28)
+        g.line(last, [last[0], last[1], 0.3], rgb, 2.0, 0.6)
+        g.line_ring([last[0], last[1], 0.3], r2, rgb, 0.75, width=4.0, n=28)
 
     def _draw_wind(self, g: Geoms, pos: np.ndarray) -> None:
         w = self.c.wind

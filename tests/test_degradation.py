@@ -89,10 +89,19 @@ def _gnss_run(lever_cfg: GnssConditions, n: int = 500, seed: int = 0) -> np.ndar
 
 
 def test_gnss_ok_noise_is_realistic() -> None:
-    err = _gnss_run(GnssConditions(mode="ok"), n=3000)
+    # Long enough that a 30 s correlation time still averages down (a few hundred independent samples).
+    err = _gnss_run(GnssConditions(mode="ok"), n=20000)
     assert np.all(np.isfinite(err))
     assert np.abs(err.mean(axis=0)).max() < 0.5
-    assert 1.3 < err.std(axis=0).mean() < 2.0  # 1.5 m white + 0.7 m slow
+    # Open-sky end of 1-5 m CEP. Mostly a 30 s Gauss-Markov, so successive fixes move together.
+    assert 0.55 < err.std(axis=0).mean() < 1.2
+    a = err - err.mean(axis=0)
+    corr = float((a[1:] * a[:-1]).mean() / (a * a).mean())
+    assert corr > 0.6
+    g = lever.GnssModel(np.random.default_rng(0))
+    fix = g.sample(0.0, np.zeros(3), GnssConditions(mode="ok"))
+    assert fix.cov[0, 0] == pytest.approx(lever.gnss_horizontal_variance())
+    assert lever.gnss_sigma2_m() == pytest.approx(2.0 * np.sqrt(fix.cov[0, 0]))
 
 
 def test_gnss_jam_and_off_publish_nothing() -> None:

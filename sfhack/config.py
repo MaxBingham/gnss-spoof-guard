@@ -53,7 +53,9 @@ class SensorNoise:
     range_max: float = 40.0  # m, beyond this the rangefinder reports nothing (nan)
     mag_noise_deg: float = 2.0
     mag_bias_deg: float = 1.0  # constant heading bias std (uncalibrated declination / hard iron)
-    gnss_noise: float = 1.5  # m, white horizontal noise per GNSS fix (plus a slow Gauss-Markov error)
+    # Epoch jitter only (m). The rest of the ~1 m open-sky CEP is the slow Gauss-Markov
+    # term in sfhack.degradation.models, not a fresh metre-scale draw every fix.
+    gnss_noise: float = 0.4
     lidar_range_max: float = 100.0  # m, nadir multi-beam lidar
 
 

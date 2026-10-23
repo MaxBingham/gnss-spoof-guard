@@ -31,6 +31,32 @@ landings 0. GNSS-free `--nav vision` (same 40 seeds): on the pad 29/40, wrong la
 the vision localizer loses lock over the procedural grass and the EKF diverges (km), the drone times out
 in the air. That is the biggest open problem.
 
+## V4 learned truck detector (branch `v4-detector`)
+
+A YOLO nano detector trained only on synthetic, auto-labeled MuJoCo renders, evaluated on held-out object
+models and grounds. Scenes come from the object library (real-scale STL, `SFHACK_OBJECTS`, default
+`../7 SF Hack Objects`): exactly one brown truck carrying a neutral gray landing pad with the ArUco marker,
+brown + white car, tent, hut, tree, 0-3 distractors (brown pickup, SUV, brown hut), trees over vehicles; random
+ground (Berkeley ortho crops, grass, asphalt), sun, altitude 12-45 m, tilt 0-25 deg, fog / rain (degradation
+levers). Labels come from MuJoCo's segmentation buffer (`sfhack/sim/detector_scene.py`, simulator side). At
+runtime `sfhack/perception/truck_detector.py` sees only the RGB frame + altitude / attitude estimates
+(`tests/test_truck_detector.py` enforces it) and returns class, calibrated confidence, box and ground offset;
+`TruckSelector` accumulates a burst of frames and picks the truck with a margin rule.
+
+```
+uv sync --extra detector                         # torch (CUDA 12.8 wheels), ultralytics, transformers
+uv run python demos/13_det_dataset.py            # 6000 / 1000 / 1000 (+300 no-pad) images -> $SFHACK_DATA/v4/detector/dataset
+uv run python demos/14_det_train.py              # yolo26n, 640 px, batch 8 (4 GB GPU), <= 60 min
+uv run python demos/15_det_eval.py               # held-out test: AP50, Wilson CIs, calibration, breakdowns
+uv run python demos/16_det_select.py             # 200 end-to-end selection episodes (hover at 30 m, 2 s)
+uv run python demos/17_det_owlv2.py              # zero-shot OWLv2 baseline (+ --negatives)
+uv run python demos/18_det_report.py             # -> $SFHACK_DATA/v4/detector/RESULTS.md
+```
+
+License: Ultralytics YOLO is **AGPL-3.0**. Fine for this private hackathon prototype; shipping or offering the
+detector as a service would need AGPL compliance or an Ultralytics enterprise license. It is an optional extra:
+nothing else in the package imports it. OWLv2 (baseline only) is Apache-2.0.
+
 ## Degradation levers
 
 All levers live in one `Conditions` dataclass (`sfhack/degradation/`). They are simulated reality: the

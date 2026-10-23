@@ -37,3 +37,20 @@ at its default 0), every existing demo and test behaves exactly as before.
 - Standalone flights use `nav=gnss` (honest GNSS) by default: the vision localizer gets few fixes on the
   procedural grass field and the EKF drifts (first flight: 151 fixes / 1180 frames, mean error 600 m).
 
+
+## Branch `v4-detector` (on top of `v4-target-selection`)
+
+Learned truck detector from synthetic data. All additive; nothing existing changes behavior.
+
+| File | Side | What |
+| --- | --- | --- |
+| `sfhack/sim/detector_scene.py` | simulator (truth) | library-based randomized scenes, ground texture pools, MuJoCo pool model, segmentation auto-labels |
+| `sfhack/perception/truck_detector.py` | onboard | `TruckDetector.detect(rgb, altitude, attitude)`, `TruckSelector` (burst + margin rule); lazy Ultralytics import |
+| `sfhack/config.py` | shared | new `DetectorConfig` + `Config.detector` |
+| `pyproject.toml`, `uv.lock` | shared | optional extra `detector` (torch/torchvision from the PyTorch cu128 index, ultralytics, transformers) |
+| `demos/13-18_det_*.py`, `demos/detlib.py` | harness | dataset, training, evaluation, end-to-end selection, OWLv2 baseline, report |
+| `tests/test_detector_scene.py`, `tests/test_truck_detector.py` | test | scene / labels / held-out splits; truth separation + projection + selector + runtime |
+
+Not yet wired into `TargetMission`: the mission still uses `target_detector.py` (change detection). The hook is
+`TruckSelector` fed from `on_camera` with the EKF pose; the down camera must then render 640 x 480
+(`CameraConfig.down_width/height`), since the detector was trained at that resolution and fovy 70 deg.

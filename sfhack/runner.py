@@ -16,11 +16,11 @@ import numpy as np
 
 from .autopilot import Autopilot
 from .bus import Bus
-from .config import SAMPLE_WORLD_DIR, Config, default_config
+from .config import SAMPLE_WORLD_DIR, Config, data_dir, default_config
 from .degradation.conditions import Conditions, ConditionsMsg
 from .messages import Disturbance
 from .perception.localizer import Localizer
-from .planning.mission import Mission, a_to_b_plan, fly_x2_plan
+from .planning.mission import Mission, a_to_b_plan, fly_x2_plan, route_plan
 from .sim.mujoco_sim import MujocoSim
 from .sim.truth import TruthPoseSource, TruthProvider
 from .world.onboard_map import OnboardMap
@@ -51,6 +51,15 @@ class FlightResult:
                 f"{self.loc_ms_mean:.1f} ms/frame, rejected {self.fixes_rejected}, health {self.health_states}")
 
 
+def resolve_mission(mission: str | Path) -> Path:
+    """Mission id (under $SFHACK_DATA/missions) or a mission directory -> the directory."""
+    p = Path(mission)
+    d = p if (p / "world").is_dir() else data_dir() / "missions" / str(mission)
+    if not (d / "world" / "manifest.json").exists() or not (d / "onboard" / "manifest.json").exists():
+        raise FileNotFoundError(f"mission {mission!r} not prepared ({d}); run: python -m sfhack.missionprep build")
+    return d
+
+
 def make_localizer(name: str, cfg: Config, truth: TruthProvider, seed: int = 0) -> Localizer | None:
     if name == "off":
         return None
@@ -77,15 +86,23 @@ class FlightSystem:
         reuse_sim: MujocoSim | None = None,
         conditions: Conditions | None = None,
         schedule: list[tuple[float, dict[str, Any]]] | None = None,
+        mission: str | Path | None = None,
     ) -> None:
         """`conditions`: initial degradation levers (default `cfg.conditions`). `schedule`: lever changes
-        at sim times, [(t, {'gnss': 'drag:1.5@90', 'wind.speed': 6}), ...] (see sfhack.degradation.cli)."""
+        at sim times, [(t, {'gnss': 'drag:1.5@90', 'wind.speed': 6}), ...] (see sfhack.degradation.cli).
+        `mission`: a mission prepared by sfhack.missionprep (id under $SFHACK_DATA/missions, or its directory):
+        the simulated world (truth) comes from <mission>/world, the onboard map and route from <mission>/onboard."""
         self.cfg = cfg or default_config()
         self.bus = Bus()
         self.seed = seed
+        self.mission_dir = resolve_mission(mission) if mission is not None else None
+        if self.mission_dir is not None:
+            world_dir = self.mission_dir / "world"
         self.world_dir = Path(world_dir) if world_dir is not None else None
         self.map_source = map_source
         mc = self.cfg.mission
+        spawn_z = 0.0
+        self.onboard_dir: Path | None = None
 
         if self.world_dir is None:  # fly_x2.py arena, no onboard map
             world: Any = ArenaWorld()
@@ -100,22 +117,33 @@ class FlightSystem:
                     raise FileNotFoundError(f"{ALT_TEXTURE} missing in {self.world_dir} (build it with the world builder)")
                 texture = ALT_TEXTURE
             world = PackageWorld(self.world_dir, texture_file=texture)
-            self.onboard_map = OnboardMap(self.world_dir)  # onboard map always uses the package's ortho.jpg
+            # Onboard map: the mission package as uploaded to the drone (verified copy), else as built; the
+            # sample world uses its own package for both.
+            onboard_dir = self.world_dir
+            if self.mission_dir is not None:
+                drone = self.mission_dir / "drone"
+                onboard_dir = drone if (drone / "upload_receipt.json").exists() else self.mission_dir / "onboard"
+            self.onboard_dir = onboard_dir
+            self.onboard_map = OnboardMap(onboard_dir)  # always the package's own ortho.jpg
             start, self.goal_xy = world.a_enu, world.b_enu
             d = self.goal_xy - start
             yaw = math.atan2(d[1], d[0])
-            plan = a_to_b_plan(start, self.goal_xy, mc)
+            route = (self.onboard_map.mission or {}).get("route")
+            plan = route_plan(route, mc) if route else a_to_b_plan(start, self.goal_xy, mc)
+            spawn_z = world.ground_z(*start)  # harness: the true ground under A (z datum: 0 for mission worlds)
 
+        self.world = world  # simulator side: true terrain for scoring and display
         reuse = (reuse_sim.model, reuse_sim.data) if reuse_sim is not None else None
         self.sim = MujocoSim(self.cfg, self.bus, world, spawn_xy=(start[0], start[1]), spawn_yaw=yaw,
-                             seed=seed, render_front=render_front, reuse=reuse)
+                             seed=seed, render_front=render_front, reuse=reuse, spawn_z=spawn_z)
         if conditions is not None:
             self.sim.set_conditions(conditions)
         self.schedule = sorted(schedule or [], key=lambda e: e[0])
         self.conditions_log: list[tuple[float, str]] = [(0.0, self.sim.conditions.summary())]  # harness log
         self.truth = TruthProvider(self.sim)
         start3 = np.array([start[0], start[1], 0.0])
-        self.mission = Mission(plan, start3, yaw, mc)
+        self.mission = Mission(plan, start3, yaw, mc,
+                               ground_z=self.onboard_map.ground_z if self.onboard_map is not None else None)
         self.autopilot = Autopilot(
             self.cfg, self.bus, self.sim.vehicle_params(), self.mission, start3, yaw,
             onboard_map=self.onboard_map,
@@ -207,10 +235,14 @@ class FlightSystem:
         self.autopilot.log_decision(self.t, f"{r.outcome}, final error {r.final_error:.1f} m")  # harness: scored on truth
         return r
 
+    def true_ground_z(self, x: float, y: float) -> float:
+        """Harness: the TRUE ground height (terrain worlds), for scoring and display only."""
+        return self.world.ground_z(x, y) if isinstance(self.world, PackageWorld) else 0.0
+
     def result(self) -> FlightResult:
         truth = self.truth.state()
         final_err = float(np.linalg.norm(truth.pos[:2] - self.goal_xy))
-        landed = self.done and truth.pos[2] < 0.5
+        landed = self.done and truth.pos[2] - self.true_ground_z(truth.pos[0], truth.pos[1]) < 0.5
         if self.log_t:
             errs = np.linalg.norm(np.array(self.log_truth)[:, :2] - np.array(self.log_est)[:, :2], axis=1)
             e_mean, e_max = float(errs.mean()), float(errs.max())

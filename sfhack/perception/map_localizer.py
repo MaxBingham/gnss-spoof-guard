@@ -2,10 +2,11 @@
 
 Onboard only: camera frame + onboard map + the prior (EKF position/covariance, AHRS attitude). No truth.
 
-1. Ortho-rectify: for every cell of a north-up ground grid centred under the camera, project the ground
-   point (flat terrain, z = 0) into the image with the AHRS attitude and the EKF height above ground,
-   and sample the camera there (cv2.remap). Template size follows the footprint (~0.4 x height), its
-   resolution follows the template size (fixed pixel count), so it works from cruise down to ~5 m.
+1. Ortho-rectify: for every cell of a north-up grid centred under the camera, project the surface point
+   (the onboard DSM height there: roofs and terrain; z = 0 for packages without terrain) into the image with
+   the AHRS attitude and the EKF height, and sample the camera there (cv2.remap). Template size follows the
+   footprint (~0.4 x height above the surface below), its resolution follows the template size (fixed pixel
+   count), so it works from cruise down to ~5 m.
 2. Resample the onboard ortho around the prior at the same resolution, search radius = 3 sigma of the
    prior (+ margin), and run normalized cross-correlation (cv2.matchTemplate, TM_CCOEFF_NORMED).
 3. Peak -> camera position (sub-pixel parabola). Reject below `vision_min_score` or when a second peak
@@ -66,7 +67,10 @@ class MapLocalizer:
         c = self.cfg
         if frame.name != "down" or int(frame.image.max()) < 8:  # black frame = camera failure
             return self._fail("no image")
-        alt = float(prior.pos[2]) - CAM_Z_OFFSET  # camera height above the flat ground
+        # Camera height above the mapped surface below it: onboard DSM (roofs, terrain) under the prior,
+        # 0 for packages without terrain (flat world at z = 0).
+        cam_z = float(prior.pos[2]) - CAM_Z_OFFSET
+        alt = cam_z - onboard_map.surface_z(prior.pos[:2])
         if alt < c.vision_min_alt:
             return self._fail(f"below {c.vision_min_alt:.0f} m")
 
@@ -76,7 +80,10 @@ class MapLocalizer:
         mpp = 2.0 * half / n
         g = (np.arange(n) + 0.5) * mpp - half
         dx, dy = np.meshgrid(g, -g)  # row 0 = north
-        rel = np.stack([dx, dy, np.full_like(dx, -alt)], axis=-1)  # ground point - camera, world
+        # Each cell is projected at its mapped surface height (true ortho over buildings and slopes; over
+        # terrain 15-30 m below the camera, with 20 m roofs, a single ground plane put roofs at 2-3x scale).
+        surf = onboard_map.surface_heights(np.stack([prior.pos[0] + dx, prior.pos[1] + dy], axis=-1))
+        rel = np.stack([dx, dy, surf - cam_z], axis=-1)  # surface point - camera, world
         R_wc = prior.R @ R_BODY_CAM
         pc = rel @ R_wc  # world -> camera frame
         depth = -pc[..., 2]

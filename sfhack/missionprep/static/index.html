@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission Planner</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #161c24; --line: #263040; --text: #dce3ea; --muted: #8a97a6;
+    --accent: #4fb3ff; --a: #3ccf7a; --b: #ff5b4d; --ok: #3ccf7a; --warn: #ffb547; --bad: #ff5b4d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #app { display: grid; grid-template-columns: 1fr 400px; height: 100vh; }
+  #map { height: 100%; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 16px 18px 28px; }
+  h1 { font-size: 17px; margin: 0 0 2px; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 14px; }
+  section { border-top: 1px solid var(--line); padding: 12px 0; }
+  section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  input[type=text], input[type=number] { width: 100%; background: #0d1217; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 9px; font: inherit; }
+  button { background: #223042; color: var(--text); border: 1px solid #2f4258; border-radius: 6px; padding: 7px 12px;
+    font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { background: #2a3b51; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #1f6fb2; border-color: #2a83cc; font-weight: 600; width: 100%; padding: 10px; }
+  button.primary:hover:not(:disabled) { background: #2580ca; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; flex: 1; background: transparent; }
+  .seg button.on { background: #223042; }
+  .pt { display: grid; grid-template-columns: 22px 1fr; gap: 6px; font-variant-numeric: tabular-nums; font-size: 13px; margin: 3px 0; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; margin-top: 3px; }
+  .muted { color: var(--muted); }
+  #results div { padding: 5px 7px; border-radius: 5px; cursor: pointer; font-size: 12.5px; }
+  #results div:hover { background: #1d2733; }
+  input[type=range] { width: 100%; accent-color: var(--b); }
+  .bar { height: 8px; background: #0d1217; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+  .bar.ok > i { background: var(--ok); }
+  .bar.bad > i { background: var(--bad); }
+  pre#log { background: #0b0f14; border: 1px solid var(--line); border-radius: 6px; padding: 8px; height: 190px; overflow: auto;
+    font: 11.5px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; margin: 8px 0 0; color: #b9c4cf; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  td { padding: 3px 0; vertical-align: middle; }
+  td.r { text-align: right; white-space: nowrap; }
+  .layer td:first-child { width: 112px; }
+  .chk { color: var(--ok); font-weight: 700; }
+  .ready { border: 1px solid #2c6b45; background: #10261a; border-radius: 8px; padding: 12px; margin-top: 10px; display: none; }
+  .ready b { color: var(--ok); font-size: 15px; letter-spacing: .05em; }
+  .ready code { display: block; background: #0b0f14; border: 1px solid var(--line); border-radius: 5px; padding: 8px; margin: 8px 0;
+    font: 12.5px ui-monospace, Consolas, monospace; word-break: break-all; color: #e6edf3; }
+  .warn { color: var(--warn); font-size: 12.5px; }
+  .err { color: var(--bad); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12.5px; }
+  .kv span:nth-child(odd) { color: var(--muted); }
+  .leaflet-container { background: #1b222b; }
+  .wp-label { background: rgba(15, 20, 25, .85); color: #fff; border: 0; font: 11px system-ui; padding: 1px 5px; border-radius: 3px; box-shadow: none; }
+  .wp-label::before { display: none; }
+  @media (max-width: 860px) { #app { grid-template-columns: 1fr; grid-template-rows: 55vh auto; height: auto; }
+    aside { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map"></div>
+  <aside>
+    <h1>Mission Planner</h1>
+    <div class="sub">Pick A and B, prepare the world + onboard map package, upload it to the drone.</div>
+
+    <section>
+      <h2>Search</h2>
+      <form id="searchForm" class="row"><input id="q" type="text" placeholder="Place or address (Nominatim)"><button style="flex:0 0 auto">Go</button></form>
+      <div id="results"></div>
+    </section>
+
+    <section>
+      <h2>Route</h2>
+      <div class="seg" id="mode"><button data-m="A" class="on">Click sets A</button><button data-m="B">Click sets B</button></div>
+      <div style="margin-top:8px">
+        <div class="pt"><div class="dot" style="background:var(--a)"></div><div id="aTxt" class="muted">A: click the map</div></div>
+        <div class="pt"><div class="dot" style="background:var(--b)"></div><div id="bTxt" class="muted">B: click the map</div></div>
+        <div class="muted" id="distTxt" style="font-size:12.5px;margin-top:2px"></div>
+      </div>
+      <div style="margin-top:10px">
+        <div class="row"><span>Search radius around B</span><span style="flex:0 0 auto" id="rTxt">30 m</span></div>
+        <input id="radius" type="range" min="10" max="150" step="5" value="30">
+      </div>
+      <div style="margin-top:6px"><input id="mid" type="text" placeholder="Mission id (optional, e.g. campus-2)"></div>
+    </section>
+
+    <section>
+      <button class="primary" id="prepBtn" disabled>Prepare mission</button>
+      <div style="margin-top:10px" class="bar" id="prepBar"><i></i></div>
+      <div class="muted" id="prepStage" style="font-size:12px;margin-top:4px"></div>
+      <pre id="log"></pre>
+      <div id="warn"></div>
+    </section>
+
+    <section id="pkgSec" style="display:none">
+      <h2>Onboard package</h2>
+      <div class="kv" id="pkgInfo"></div>
+      <table id="layers" style="margin-top:8px"></table>
+    </section>
+
+    <section id="upSec" style="display:none">
+      <h2>Upload to drone</h2>
+      <div class="row"><span>Link bandwidth</span><input id="mbps" type="number" min="0.1" max="100" step="0.1" value="2" style="flex:0 0 80px"><span style="flex:0 0 auto" class="muted">MB/s</span></div>
+      <button class="primary" id="upBtn" style="margin-top:10px">Upload to drone</button>
+      <div style="margin-top:10px" class="bar" id="upBar"><i></i></div>
+      <div class="muted" id="upTxt" style="font-size:12px;margin-top:4px"></div>
+      <table id="upLayers" style="margin-top:8px"></table>
+      <div class="ready" id="ready"><b>READY TO FLY</b><div class="muted" style="font-size:12.5px;margin-top:4px">Every layer verified on the drone (SHA-256). Start the live demo on this mission:</div>
+        <code id="cmd"></code><button id="copyBtn">Copy command</button></div>
+    </section>
+
+    <section>
+      <h2>Prepared missions</h2>
+      <div id="missions" class="muted" style="font-size:12.5px">none yet</div>
+    </section>
+  </aside>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtMB = (b) => (b / 1e6).toFixed(b < 1e5 ? 3 : 2) + " MB";
+let A = null, B = null, mode = "A", radius = 30, mission = null, overlays = [];
+
+const map = L.map("map", { zoomControl: true });
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+}).addTo(map);
+const icon = (c) => L.divIcon({ className: "", iconSize: [22, 22], iconAnchor: [11, 11],
+  html: `<div style="width:22px;height:22px;border-radius:50%;background:${c};border:3px solid #fff;box-shadow:0 1px 4px #0008"></div>` });
+const mA = L.marker([0, 0], { icon: icon("#3ccf7a"), draggable: true });
+const mB = L.marker([0, 0], { icon: icon("#ff5b4d"), draggable: true });
+const circle = L.circle([0, 0], { radius: 30, color: "#ff5b4d", weight: 2, fillOpacity: 0.12 });
+const line = L.polyline([], { color: "#4fb3ff", weight: 2, dashArray: "6 6" });
+mA.bindTooltip("A", { permanent: true, direction: "top", offset: [0, -10], className: "wp-label" });
+mB.bindTooltip("B", { permanent: true, direction: "top", offset: [0, -10], className: "wp-label" });
+
+function setPoint(which, ll) {
+  if (which === "A") { A = ll; mA.setLatLng(ll).addTo(map); }
+  else { B = ll; mB.setLatLng(ll).addTo(map); circle.setLatLng(ll).addTo(map); }
+  refresh();
+}
+mA.on("drag", (e) => { A = e.target.getLatLng(); refresh(); });
+mB.on("drag", (e) => { B = e.target.getLatLng(); circle.setLatLng(B); refresh(); });
+map.on("click", (e) => { setPoint(mode, e.latlng); if (mode === "A" && !B) setMode("B"); else if (mode === "B" && !A) setMode("A"); });
+function setMode(m) { mode = m; document.querySelectorAll("#mode button").forEach((b) => b.classList.toggle("on", b.dataset.m === m)); }
+document.querySelectorAll("#mode button").forEach((b) => b.onclick = () => setMode(b.dataset.m));
+
+function refresh() {
+  $("aTxt").textContent = A ? `A  ${A.lat.toFixed(6)}, ${A.lng.toFixed(6)}` : "A: click the map";
+  $("bTxt").textContent = B ? `B  ${B.lat.toFixed(6)}, ${B.lng.toFixed(6)}` : "B: click the map";
+  $("aTxt").classList.toggle("muted", !A); $("bTxt").classList.toggle("muted", !B);
+  if (A && B) {
+    line.setLatLngs([A, B]).addTo(map);
+    const d = map.distance(A, B);
+    $("distTxt").textContent = `distance ${d.toFixed(0)} m` + (d > 3000 ? " (long: large download, slow build)" : "");
+  }
+  $("prepBtn").disabled = !(A && B);
+}
+$("radius").oninput = (e) => { radius = +e.target.value; $("rTxt").textContent = radius + " m"; circle.setRadius(radius); };
+
+$("searchForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const q = $("q").value.trim(); if (!q) return;
+  $("results").innerHTML = '<div class="muted">searching...</div>';
+  const r = await fetch("/api/search?q=" + encodeURIComponent(q));
+  const items = r.ok ? await r.json() : [];
+  $("results").innerHTML = "";
+  if (!items.length) { $("results").innerHTML = '<div class="muted">no results</div>'; return; }
+  for (const it of items) {
+    const d = document.createElement("div"); d.textContent = it.name;
+    d.onclick = () => { map.setView([it.lat, it.lon], 17); $("results").innerHTML = ""; };
+    $("results").appendChild(d);
+  }
+};
+
+async function poll(job, onTick) {
+  let since = 0, ev = 0;
+  for (;;) {
+    const r = await fetch(`/api/jobs/${job}?since=${since}&events_since=${ev}`);
+    const j = await r.json();
+    since = j.log_len; ev = j.events_len;
+    onTick(j);
+    if (j.status !== "running") return j;
+    await new Promise((res) => setTimeout(res, 250));
+  }
+}
+
+$("prepBtn").onclick = async () => {
+  $("prepBtn").disabled = true; $("log").textContent = ""; $("warn").innerHTML = "";
+  $("pkgSec").style.display = "none"; $("upSec").style.display = "none"; $("ready").style.display = "none";
+  overlays.forEach((o) => map.removeLayer(o)); overlays = [];
+  const body = { a: { lat: A.lat, lon: A.lng }, b: { lat: B.lat, lon: B.lng }, radius_m: radius, mission_id: $("mid").value.trim() || null };
+  const r = await fetch("/api/prepare", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) { $("log").textContent = "error: " + (await r.text()); $("prepBtn").disabled = false; return; }
+  const { job } = await r.json();
+  const j = await poll(job, (j) => {
+    $("prepBar").firstChild.style.width = (100 * j.progress).toFixed(0) + "%";
+    $("prepStage").textContent = j.stage;
+    if (j.log.length) { $("log").textContent += j.log.join("\n") + "\n"; $("log").scrollTop = 1e9; }
+  });
+  $("prepBtn").disabled = false;
+  $("prepBar").classList.toggle("bad", j.status !== "done"); $("prepBar").classList.toggle("ok", j.status === "done");
+  if (j.status === "done") showMission(j.result.mission); else $("warn").innerHTML = `<div class="err">${j.error}</div>`;
+  loadMissions();
+};
+
+function showMission(m) {
+  mission = m;
+  overlays.forEach((o) => map.removeLayer(o)); overlays = [];
+  const bb = m.bbox;
+  overlays.push(L.rectangle([[bb.south, bb.west], [bb.north, bb.east]], { color: "#8a97a6", weight: 1, fill: false, dashArray: "4 4" }).addTo(map));
+  overlays.push(L.polyline(m.route.map((w) => w.latlon), { color: "#4fb3ff", weight: 4, opacity: 0.85 }).addTo(map));
+  for (const w of m.route.filter((w) => w.phase === "CRUISE" || w.phase === "TAKEOFF"))
+    overlays.push(L.circleMarker(w.latlon, { radius: 4, color: "#4fb3ff", fillOpacity: 1 }).bindTooltip(`${w.phase} z ${w.z.toFixed(0)} m`, { className: "wp-label" }).addTo(map));
+  setPoint("A", L.latLng(m.a.lat, m.a.lon)); setPoint("B", L.latLng(m.b.lat, m.b.lon));
+  radius = m.b.search_radius_m; $("radius").value = radius; $("rTxt").textContent = radius + " m"; circle.setRadius(radius);
+  map.fitBounds([[bb.south, bb.west], [bb.north, bb.east]], { padding: [20, 20] });
+  const rep = m.report;
+  $("pkgInfo").innerHTML = [["mission", m.mission_id], ["build", `${rep.total_seconds} s, ${rep.downloaded_mb} MB downloaded`],
+    ["terrain", rep.layers.terrain.source], ["ortho", rep.layers.ortho.source], ["point cloud", rep.layers.lidar.source],
+    ["B ground", `${m.b.ground_z.toFixed(1)} m (z 0 = ground at A)`]].map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join("");
+  $("layers").innerHTML = m.layers.map((l) => `<tr class="layer"><td>${l.file}</td><td class="muted">${l.description}</td><td class="r">${fmtMB(l.bytes)}</td></tr>`).join("");
+  $("warn").innerHTML = m.warnings.map((w) => `<div class="warn">${w}</div>`).join("");
+  $("pkgSec").style.display = ""; $("upSec").style.display = "";
+  $("upLayers").innerHTML = ""; $("upBar").firstChild.style.width = "0"; $("upBar").className = "bar"; $("upTxt").textContent = "";
+  $("ready").style.display = m.uploaded ? "block" : "none"; $("cmd").textContent = m.command;
+  if (m.uploaded) $("upTxt").textContent = "already on the drone (verified); upload again to re-check";
+}
+
+$("upBtn").onclick = async () => {
+  $("upBtn").disabled = true; $("ready").style.display = "none"; $("upBar").className = "bar";
+  const r = await fetch("/api/upload", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mission_id: mission.mission_id, mbps: +$("mbps").value || 2 }) });
+  const { job } = await r.json();
+  const rows = {};
+  const j = await poll(job, (j) => {
+    $("upBar").firstChild.style.width = (100 * j.progress).toFixed(1) + "%";
+    for (const e of j.events) {
+      if (e.type === "start") {
+        $("upTxt").textContent = `${fmtMB(e.total_bytes)} at ${e.mbps} MB/s, ETA ${e.eta_s} s`;
+        $("upLayers").innerHTML = [...e.layers, { key: "manifest", file: "manifest.json", bytes: 0 }].map((l) =>
+          `<tr class="layer"><td>${l.file}</td><td><div class="bar" id="ub-${l.key}"><i></i></div></td><td class="r" id="us-${l.key}" style="width:120px">${l.bytes ? fmtMB(l.bytes) : ""}</td></tr>`).join("");
+      } else if (e.type === "progress") {
+        const b = $("ub-" + e.layer); if (b) b.firstChild.style.width = (100 * e.layer_sent / Math.max(e.layer_bytes, 1)).toFixed(1) + "%";
+      } else if (e.type === "layer_done") {
+        const b = $("ub-" + e.layer); if (b) { b.firstChild.style.width = "100%"; b.classList.add(e.ok ? "ok" : "bad"); }
+        $("us-" + e.layer).innerHTML = `${fmtMB(e.bytes)} <span class="${e.ok ? "chk" : "err"}">${e.ok ? "&#10003; sha256" : "MISMATCH"}</span>`;
+      } else if (e.type === "done") {
+        $("upTxt").textContent = e.ok ? `uploaded in ${e.seconds} s, all checksums verified` : "checksum mismatch: upload failed";
+      }
+    }
+  });
+  $("upBtn").disabled = false;
+  const ok = j.status === "done" && j.result && j.result.ok;
+  $("upBar").classList.add(ok ? "ok" : "bad");
+  if (ok) { $("cmd").textContent = j.result.command; $("ready").style.display = "block"; }
+  loadMissions();
+};
+$("copyBtn").onclick = async () => { try { await navigator.clipboard.writeText($("cmd").textContent); $("copyBtn").textContent = "Copied"; setTimeout(() => $("copyBtn").textContent = "Copy command", 1500); } catch (e) {} };
+
+async function loadMissions() {
+  const ms = await (await fetch("/api/missions")).json();
+  if (!ms.length) return;
+  $("missions").innerHTML = "";
+  for (const m of ms) {
+    const d = document.createElement("div");
+    d.style.cssText = "padding:4px 0;cursor:pointer";
+    d.innerHTML = `<span style="color:var(--text)">${m.mission_id}</span> &middot; r ${m.radius_m} m &middot; ${m.created_at.slice(0, 16).replace("T", " ")}${m.uploaded ? ' &middot; <span class="chk">on drone</span>' : ""}`;
+    d.onclick = async () => showMission(await (await fetch("/api/missions/" + m.mission_id)).json());
+    $("missions").appendChild(d);
+  }
+}
+
+(async () => {
+  const d = await (await fetch("/api/defaults")).json();
+  map.setView(d.center, d.zoom);
+  setPoint("A", L.latLng(d.a.lat, d.a.lon)); setPoint("B", L.latLng(d.b.lat, d.b.lon));
+  radius = d.radius_m; $("radius").value = radius; $("rTxt").textContent = radius + " m"; circle.setRadius(radius);
+  $("mbps").value = d.mbps; setMode("A");
+  loadMissions();
+})();
+</script>
+</body>
+</html>

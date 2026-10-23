@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 
@@ -36,6 +37,14 @@ def a_to_b_plan(a_xy: np.ndarray, b_xy: np.ndarray, cfg: MissionConfig) -> list[
     ]
 
 
+def route_plan(route: list[dict], cfg: MissionConfig) -> list[Waypoint]:
+    """Waypoints from a mission package's `mission.json` route (planned on the onboard DSM, z absolute in
+    the package's ENU datum): TAKEOFF, stepped CRUISE legs over the terrain, DESCEND to the flare height
+    above B's ground, LAND just below it. The cruise speed is this config's (the route only suggests one)."""
+    speeds = {"TAKEOFF": cfg.climb_speed, "CRUISE": cfg.cruise_speed, "DESCEND": cfg.descent_speed, "LAND": cfg.land_speed}
+    return [Waypoint(np.array(w["enu"], float), speeds[w["phase"]], w["phase"]) for w in route]
+
+
 def fly_x2_plan(alt: float = 5.0, speed: float = 3.0, land_speed: float = 0.7) -> list[Waypoint]:
     """The original fly_x2.py square: take off, 15 m east, 15 m north, land."""
     return [
@@ -47,9 +56,11 @@ def fly_x2_plan(alt: float = 5.0, speed: float = 3.0, land_speed: float = 0.7) -
 
 
 class Mission:
-    def __init__(self, waypoints: list[Waypoint], start_pos: np.ndarray, yaw: float, cfg: MissionConfig) -> None:
+    def __init__(self, waypoints: list[Waypoint], start_pos: np.ndarray, yaw: float, cfg: MissionConfig,
+                 ground_z: Callable[[np.ndarray], float] | None = None) -> None:
         self.waypoints = waypoints
         self.cfg = cfg
+        self.ground_z = ground_z or (lambda xy: 0.0)  # onboard map DTM (emergency landing over terrain)
         self.yaw = yaw
         self.setpoint = np.asarray(start_pos, float).copy()
         self.idx = 0
@@ -118,8 +129,9 @@ class Mission:
             self.log(t, "EMERGENCY_LAND: navigation health LAND")
 
         if self.emergency:
-            target = np.array([self.setpoint[0], self.setpoint[1], GROUND_TARGET_Z])
-            speed = self.cfg.descent_speed if pose.pos[2] > self.cfg.flare_alt else self.cfg.land_speed
+            ground = self.ground_z(self.setpoint[:2])
+            target = np.array([self.setpoint[0], self.setpoint[1], ground + GROUND_TARGET_Z])
+            speed = self.cfg.descent_speed if pose.pos[2] - ground > self.cfg.flare_alt else self.cfg.land_speed
             vel, reached = self._move_setpoint(target, speed, dt)
             self.phase = "EMERGENCY_LAND"
             self._check_touchdown(t, pose, dt)

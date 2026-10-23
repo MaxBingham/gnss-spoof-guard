@@ -5,6 +5,9 @@
   collision boxes (oriented bounding box of the OSM footprint), trees as cylinder + sphere
   (visual only). The ground texture file is selectable, so the simulated "reality" can use
   different imagery than the onboard map (map-mismatch tests).
+  Mission worlds (sfhack.missionprep, docs/MAP_PACKAGE.md) add terrain (`terrain.npz` -> height
+  field, ortho draped on it) and `"buildings": "extruded"`: footprint prisms (visual mesh, roof slab
+  texture-mapped into the ortho, convex triangle prisms in hidden group 3 for collision).
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ from typing import Any
 import cv2
 import mujoco
 import numpy as np
+
+from ..missionprep.geometry import Grid, clean_ring, obb, prism_mesh, sample_bilinear, triangulate
 
 
 def _no_shadows(spec: mujoco.MjSpec) -> None:
@@ -98,6 +103,19 @@ class PackageWorld:
         self.landmarks: list[dict[str, Any]] = json.loads((self.dir / "landmarks.json").read_text(encoding="utf-8"))
         self.texture_file = texture_file or self.manifest["ortho"]["file"]
         self.render_trees = render_trees
+        self.terrain_z: np.ndarray | None = None  # north-up, row 0 = north (docs/MAP_PACKAGE.md)
+        self.terrain_grid: Grid | None = None
+        t = self.manifest.get("terrain")
+        if isinstance(t, dict) and t.get("file"):
+            with np.load(self.dir / t["file"]) as z:
+                self.terrain_z = np.asarray(z["z"], np.float32)
+                self.terrain_grid = Grid(float(z["min_x"]), float(z["max_y"]), float(z["res_m"]), *self.terrain_z.shape)
+
+    def ground_z(self, x: float, y: float) -> float:
+        """TRUE ground height (simulator side: spawn height, display). 0 for flat worlds."""
+        if self.terrain_z is None or self.terrain_grid is None:
+            return 0.0
+        return float(sample_bilinear(self.terrain_z, self.terrain_grid, np.array([[x, y]]))[0])
 
     @property
     def a_enu(self) -> np.ndarray:
@@ -108,6 +126,9 @@ class PackageWorld:
         return np.array(self.manifest["b"]["enu"], float)
 
     def add_to_spec(self, spec: mujoco.MjSpec) -> None:
+        if self.manifest.get("buildings") == "extruded":
+            self._add_mission_world(spec)
+            return
         _no_shadows(spec)
         e = self.manifest["ortho"]["extent_enu"]
         cx, cy = (e["min_x"] + e["max_x"]) / 2, (e["min_y"] + e["max_y"]) / 2
@@ -161,3 +182,111 @@ class PackageWorld:
                                pos=[x, y, trunk_h / 2], rgba=trunk, contype=0, conaffinity=0, group=1)
                 world.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r, 0, 0],
                                pos=[x, y, trunk_h], rgba=crown, contype=0, conaffinity=0, group=1)
+
+    # ------------------------------------------------------------------ mission worlds (terrain + extruded)
+
+    def _add_mission_world(self, spec: mujoco.MjSpec) -> None:
+        _no_shadows(spec)
+        e = self.manifest["ortho"]["extent_enu"]
+        img = cv2.cvtColor(cv2.imread(str(self.dir / self.texture_file), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        world = spec.worldbody
+
+        def texture(name: str, rgb: np.ndarray) -> str:
+            rgb = np.ascontiguousarray(rgb)
+            tex = spec.add_texture(name=name, type=mujoco.mjtTexture.mjTEXTURE_2D,
+                                   width=rgb.shape[1], height=rgb.shape[0], nchannel=3)
+            tex.data = rgb.tobytes()
+            mat = spec.add_material(name=name, texrepeat=[1, 1], texuniform=False, reflectance=0.0)
+            mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = name
+            return name
+
+        floor = spec.geom("floor")
+        if self.terrain_z is not None and self.terrain_grid is not None:
+            g, z = self.terrain_grid, self.terrain_z
+            zmin, zmax = float(z.min()), float(z.max())
+            span = max(zmax - zmin, 0.1)
+            # MuJoCo height field: vertices on the grid points (= our cell centres) and data row 0 = SOUTH
+            # edge, while a 2D texture is draped north-up over the field. Crop the ortho to that span.
+            rx, ry = (g.cols - 1) * g.res / 2, (g.rows - 1) * g.res / 2
+            cx, cy = g.min_x + g.cols * g.res / 2, g.max_y - g.rows * g.res / 2
+            hf = spec.add_hfield(name="terrain", size=[rx, ry, span, 1.0], nrow=g.rows, ncol=g.cols)
+            hf.userdata = ((z[::-1] - zmin) / span).astype(np.float64).ravel().tolist()
+            h, w = img.shape[:2]
+            px = round((g.res / 2) / ((e["max_x"] - e["min_x"]) / w))
+            py = round((g.res / 2) / ((e["max_y"] - e["min_y"]) / h))
+            world.add_geom(name="terrain", type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="terrain",
+                           pos=[cx, cy, zmin], material=texture("ortho_hf", img[py:h - py, px:w - px]))
+            floor.pos = [cx, cy, zmin - 1.0]
+            floor.rgba = [0.42, 0.42, 0.40, 1]
+            floor.material = ""
+            # Launch pad at A (the builder levels the terrain there): an invisible box flush with the ground.
+            # On the height field alone the X2 rested 9 deg tilted (hfield-vs-convex contacts), which the
+            # preflight IMU calibration then took for level.
+            ax, ay = self.a_enu
+            world.add_geom(name="launch_pad", type=mujoco.mjtGeom.mjGEOM_BOX, size=[2.0, 2.0, 0.25],
+                           pos=[ax, ay, self.ground_z(ax, ay) - 0.25], group=3, rgba=[0, 0, 0, 0])
+        else:
+            floor.size = [(e["max_x"] - e["min_x"]) / 2, (e["max_y"] - e["min_y"]) / 2, 1.0]
+            floor.pos = [(e["min_x"] + e["max_x"]) / 2, (e["min_y"] + e["max_y"]) / 2, 0.0]
+            floor.material = texture("ortho_hf", img)
+        roof_mat = texture("ortho_roof", img)  # roofs index the full ortho through texcoords
+        mat_b = spec.add_material(name="building", rgba=[0.72, 0.71, 0.68, 1])
+        mat_t = spec.add_material(name="tower", rgba=[0.85, 0.82, 0.74, 1])
+
+        def uv(xy: np.ndarray) -> np.ndarray:
+            return np.column_stack([(xy[:, 0] - e["min_x"]) / (e["max_x"] - e["min_x"]),
+                                    (e["max_y"] - xy[:, 1]) / (e["max_y"] - e["min_y"])])
+
+        self.n_collision_meshes = 0
+        for lm in self.landmarks:
+            if lm["type"] not in ("building", "tower", "fountain"):
+                continue
+            base = float(lm.get("base_z", 0.0))
+            top = base + float(lm["height"])
+            mat = mat_t.name if lm["type"] == "tower" else mat_b.name
+            ring = clean_ring(lm["footprint_enu"]) if lm.get("footprint_enu") else None
+            tris = triangulate(ring) if ring is not None and len(ring) >= 3 else None
+            if tris is None:  # node landmark or a self-intersecting footprint: box / cylinder stand-in
+                if ring is not None and len(ring) >= 3:
+                    cx_, cy_, hx, hy, ang = obb(ring)
+                    world.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[hx, hy, (top - base + 1) / 2],
+                                   pos=[cx_, cy_, (top + base - 1) / 2],
+                                   quat=[math.cos(ang / 2), 0, 0, math.sin(ang / 2)], material=mat)
+                else:
+                    x, y = lm["centroid_enu"]
+                    world.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, pos=[x, y, (top + base - 1) / 2],
+                                   size=[float(lm.get("radius", 3.0)), (top - base + 1) / 2, 0], material=mat)
+                continue
+            i = lm["id"]
+            v, f = prism_mesh(ring, tris, base - 1.0, top)  # sunk 1 m: footprints sit on slopes
+            spec.add_mesh(name=f"bw{i}", uservert=v.ravel().tolist(), userface=f.ravel().tolist())
+            world.add_geom(type=mujoco.mjtGeom.mjGEOM_MESH, meshname=f"bw{i}", material=mat, contype=0, conaffinity=0)
+            v, f = prism_mesh(ring, tris, top, top + 0.05)  # roof slab showing the ortho under the footprint
+            spec.add_mesh(name=f"br{i}", uservert=v.ravel().tolist(), userface=f.ravel().tolist(),
+                          usertexcoord=np.vstack([uv(ring), uv(ring)]).ravel().tolist())
+            world.add_geom(type=mujoco.mjtGeom.mjGEOM_MESH, meshname=f"br{i}", material=roof_mat,
+                           contype=0, conaffinity=0)
+            for k, tri in enumerate(tris):  # collision: convex pieces (MuJoCo collides a mesh as its convex hull)
+                tr = ring[list(tri)]
+                (ux, uy), (vx, vy) = tr[1] - tr[0], tr[2] - tr[0]
+                if abs(ux * vy - uy * vx) < 0.02:  # sliver: no volume to collide with
+                    continue
+                v, f = prism_mesh(tr, [(0, 1, 2)], base - 1.0, top + 0.05)
+                spec.add_mesh(name=f"bc{i}_{k}", uservert=v.ravel().tolist(), userface=f.ravel().tolist())
+                world.add_geom(type=mujoco.mjtGeom.mjGEOM_MESH, meshname=f"bc{i}_{k}", group=3, rgba=[1, 0, 0, 0])
+                self.n_collision_meshes += 1
+
+        if self.render_trees:
+            trunk = [0.36, 0.27, 0.18, 1]
+            crown = [0.20, 0.42, 0.18, 1]
+            for lm in self.landmarks:
+                if lm["type"] != "tree":
+                    continue
+                x, y = lm["centroid_enu"]
+                z0 = float(lm.get("base_z", 0.0))
+                h, r = float(lm["height"]), float(lm.get("radius", 3.0))
+                trunk_h = max(h - r, 1.0)
+                world.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[0.25, trunk_h / 2, 0],
+                               pos=[x, y, z0 + trunk_h / 2], rgba=trunk, contype=0, conaffinity=0, group=1)
+                world.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r, 0, 0],
+                               pos=[x, y, z0 + trunk_h], rgba=crown, contype=0, conaffinity=0, group=1)

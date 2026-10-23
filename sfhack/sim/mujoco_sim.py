@@ -82,9 +82,11 @@ class MujocoSim:
         seed: int = 0,
         render_front: bool = False,
         reuse: tuple[mujoco.MjModel, mujoco.MjData] | None = None,
+        spawn_z: float = 0.0,
     ) -> None:
         """`reuse` = (model, data) of an earlier flight in the same world: skips the model build and resets
-        that data in place (the live demo restarts inside one open viewer window)."""
+        that data in place (the live demo restarts inside one open viewer window). `spawn_z` = ground height
+        at the spawn point (terrain worlds)."""
         self.cfg = cfg
         self.bus = bus
         self.rng = np.random.default_rng(seed)
@@ -110,7 +112,7 @@ class MujocoSim:
         self.cam_ids = {"down": m.camera("down").id, "front": m.camera("front").id}
 
         # Spawn on the ground at A, motors off.
-        d.qpos[0:3] = [spawn_xy[0], spawn_xy[1], 0.005]
+        d.qpos[0:3] = [spawn_xy[0], spawn_xy[1], spawn_z + 0.005]
         d.qpos[3:7] = [math.cos(spawn_yaw / 2), 0.0, 0.0, math.sin(spawn_yaw / 2)]
         d.qvel[:] = 0.0
         mujoco.mj_forward(m, d)

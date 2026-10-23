@@ -48,6 +48,9 @@ class SceneRenderer:
         # Group 3 is the X2 collision shapes.
         self.opt.geomgroup[0] = 1
         self.opt.geomgroup[2] = 1
+        # The rangefinder site draws a ray to the ground by default. That ray is not one of the
+        # three scene lines (true path, estimate path, GNSS-fix offset).
+        self.opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = 0
         self._rgb = np.zeros((height, width, 3), np.uint8)
         self._depth = np.zeros((height, width), np.float32)
         ext = model.stat.extent

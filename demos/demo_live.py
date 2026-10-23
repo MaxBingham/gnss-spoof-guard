@@ -10,10 +10,11 @@ no truth in the control loop), with every degradation lever live.
     python demos/demo_live.py --events "45:C,55:C"    # press keys at sim times
 
 What you see:
-  Solid white X2 = TRUTH (the simulator), drawn 9x life size or more. Cyan ghost = where the drone THINKS it is (EKF),
-  cyan bubble = its claimed 2-sigma. White trail = true path, cyan trail = estimated path. A green, B red.
-  Yellow frustum = down camera (live image bottom-left), red beams = rangefinder / lidar returns,
-  orange pin = GNSS fix. A lost sensor goes dark. Fog / rain / dust and the wind arrow follow the levers.
+  Solid white X2 = TRUTH (the simulator), drawn 9x life size or more. Cyan ghost = where the drone THINKS it is (EKF).
+  Two rings: cyan = claimed 2-sigma, orange = GNSS-fix 2-sigma. A short dim white trail is the true path, a short
+  dim cyan trail the estimated path, and one orange line is the GNSS-fix offset. A green, B red.
+  The down-camera image is the bottom panel. Orange pin = GNSS fix.
+  Fog / rain / dust and the wind arrow follow the levers.
 
 Keys:  G GNSS ok/drag/jump/jam/off   F weather intensity   T weather kind   W wind   D wind direction
        U gusts   C camera loss   L lidar loss   V localizer on/off   P spoof scenario   X reset levers
@@ -67,8 +68,6 @@ WHITE = (1.0, 1.0, 1.0)
 GREEN = (0.15, 0.85, 0.2)
 RED = (0.95, 0.15, 0.1)
 ORANGE = (1.0, 0.55, 0.1)
-YELLOW = (1.0, 0.85, 0.1)
-LASER = (1.0, 0.18, 0.15)
 DARK = (0.18, 0.18, 0.2)
 WIND_RGB = (0.1, 0.45, 1.0)
 
@@ -88,6 +87,26 @@ def _decimate(pts: list[np.ndarray], max_n: int) -> np.ndarray:
         idx = np.unique(np.r_[np.linspace(0, len(a) - 1, max_n).astype(int), len(a) - 1])
         a = a[idx]
     return a
+
+
+def _trail_tail(pts: list[np.ndarray]) -> np.ndarray:
+    """Recent path only, so the chase view does not string the whole flight across the frame."""
+    n = max(2, int(6.0 / TRAIL_DT))
+    return _decimate(pts[-n:], 10)
+
+
+def _lever_visible(lv, c, initial) -> bool:
+    """True when the lever reads differently from the flight's start and that difference does something."""
+    if lv.value(c) == lv.value(initial):
+        return False
+    if lv.key == "d" and c.wind.speed == 0 and c.wind.gust == 0 and initial.wind.speed == 0 and initial.wind.gust == 0:
+        return False
+    if lv.key == "t":
+        def calm(w) -> bool:
+            return w.kind == "clear" or w.intensity == 0
+        if calm(c.weather) and calm(initial.weather):
+            return False
+    return True
 
 
 def _mouse_wheel_delta(flags: int) -> int:
@@ -142,10 +161,6 @@ class LiveDemo:
         self.goal = self.fs.goal_xy
         self.start = self.fs.onboard_map.a_enu if self.fs.onboard_map is not None else np.zeros(2)
         self.route = np.array([w.pos for w in self.fs.mission.waypoints])
-        self.cam_id = self.fs.sim.model.camera("down").id
-        cc = self.fs.cfg.camera
-        self.cam_tan = (math.tan(math.radians(cc.down_fovy_deg) / 2) * cc.down_width / cc.down_height,
-                        math.tan(math.radians(cc.down_fovy_deg) / 2))
         rng = np.random.default_rng(7)
         self.wind_pts = rng.uniform(-1, 1, (24, 3)) * [45, 45, 18]
         self.rain_pts = rng.uniform(-1, 1, (80, 3)) * [30, 30, 16]
@@ -245,25 +260,23 @@ class LiveDemo:
 
     def draw_geoms(self, scn: mujoco.MjvScene) -> None:
         g = Geoms(scn)
-        fs, d = self.fs, self.fs.sim.data
+        fs = self.fs
         est, tr = fs.autopilot.pose(), fs.truth.state()
-        # start / goal pads with light columns, planned route
+        # start / goal pads with light columns. The route stroke is not drawn: the two trails are the paths.
         for xy, rgb in ((self.start, GREEN), (self.goal, RED)):
             g.cylinder([xy[0], xy[1], 0.08], 3.5, 0.06, rgb, 0.95, emission=0.3)
             g.cylinder([xy[0], xy[1], 30.0], 0.35, 30.0, rgb, 0.22, emission=0.6)
-        if len(self.route) > 1:
-            g.stroke(self.route, WHITE, 3.0, 0.55)  # one line per leg, not a capsule per dash
-        # trails
+        # Short, dim tails. The map panel keeps the whole path.
         if len(self.truth_trail) > 1:
-            g.stroke(_decimate(self.truth_trail, 40), WHITE, 4.0, 0.95)
-            g.stroke(_decimate(self.est_trail, 40), CYAN, 4.0, 0.9)
+            g.stroke(_trail_tail(self.truth_trail), WHITE, 1.6, 0.40)
+            g.stroke(_trail_tail(self.est_trail), CYAN, 1.6, 0.38)
         # the true drone and its ghost
         scale = self.draw_scale
         g.drone(tr.pos, tr.R, scale, (0.93, 0.93, 0.96), (0.12, 0.12, 0.14), 1.0, nose_rgb=ORANGE)
         g.drone(est.pos, est.R, scale, CYAN, CYAN, 0.38)
         cov = est.cov[:3, :3]
         evals, evecs = np.linalg.eigh(0.5 * (cov[:2, :2] + cov[:2, :2].T))
-        # Same 2σ the HUD prints (filter posterior). No 0.8 m floor: a tight claim stays tight.
+        # Same 2σ the HUD prints (filter posterior, floored for the report).
         radii = np.clip(2.0 * np.sqrt(np.maximum(evals, 0.0)), 0.05, 400.0)
         rz = float(np.clip(2.0 * math.sqrt(max(cov[2, 2], 0.0)), 0.05, 60.0))
         mat = np.eye(3)
@@ -274,73 +287,27 @@ class LiveDemo:
         s2 = est.sigma2_horizontal()
         if s2 > 0.05:
             g.line_ring([est.pos[0], est.pos[1], 0.25], float(s2), CYAN, 0.85, width=4.0, n=24)
-            # Above the scaled rotors, same radius: a 1 m claim reads on the body instead of inside it.
+            # Above the scaled rotors, same radius: a tight claim reads on the body instead of inside it.
             halo = np.array([est.pos[0], est.pos[1], est.pos[2] + 0.22 * scale])
             g.line_ring(halo, float(s2), (0.75, 1.0, 1.0), 1.0, width=6.0, n=24)
-        g.line(est.pos, [est.pos[0], est.pos[1], 0.25], CYAN, 2.0, 0.6)
-        g.line(tr.pos, [tr.pos[0], tr.pos[1], 0.25], WHITE, 2.0, 0.5)
-        if np.linalg.norm(est.pos - tr.pos) > 1.5:
-            g.line(tr.pos, est.pos, RED, 3.0, 0.9)
-        self._draw_camera(g, d)
-        self._draw_lidar(g, tr)
-        self._draw_gnss(g)
+        self._draw_gnss(g, tr.pos)
         self._draw_wind(g, tr.pos)
         self._draw_weather(g)
 
-    def _draw_camera(self, g: Geoms, d: mujoco.MjData) -> None:
-        p = d.cam_xpos[self.cam_id].copy()  # display: where the camera physically is (truth)
-        R = d.cam_xmat[self.cam_id].reshape(3, 3)
-        tx, ty = self.cam_tan
-        corners = []
-        for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-            ray = R @ np.array([sx * tx, sy * ty, -1.0])
-            t = min(-p[2] / ray[2], 250.0) if ray[2] < -1e-6 else 250.0
-            corners.append(p + t * ray)
-        dark = self.camera_dark()
-        rgb, a, r = (DARK, 0.7, 0.05) if dark else (YELLOW, 0.9, 0.07)
-        for c in corners:
-            g.capsule(p, c, r, rgb, a, emission=0.0 if dark else 0.5)
-        ring = np.array(corners + corners[:1])
-        ring[:, 2] = np.maximum(ring[:, 2], 0.3)
-        if not dark:
-            g.tube(ring, 0.18, YELLOW, 0.95, emission=0.5)
-
-    def _draw_lidar(self, g: Geoms, tr) -> None:
-        if self.lidar_dark():
-            g.capsule(tr.pos, tr.pos - np.array([0, 0, 2.5]), 0.08, DARK, 0.8)
-            return
-        down = tr.R @ np.array([0.0, 0.0, -1.0])
-        beams: list[tuple[np.ndarray, float]] = [(down, self.range_m)]
-        if self.lidar_ranges is not None and self.t - self.lidar_t < 0.5:
-            dirs = (tr.R @ self.lidar_dirs.T).T
-            beams += list(zip(dirs, self.lidar_ranges))
-        max_r = self.fs.cfg.noise.range_max
-        for u, rng_m in beams:
-            if math.isfinite(rng_m):
-                hit = tr.pos + u * rng_m
-                g.capsule(tr.pos, hit, 0.07, LASER, 0.95, emission=0.9)
-                g.sphere(hit, 0.45, LASER, 0.95, emission=0.9)
-            else:
-                g.dashed(tr.pos, tr.pos + u * max_r, 0.04, LASER, 0.35, dash=2.0)
-
-    def _draw_gnss(self, g: Geoms) -> None:
+    def _draw_gnss(self, g: Geoms, truth_pos: np.ndarray) -> None:
         state = self.gnss_state()
         if not self.gnss_fixes or state == "off":
             return
-        fixes = list(self.gnss_fixes)
-        last = fixes[-1]
+        last = self.gnss_fixes[-1]
         rgb = DARK if state == "jam" else ORANGE
-        tail = fixes[:-1][-6:]  # short faded tail; the pin and the ground ring stay
-        n_tail = len(tail)
-        for i, f in enumerate(tail):
-            fade = (i + 1) / (n_tail + 1)
-            g.sphere(f, 0.22, rgb, 0.12 + 0.40 * fade)
         g.sphere(last, 1.0, rgb, 0.95, emission=0.0 if state == "jam" else 0.6)
         # 2σ of the covariance the receiver reports, which is the noise the model injects.
         r2 = gnss_sigma2_m(self.fs.cfg.noise.gnss_noise)
-        g.line_ring(last, r2, rgb, 0.9, width=5.0, n=28)
-        g.line(last, [last[0], last[1], 0.3], rgb, 2.0, 0.6)
-        g.line_ring([last[0], last[1], 0.3], r2, rgb, 0.75, width=4.0, n=28)
+        g.line_ring(last, r2, rgb, 0.9, width=4.0, n=24)
+        g.line_ring([last[0], last[1], 0.3], r2, rgb, 0.7, width=3.0, n=24)
+        # One line: where the fix sits relative to the true position.
+        if float(np.linalg.norm(last[:2] - truth_pos[:2])) > 0.4:
+            g.line(truth_pos, last, rgb, 1.8, 0.55)
 
     def _draw_wind(self, g: Geoms, pos: np.ndarray) -> None:
         w = self.c.wind
@@ -351,12 +318,6 @@ class LiveDemo:
         L = (4.0 + 1.1 * w.speed) * k
         base = pos + np.array([0.0, 0.0, 8.0 * k])
         g.arrow(base - u * L / 2, base + u * L / 2, 0.9 * k, WIND_RGB, 0.95, emission=0.6)
-        center = getattr(self, "_center", pos)
-        streak = u * (0.6 + 0.35 * w.speed)
-        for q in self.wind_pts:
-            p = center + q
-            if p[2] > 1.0:
-                g.line(p, p + streak, (0.92, 0.96, 1.0), 2.0, 0.55)
 
     def _draw_weather(self, g: Geoms) -> None:
         wv = self.c.weather
@@ -430,7 +391,12 @@ class LiveDemo:
                 degr.append((f"{lv.name.upper()} {lv.value(c)}", lvl))
         if not self.loc_on:
             degr.append(("LOCALIZER OFF", 2))
-        levers = [(lv.key.upper(), lv.name, lv.value(c), lv.level(c)) for lv in LEVERS]
+        # A row only when the lever's reading differs from the demo's starting conditions.
+        # Heading and weather-kind do nothing while the air is calm and the sky is clear, so a leftover
+        # 270 deg from the scenario does not earn a row.
+        initial = self.deck.initial
+        levers = [(lv.key.upper(), lv.name, lv.value(c), lv.level(c))
+                  for lv in LEVERS if _lever_visible(lv, c, initial)]
         controls = [("P", "Play spoof scenario", "RUNNING" if self.deck.scenario_t0 is not None else ""),
                     ("V", "Localizer", "ON" if self.loc_on else "OFF"),
                     ("X", "Reset all levers", "")]
@@ -558,14 +524,13 @@ class Composer:
         self.times = {"view": 0.0, "fog": 0.0, "hud": 0.0, "map": 0.0}
 
     def _clear_aim(self) -> tuple | None:
-        """Pixel where the truth/estimate midpoint should sit: above the bottom-left block, left of the levers."""
+        """Pixel where the truth/estimate midpoint should sit: in the open frame, above the map and camera."""
         p = self.hud.px
         m = p(16)
-        # Inset so the pair's labels stay off the lever column and the bottom-left block.
-        x0 = m + p(Hud.COL_W) + p(24)
-        x1 = self.W - m - p(360) - p(80)
-        y0 = m + p(100)
-        y1 = self.H - m - p(Hud.MAP) - p(90)
+        x0 = m + p(Hud.COL_W) + p(16)
+        x1 = self.W - m - p(24)
+        y0 = m + p(72)
+        y1 = self.H - m - p(Hud.MAP) - p(20)
         if x1 - x0 < 80 or y1 - y0 < 80:
             return None
         return ((x0 + x1) * 0.5, (y0 + y1) * 0.5, self.W, self.H, self.fovy)

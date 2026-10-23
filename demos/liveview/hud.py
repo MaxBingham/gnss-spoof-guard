@@ -1,6 +1,7 @@
 """Heads-up display: cards drawn with PIL (anti-aliased TrueType text, readable from across a room) and
 alpha-composited onto the rendered frame. Layout is in design pixels for a 900px-tall frame and scaled
-with the window height. The left column is 400 design pixels; the Saturday panel is unchanged.
+with the window height. The left column is 400 design pixels. The Saturday panel stays in source and
+is not drawn until step two.
 """
 
 from __future__ import annotations
@@ -95,6 +96,11 @@ class Hud:
         self._lever_key: tuple | None = None
         self._lever_im: Image.Image | None = None
         self._lever_hits: list[tuple[int, int, int, int, str]] = []
+        # Set at the start of compose so in-scene labels stay off the cards.
+        self._left_bottom = 0
+        self._panels_top = height
+        self._panels_right = 0
+        self._hint_rect = (width, 0, width, 0)
 
     def px(self, v: float) -> int:
         return int(round(v * self.s))
@@ -148,11 +154,42 @@ class Hud:
         d.text((w - self.px(12), self.px(34)), sp, font=self.f(13, True), fill=AMBER if st.paused else MUTED, anchor="ra")
         return im
 
+    def _degr_rows(self, st: HudState, inner_w: int) -> list[list[tuple[str, tuple, int]]]:
+        """Active-degradation chips wrapped to the mission card width. Empty when everything is nominal."""
+        if not st.degradations:
+            return []
+        probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        fnt = self.f(12, True)
+        pad = self.px(8)
+        gap = self.px(6)
+        rows: list[list[tuple[str, tuple, int]]] = [[]]
+        x = 0
+        for text, lvl in st.degradations:
+            tw = int(probe.textlength(text, font=fnt)) + 2 * pad
+            if rows[-1] and x + tw > inner_w:
+                rows.append([])
+                x = 0
+            rows[-1].append((text, LEVEL_COLOR[lvl], tw))
+            x += tw + gap
+        return rows
+
+    def _mission_height(self, st: HudState) -> int:
+        w = self.px(self.COL_W)
+        inner = w - 2 * self.px(14)
+        # Same baselines as `_mission`: three nav rows, then the sensor line, then degradation chips.
+        y = self.px(62)
+        by, bh = y + self.px(54), self.px(12)
+        last = by + bh + self.px(24) + 2 * self.px(17)
+        h = last + self.px(22) + self.px(20)
+        n = len(self._degr_rows(st, inner))
+        if n:
+            h += self.px(6) + n * self.px(26)
+        return h + self.px(10)
+
     def _mission(self, st: HudState) -> Image.Image:
         w = self.px(self.COL_W)
         x0 = self.px(14)
-        # Dropped the truth footnote and tightened the three nav rows so the card is shorter.
-        h = self.px(214)
+        h = self._mission_height(st)
         im, d = self._card(w, h)
         d.text((x0, self.px(8)), "MISSION", font=self.f(12, True), fill=MUTED)
         hc = HEALTH_COLOR.get(st.health, AMBER)
@@ -189,7 +226,52 @@ class Hud:
             d.text((x0, ry), k, font=self.f(13), fill=MUTED)
             d.text((x0 + key_w, ry), v, font=self._fit(v, value_w, 13, True, 10), fill=c)
             ry += self.px(17)
+        self._sensor_line(d, w, ry + self.px(4), st)
+        if st.degradations:
+            self._degr_line(d, x0, w - x0, ry + self.px(4) + self.px(20) + self.px(6), st)
         return im
+
+    def _sensor_line(self, d: ImageDraw.ImageDraw, w: int, y: int, st: HudState) -> None:
+        """Sensor dots inside the mission card. Short names so the row fits the column."""
+        short = {"CAMERA": "CAM", "LIDAR": "LID", "GNSS": "GNSS", "IMU": "IMU", "BARO": "BARO", "COMPASS": "CMP"}
+        nominal = not st.degradations
+        x0 = self.px(14)
+        reserve = self.px(72) if nominal else self.px(8)
+        for size in (12, 11, 10):
+            fnt = self.f(size, True)
+            r = self.px(4)
+            gap = self.px(7)
+            x = x0
+            fit = True
+            spans = []
+            for name, state in st.sensors:
+                label = short.get(name, name[:3])
+                tw = int(d.textlength(label, font=fnt))
+                spans.append((label, state, tw))
+                x += 2 * r + self.px(3) + tw + gap
+                if x > w - reserve:
+                    fit = False
+                    break
+            if fit:
+                break
+        x = x0
+        cy = y + self.px(10)
+        for label, state, tw in spans:
+            c = SENSOR_COLOR[state]
+            d.ellipse((x, cy - r, x + 2 * r, cy + r), fill=c)
+            d.text((x + 2 * r + self.px(3), cy), label, font=fnt,
+                   fill=TEXT if state != "off" else MUTED, anchor="lm")
+            x += 2 * r + self.px(3) + tw + gap
+        if nominal:
+            d.text((w - self.px(12), cy), "nominal", font=self.f(11, True), fill=GREEN, anchor="rm")
+
+    def _degr_line(self, d: ImageDraw.ImageDraw, x0: int, x1: int, y: int, st: HudState) -> None:
+        row_h = self.px(26)
+        for i, row in enumerate(self._degr_rows(st, x1 - x0)):
+            x = x0
+            cy = y + i * row_h
+            for text, color, _tw in row:
+                x = self._chip(d, x, cy, text, color, 12) + self.px(6)
 
     def _degradations(self, st: HudState) -> Image.Image:
         w, h = self.px(self.COL_W), self.px(74)
@@ -205,28 +287,34 @@ class Hud:
             x = self._chip(d, x, y, text, LEVEL_COLOR[lvl], 14) + self.px(8)
         return im
 
+    _HINT = "G · F · T · W · D · U · C · L    P · V · X    R space  1 · 2 · 4  O · Q"
+
+    def _hint_size(self, st: HudState) -> tuple[int, int]:
+        probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        tw = int(probe.textlength(self._HINT, font=self.f(12, True)))
+        w = tw + 2 * self.px(12)
+        name_f = self.f(15)
+        val_f = self.f(15, True)
+        for _key, name, value, _lvl in st.levers:
+            need = (self.px(16) + self.px(40) + self.px(10) + int(probe.textlength(name, font=name_f))
+                    + self.px(12) + int(probe.textlength(value, font=val_f)) + self.px(40))
+            w = max(w, need)
+        n = len(st.levers)
+        h = self.px(6) + self.px(18) + self.px(4) + n * self.px(24) + self.px(6)
+        return w, h
+
     def _levers(self, st: HudState, ox: int, oy: int) -> Image.Image:
-        w = self.px(360)
-        row_h = self.px(25)
-        n = len(st.levers) + len(st.controls)
-        h = self.px(48) + row_h * n + self.px(40)
-        im, d = self._card(w, h, AMBER)
-        d.text((self.px(18), self.px(12)), "LEVERS", font=self.f(15, True), fill=TEXT)
-        d.text((w - self.px(14), self.px(14)), "press key or click", font=self.f(12), fill=MUTED, anchor="ra")
-        y = self.px(46)
+        """One hotkey line. A lever row appears only when that lever is off its starting value."""
+        w, h = self._hint_size(st)
+        im, d = self._card(w, h)
+        d.text((w / 2, self.px(6) + self.px(9)), self._HINT, font=self.f(12, True), fill=MUTED, anchor="mm")
+        y = self.px(6) + self.px(18) + self.px(2)
+        row_h = self.px(24)
         self.hits = []
         for key, name, value, lvl in st.levers:
             self._lever_row(d, y, row_h, w, key, name, value, LEVEL_COLOR[lvl])
             self.hits.append((ox, oy + y, ox + w, oy + y + row_h, key))
             y += row_h
-        d.line((self.px(14), y + self.px(3), w - self.px(14), y + self.px(3)), fill=mix(WHITE, 0.16), width=1)
-        y += self.px(6)
-        for key, label, value in st.controls:
-            self._lever_row(d, y, row_h, w, key, label, value, CYAN if key == "P" else TEXT, dot=False)
-            self.hits.append((ox, oy + y, ox + w, oy + y + row_h, key))
-            y += row_h
-        d.text((w // 2, h - self.px(16)), "R restart   SPACE pause   1 2 4 speed   O camera   Q quit",
-               font=self.f(12), fill=MUTED, anchor="mm")
         return im
 
     def _lever_row(self, d, y, row_h, w, key, name, value, color, dot=True) -> None:
@@ -417,17 +505,17 @@ class Hud:
     def _keep_labels_clear(self, placed: list) -> None:
         """Slide a label that lands on a card back into the open part of the frame."""
         p = self.px
-        m = p(16)
-        col_r = m + p(self.COL_W)
-        left_bottom = m + p(380)  # title + mission + degradation stack
-        lev_l = self.W - m - p(360)
-        panels_top = self.H - m - max(p(self.MAP), p(self.CAM_H)) - p(48)
-        panels_r = m + p(self.MAP + 16 + self.CAM_W)
+        col_r = p(16) + p(self.COL_W)
+        left_bottom = self._left_bottom
+        hx0, _hy0, _hx1, hy1 = self._hint_rect
+        panels_top = self._panels_top
+        panels_r = self._panels_right
         for item in placed:
             lab, x, y = item
             w, h = lab.width, lab.height
-            if x + w > lev_l and y < self.H - m - p(100):
-                item[1] = float(lev_l - w - p(6))
+            if x + w > hx0 and y < hy1 and x < self.W:
+                item[1] = float(hx0 - w - p(6))
+                x = item[1]
             if y < left_bottom and x < col_r and (x + w / 2) < col_r:
                 item[1] = float(col_r + p(6))
             if y + h > panels_top and x < panels_r:
@@ -438,6 +526,15 @@ class Hud:
     def compose(self, frame: np.ndarray, st: HudState, map_img: np.ndarray, cam_img: np.ndarray) -> np.ndarray:
         W, H, p = self.W, self.H, self.px
         m = p(16)
+        hint_w, hint_h = self._hint_size(st)
+        rx = W - m - hint_w
+        self._hint_rect = (rx, m, rx + hint_w, m + hint_h)
+        self._left_bottom = m + p(58) + p(8) + self._mission_height(st)
+        side = p(self.MAP)
+        cw, ch = p(self.CAM_W), p(self.CAM_H)
+        bottom = max(side, ch)
+        self._panels_top = H - m - bottom
+        self._panels_right = m + side + p(16) + cw
         for lab, x, y in self._layout_labels(st.labels):
             blend_rgba(frame, np.asarray(lab), x, y)
         title = self._title(st)
@@ -445,32 +542,23 @@ class Hud:
         y_left = m + title.height + p(8)
         mission = self._mission(st)
         blend_rgba(frame, np.asarray(mission), m, y_left)
-        y_left += mission.height + p(8)
-        blend_rgba(frame, np.asarray(self._degradations(st)), m, y_left)
-        rx = W - m - p(360)
         lev = self._lever_card(st, rx, m)
         blend_rgba(frame, np.asarray(lev), rx, m)
-        y = m + lev.height + p(10)
-        sat, legend = self._static_cards()
-        blend_rgba(frame, np.asarray(sat), rx, y)
-        # Wind stays on the lever row and the 3D arrow. The compass card is not placed:
-        # it missed its slot by one pixel and would cover the only open patch of scene.
-        blend_rgba(frame, np.asarray(legend), rx, H - m - p(112))
-        side = p(self.MAP)
-        cw, ch = p(self.CAM_W), p(self.CAM_H)
-        bottom = max(side, ch)
+        # Saturday panel and the corner legend stay off the frame until step two.
         paste(frame, map_img, m, H - m - bottom, side, side)
         paste(frame, cam_img, m + side + p(16), H - m - bottom + (bottom - ch), cw, ch)
-        blend_rgba(frame, np.asarray(self._sensors(st)), m, H - m - bottom - p(50))
-        cx0, cx1 = m + p(self.COL_W), rx  # free strip between the left and right columns
+        cx0 = m + title.width + p(8)
+        cx1 = rx - p(8)
+        if cx1 - cx0 < p(120):
+            cx0, cx1 = m + p(self.COL_W) + p(8), W - m
         ban_y = m
         ban = None
         if st.result:
             # Own row under the title. The clock stays on the title card.
-            ban = self._banner(st.result, 0.0, cx1 - cx0 - p(8), big=True)
+            ban = self._banner(st.result, 0.0, max(p(120), cx1 - cx0), big=True)
             ban_y = m + title.height + p(6)
         elif st.banner:
-            ban = self._banner(st.banner[0], st.banner[1], cx1 - cx0 - p(8))
+            ban = self._banner(st.banner[0], st.banner[1], max(p(120), cx1 - cx0))
             ban_y = m + max(0, (title.height - (ban.height if ban is not None else 0)) // 2)
         if ban is not None:
             blend_rgba(frame, np.asarray(ban), (cx0 + cx1 - ban.width) // 2, ban_y)

@@ -11,6 +11,7 @@ import math
 from collections import OrderedDict
 from typing import Protocol
 
+import cv2
 import mujoco
 import numpy as np
 
@@ -303,6 +304,8 @@ class MujocoSim:
         else:
             self.renderer.update_scene(self.data, camera=name)
             img = self.renderer.render().copy()
+            if name == "down" and self.cfg.camera.down_blur_px > 0:  # camera optics (0 = ideal render)
+                img = cv2.GaussianBlur(img, (0, 0), self.cfg.camera.down_blur_px)
             if self.weather.visibility_m < lever.CLEAR_VISIBILITY_M:
                 img = lever.degrade_image(img, self.weather, self._view_distance(name), self.weather_rng)
         return CameraFrame(self.time, self.frame_seq, name, img, fovy)

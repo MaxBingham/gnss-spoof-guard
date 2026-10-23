@@ -28,6 +28,8 @@ DISTURBANCE = "disturbance"
 CONDITIONS = "conditions"  # ConditionsMsg: degradation levers for the simulator (never read onboard)
 LIDAR = "lidar"  # nadir multi-beam lidar
 DECISION = "decision"  # (t, text): onboard decisions (re-localization, landing, timeout, ...)
+TARGET_CANDIDATES = "target/candidates"  # TargetCandidates: V4 target selection (only with the target extension)
+TARGET_MARKER = "target/marker"  # MarkerDetection: landing-station marker in the down camera
 
 
 class Bus:

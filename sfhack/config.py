@@ -66,6 +66,10 @@ class CameraConfig:
     front_width: int = 320
     front_height: int = 240
     jpeg_quality: int = 80
+    # Optics of the down camera: Gaussian blur [px] (lens MTF + demosaicing of a small 320x240 camera).
+    # 0 = the ideal sharp render (default, all existing flights). The V4 target extension uses 1.2: a 1.6 m
+    # ArUco 6x6 marker then resolves below ~14 m and never from 16 m up (sharp renders decoded it from 25 m).
+    down_blur_px: float = 0.0
 
 
 @dataclass
@@ -191,6 +195,61 @@ class DisturbanceConfig:
 
 
 @dataclass
+class TargetConfig:
+    """V4 target selection + precision landing (sfhack/planning/target_mission.py). Used only when a flight is
+    built with the target extension (sfhack/sim/target_world.py); every other flight ignores this section.
+
+    The mission brief the drone gets: land on the landing station on the brown truck inside a square search
+    area around B. The station's marker (dictionary, id, size) is part of that brief, like a published spec."""
+
+    area_half: float = 30.0  # m, search area = B +- this (square, axis-aligned)
+    pad_size: float = 2.0  # m, landing pad side (on the truck's cargo roof)
+    marker_dict: str = "DICT_6X6_50"  # OpenCV ArUco dictionary of the landing station marker
+    marker_id: int = 7
+    marker_size: float = 1.6  # m, black square side (inside a white quiet zone on the pad)
+    # Flight
+    search_alt: float = 30.0  # m above ground: the camera footprint (~42 x 56 m) covers most of the area
+    search_alt_low: float = 20.0  # m, search / inspect altitude when the images look degraded (fog, rain)
+    inspect_alt: float = 18.0  # m, fly over a candidate here: nadir look + lidar height across it
+    marker_alt: float = 10.0  # m above ground: the marker resolves below ~12 m
+    search_speed: float = 4.0  # m/s (5 Hz camera: a frame every 0.8 m)
+    transit_speed: float = 6.0
+    search_offset: float = 12.0  # m, search pattern = area center + the 4 corners of this square
+    max_search_rounds: int = 2  # fewer than 6 objects after a round -> search again (lower)
+    # Detection (perception/target_detector.py)
+    det_mpp: float = 0.25  # m per pixel of the ortho-rectified detection grid
+    det_min_alt: float = 8.0  # m, below this no area detection (objects fill the frame)
+    det_align_px: int = 2  # alignment tolerance: per pixel, min difference over +- this many grid pixels
+    det_register_m: float = 3.0  # m, residual camera <-> map shift searched before differencing
+    det_thresh_k: float = 5.0  # change threshold = max(floor, k x robust noise of the difference)
+    det_thresh_floor: float = 22.0  # color distance (0..255 albedo units)
+    det_min_area: float = 2.0  # m^2, smaller change blobs are noise
+    det_max_area: float = 60.0  # m^2, larger blobs: merged objects / misregistration, not a candidate
+    nominal_contrast: float = 1.0  # camera / map contrast in clear air (radiometric calibration, measured)
+    # Tracking / evidence
+    track_gate_m: float = 3.5  # association radius (ground position)
+    track_min_obs: int = 3  # observations before a blob counts as a candidate
+    height_min_returns: int = 6  # lidar / rangefinder returns inside a footprint before its height counts
+    object_min_height: float = 0.8  # m, a change blob lower than this is not an object (false blob)
+    # Decision (planning/target_selector.py)
+    p_decide: float = 0.90  # decide when P(candidate is THE truck) >= this ...
+    p_margin: float = 0.50  # ... and it leads the runner-up by this much ...
+    min_nadir_obs: int = 3  # ... and it was seen this often near nadir, with its height measured
+    degraded_p_decide: float = 0.95  # same, when the images look degraded
+    degraded_min_nadir_obs: int = 6
+    degraded_contrast: float = 0.6  # image contrast below this x nominal = degraded
+    unseen_odds: float = 0.5  # prior odds that the truck is not among the candidates seen so far
+    unseen_odds_all_found: float = 0.02  # ... once 6 objects are tracked
+    max_inspections: int = 8  # fly-overs before giving up on a clear decision
+    # Approach and precision landing (planning/precision_landing.py)
+    marker_timeout_s: float = 12.0  # no marker above a candidate within this -> TARGET_REJECTED
+    land_xy_tol: float = 0.35  # m, pause the descent while farther than this from the marker
+    land_hold_below: float = 1.8  # m above the pad: marker leaves the view, hold the last target
+    land_speed: float = 0.7  # m/s
+    max_reject: int = 3  # rejected candidates before TARGET_ABORT (hover, never land unconfirmed)
+
+
+@dataclass
 class Config:
     sim: SimConfig = field(default_factory=SimConfig)
     noise: SensorNoise = field(default_factory=SensorNoise)
@@ -202,6 +261,7 @@ class Config:
     localizer: LocalizerConfig = field(default_factory=LocalizerConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
+    target: TargetConfig = field(default_factory=TargetConfig)  # V4 target landing (off unless extension)
     # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
     conditions: Conditions = field(default_factory=Conditions)
 

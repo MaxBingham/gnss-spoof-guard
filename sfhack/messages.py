@@ -166,6 +166,48 @@ class Disturbance:
     duration: float = 0.0
 
 
+@dataclass
+class TargetCandidate:
+    """One tracked object in the search area (V4 target selection), as the drone sees it. Onboard estimate,
+    no truth: `xy` is in the EKF world frame."""
+
+    id: int
+    xy: np.ndarray  # (2,) footprint center [m]
+    length: float  # m, long side of the footprint
+    width: float  # m
+    yaw: float  # rad, direction of the long side
+    height: float | None  # m above ground from lidar / rangefinder, None = not measured yet
+    color: str  # coarse color name of the top surface ("brown", "white", ...)
+    probs: dict[str, float]  # class probabilities {white_car, brown_car, brown_truck, tent, hut, tree, unknown}
+    p_target: float  # P(this candidate is THE target), over all candidates + "not seen yet"
+    n_obs: int  # camera observations
+    n_nadir: int  # ... of them near nadir (reliable size)
+    cues: list[str] = field(default_factory=list)  # confirmed cues: change, height, color, size
+    status: str = "tracking"  # tracking | rejected | chosen
+
+
+@dataclass
+class TargetCandidates:
+    """Bus topic `target/candidates`: all candidates after a detection frame, plus the chosen one (if any)."""
+
+    t: float
+    candidates: list[TargetCandidate]
+    chosen: int | None = None
+    phase: str = ""
+    frame_seq: int = -1
+
+
+@dataclass
+class MarkerDetection:
+    """Bus topic `target/marker`: landing-station marker seen in the down camera (ArUco)."""
+
+    t: float
+    frame_seq: int
+    corners_px: np.ndarray  # (4, 2) image corners
+    pos: np.ndarray  # (3,) marker center, EKF world frame (tilt-corrected)
+    distance: float  # m, camera -> marker
+
+
 def to_jsonable(obj: Any) -> Any:
     """Convert a message (dataclass with numpy fields) into plain JSON types. Images are dropped."""
     if isinstance(obj, np.ndarray):

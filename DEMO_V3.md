@@ -1,5 +1,18 @@
 # DEMO V3 - GNSS-denied navigation over real terrain
 
+## Demo day cheat sheet
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\demo_v3.ps1 s1      # one command, offline, opens the viewer
+```
+
+- **Seed 0** (the default). In S1, INS only misses B by 59 m with seed 0, and all sources land 0.1 m from B.
+- **Running order:** `s1` live -> at ~60 s (cruise) press `T` and `I` (health DEGRADED, the ring grows) -> ~40 s later
+  press `T` and `I` again (fixes pull it back, NOMINAL) -> landing at B. Press `R` to restart, then `1`/`2`/`4` to set the speed.
+- **Pitch slide:** INS only misses B by **30 m (S1, 1.5 km)** and **690 m (S2, 8.4 km)** (median over 10 seeds).
+  INS + TRN: **1.1 m** and **3.9 m**, and 20/20 flights succeed (chart: `$SFHACK_DATA/v3/eval/quick10/pitch.png`).
+- **Backup:** `$SFHACK_DATA/v3/demo/*.mp4` (see Backup videos).
+
 A Skydio X2 in MuJoCo flies A -> B with **GNSS disabled**. It navigates on an inertial backbone (AHRS + 10-state
 EKF with rotor-drag fusion) corrected by two map-referenced sources it carries onboard:
 
@@ -24,7 +37,7 @@ The onboard map is never the simulated world: heights, missing buildings, blur, 
 
 ```
 . scripts/env.ps1                                         # Windows (bash: . scripts/env.sh)
-uv run python -m sfhack.world.build_v3 s1 s2              # once, online: builds the world packages
+uv run python -m sfhack.world.build_v3 s1 s2              # only on a new machine, online (cached in $SFHACK_DATA)
 powershell -ExecutionPolicy Bypass -File scripts\demo_v3.ps1 s1          # live viewer (bash scripts/demo_v3.sh s1)
 ```
 
@@ -84,12 +97,25 @@ The MuJoCo viewer's own bindings of these keys (transparency, inertia, wireframe
    landing patch.
 5. **Numbers** (table below, `final_error.png`).
 
-## Results (calm air, 20 seeds per row)
+## Results (calm air, seeds 0-9 per row)
 
-RESULTS_TABLE
+| scenario | configuration | success | final error at B median / p90 [m] | arrival error median [m] | max 2-sigma median [m] | time DEGRADED+HOLD mean [s] |
+|---|---|---|---|---|---|---|
+| S1 | INS only | 0/10 | 29.9 / 57.2 | 24.9 | 85.2 | 259 |
+| S1 | INS+TRN | 10/10 | 1.1 / 1.7 | 1.2 | 9.8 | 0 |
+| S1 | INS+TRN+IBN | 10/10 | 1.1 / 1.5 | 0.7 | 5.5 | 0 |
+| S2 | INS only | 0/10 | 692 / 886 | 608 | 329 | 779 |
+| S2 | INS+TRN | 10/10 | 3.9 / 5.1 | 3.6 | 44.1 | 35 |
+| S2 | INS+TRN+IBN | 10/10 | 0.4 / 0.7 | 1.1 | 44.1 | 35 |
 
-Charts: `$SFHACK_DATA/v3/eval/calm20/final_error.png`, `health.png`; every flight in `runs.jsonl`
-(`uv run python demos/v3_eval.py --seeds 20 --tag calm20`, ~EVAL_MIN min on 18 workers).
+No crashes, emergency landings or source exclusions in any of the 60 flights. In S1, IBN does not improve the
+median final error (both land at ~1 m), but it halves the 2-sigma and the arrival
+error. In S2, IBN only works over the landing patch, and it takes the final error from 3.9 m to 0.4 m.
+
+Files in `$SFHACK_DATA/v3/eval/quick10/`: `table.md`, `pitch.png` (slide), `final_error.png`, `health.png`,
+`runs.jsonl` (every flight). The S2 rows reuse seeds 0-9 of the 20-seed `calm20` run (same code); S1 was flown fresh.
+Reproduce: `uv run python demos/v3_eval.py --configs ins,ins_trn,ins_trn_ibn --seeds 10 --tag quick10 --headless`
+(~5 min for S1 on 18 workers, S2 ~10 min more), then `uv run python demos/v3_pitch_chart.py --tag quick10`.
 
 ## Backup videos
 
@@ -97,18 +123,33 @@ If the viewer fails on the demo machine, play these (1280x720, panels + text bur
 
 | file (in `$SFHACK_DATA/v3/demo/`) | content |
 |---|---|
-VIDEO_ROWS
+| `v3_s1_ins_trn_ibn_seed0.mp4` | S1, all sources, seed 0, take-off to landing at B |
+| `v3_s1_outage_seed0.mp4` | S1, TRN + IBN off 60-100 s, DEGRADED, recovery, landing |
+| (not recorded yet) | S2, 8x: `demo_v3.ps1 videos` records it as the third file |
 
 Re-record: `scripts/demo_v3.ps1 videos` (`bash scripts/demo_v3.sh videos`).
 
-## Honest limits
+## Honest limits (say these if asked)
 
-- **Calm air.** All numbers above are without steady wind. A wind model (steady wind per seed + turbulence, wind
+- **Wind is not solved yet.** All numbers above are calm air. A wind model (steady wind per seed + turbulence, wind
   states in the EKF) is work in progress on branch `v3-wind-wip`; the gust key `W` is the only wind in this demo.
+- **TRN needs terrain.** Over flat ground or water the altimeter profile carries no position information, TRN stays
+  uncertain and the drone falls back to INS (+ IBN where the ground has texture; water has none). The planner routes
+  through update zones for this reason, but a long flight over the bay or a flat field would drift like INS only.
 - S2 has no imagery en route by design (synthetic texture, landing patch only): IBN there is the landing aid.
 - The simulated sensors are idealized in places (no lens distortion, no motion blur, rangefinder on a flat pad).
 - Truth is used only to display and score (`tests/test_truth_separation.py`); the "Position error" row is labeled
   eval only.
+
+## What existed before the hackathon (Oct 24)
+
+Everything in this repo up to `death-v3` was built before the hackathon day:
+- **V1** (separate repo `gnss-free-nav`): browser prototype of map-based localization.
+- **V2** (`gnss-free-nav-V2`, Oct 20-22): MuJoCo Skydio X2, noisy sensors, AHRS + EKF, NIS gating, camera
+  localizer against OSM + USGS orthophoto, precision landing on the Berkeley route.
+- **V3** (this repo, Oct 22-23): real-terrain worlds S1/S2, TRN particle filter, IBN, integrity monitor, update-zone
+  planner, outage recovery, eval harness, this live viewer.
+Hackathon-day work goes on top of `death-v3`; see `git log` for what was added on the day.
 
 ## Troubleshooting
 

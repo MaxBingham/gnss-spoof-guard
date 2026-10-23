@@ -77,6 +77,7 @@ class FlightSystem:
         reuse_sim: MujocoSim | None = None,
         conditions: Conditions | None = None,
         schedule: list[tuple[float, dict[str, Any]]] | None = None,
+        extension: Any | None = None,
     ) -> None:
         """`conditions`: initial degradation levers (default `cfg.conditions`). `schedule`: lever changes
         at sim times, [(t, {'gnss': 'drag:1.5@90', 'wind.speed': 6}), ...] (see sfhack.degradation.cli)."""
@@ -106,6 +107,9 @@ class FlightSystem:
             yaw = math.atan2(d[1], d[0])
             plan = a_to_b_plan(start, self.goal_xy, mc)
 
+        self.extension = extension
+        if extension is not None:  # V4 target landing etc.: decorates the world, may move the spawn point
+            world, start, yaw = extension.setup_world(self, world, start, yaw)
         reuse = (reuse_sim.model, reuse_sim.data) if reuse_sim is not None else None
         self.sim = MujocoSim(self.cfg, self.bus, world, spawn_xy=(start[0], start[1]), spawn_yaw=yaw,
                              seed=seed, render_front=render_front, reuse=reuse)
@@ -115,7 +119,8 @@ class FlightSystem:
         self.conditions_log: list[tuple[float, str]] = [(0.0, self.sim.conditions.summary())]  # harness log
         self.truth = TruthProvider(self.sim)
         start3 = np.array([start[0], start[1], 0.0])
-        self.mission = Mission(plan, start3, yaw, mc)
+        self.mission = (extension.make_mission(self, start3, yaw) if extension is not None
+                        else Mission(plan, start3, yaw, mc))
         self.autopilot = Autopilot(
             self.cfg, self.bus, self.sim.vehicle_params(), self.mission, start3, yaw,
             onboard_map=self.onboard_map,
@@ -124,6 +129,8 @@ class FlightSystem:
             pose_source=pose_source,
         )
         self.localizer_name = localizer if self.onboard_map else "off"
+        if extension is not None:
+            extension.attach(self)
         self.recorder = recorder
         if recorder is not None:
             recorder.attach(self)

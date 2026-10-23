@@ -163,6 +163,8 @@ class Autopilot:
 
     def on_gnss(self, msg: GnssMsg) -> None:
         """NAIVE baseline: every GNSS fix is fused as reported (no spoof check)."""
+        if getattr(self.mission, "hold_gnss", False):  # V4 marker landing: the marker is the reference
+            return
         self.ekf.update_gnss(msg.t, msg.pos, msg.cov)
         self.health.on_gnss(msg.t, msg.pos)
         self.last_gnss = msg

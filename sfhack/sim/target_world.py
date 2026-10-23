@@ -102,3 +102,91 @@ def keep_out_circles(base: Any, margin: float = 4.0) -> list[tuple[float, float,
         if lm["type"] == "tree":
             out.append((lm["centroid_enu"][0], lm["centroid_enu"][1], float(lm.get("radius", 3.0)) + margin))
     return out
+
+
+@dataclass
+class TargetScore:
+    """Harness scoring of one target flight (truth layout)."""
+
+    chosen_kind: str | None  # object under the chosen candidate (None = never decided)
+    landed: bool
+    on_pad: bool  # touched down on the pad (truth position on the pad, at roof height)
+    pad_error: float  # m, horizontal truth distance to the pad center at the end
+    landed_on: str | None  # object (or "ground") under the drone when landed
+    rejected_kinds: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        return (f"chosen={self.chosen_kind} landed={self.landed} on_pad={self.on_pad} landed_on={self.landed_on} "
+                f"pad_error={self.pad_error:.2f} m rejected={self.rejected_kinds}")
+
+
+class TargetExtension:
+    """`FlightSystem(extension=TargetExtension(seed, difficulty))`: plain-field world + target scene, the
+    TargetMission onboard, truth scoring here. Use with world_dir = ensure_field_package(...)."""
+
+    def __init__(self, layout_seed: int = 0, difficulty: str = "easy", blur_px: float = 1.2) -> None:
+        self.layout_seed = layout_seed
+        self.difficulty = difficulty
+        self.blur_px = blur_px
+        self.layout: TargetLayout | None = None
+
+    def setup_world(self, fs: Any, world: Any, start: np.ndarray, yaw: float) -> tuple[Any, np.ndarray, float]:
+        from ..world.target_scene import generate_layout
+        tc = fs.cfg.target
+        fs.cfg.camera.down_blur_px = self.blur_px
+        self.layout = generate_layout(self.layout_seed, self.difficulty, center=fs.goal_xy, half=tc.area_half,
+                                      pad_size=tc.pad_size, marker_dict=tc.marker_dict, marker_id=tc.marker_id,
+                                      marker_size=tc.marker_size,
+                                      keep_out=[(float(start[0]), float(start[1]), 5.0)] + keep_out_circles(world))
+        return TargetWorld(world, self.layout), start, yaw
+
+    def make_mission(self, fs: Any, start3: np.ndarray, yaw: float) -> Any:
+        from ..planning.target_mission import TargetMission
+        return TargetMission(fs.cfg.mission, fs.cfg.target, fs.bus, fs.onboard_map, start3, yaw, fs.goal_xy)
+
+    def attach(self, fs: Any) -> None:
+        fs.mission.pose_fn = fs.autopilot.pose
+        fs.mission.position_fix = lambda t, xy, cov: fs.autopilot.ekf.update_gnss(t, xy, cov)  # plain xy update
+
+    def score(self, fs: Any) -> TargetScore:
+        lay = self.layout
+        assert lay is not None
+        m = fs.mission
+        truth = fs.truth.state().pos
+
+        def kind_at(xy: np.ndarray) -> str | None:
+            o, d = lay.nearest(xy)
+            return o.kind if d < 0.5 * o.length + 1.5 else None
+
+        chosen = kind_at(m.chosen.xy) if m.chosen is not None else None
+        rejected = [kind_at(tr.xy) or "nothing" for tr in m.perception.tracks if tr.id in m.rejected]
+        landed = m.done
+        on_obj = lay.object_at(truth[:2], 0.0)
+        landed_on = (on_obj.kind if on_obj is not None and truth[2] > 0.5 else "ground") if landed else None
+        on_pad = landed and lay.on_pad(truth[:2]) and truth[2] > lay.pad_z - 0.5
+        return TargetScore(chosen, landed, bool(on_pad), float(np.linalg.norm(truth[:2] - lay.pad_xy)), landed_on, rejected)
+
+
+NAV_MODES = ("gnss", "vision", "truth")
+
+
+def build_target_flight(seed: int, difficulty: str = "easy", nav: str = "gnss", cfg: Any = None, **kw: Any) -> tuple[Any, TargetExtension]:
+    """One standalone V4 flight on the plain field (A = B = field center, the scene around it).
+
+    nav: "gnss" = honest GNSS fused by the EKF (target selection is the subject, not GNSS denial);
+    "vision" = GNSS off, vision localizer against the field ortho (few fixes on grass: drifts);
+    "truth" = controller on the true pose (perception / decision testing only)."""
+    from ..config import data_dir, default_config
+    from ..degradation.conditions import Conditions
+    from ..runner import FlightSystem
+    from ..world.target_scene import ensure_field_package
+    if nav not in NAV_MODES:
+        raise ValueError(f"nav {nav!r} not in {NAV_MODES}")
+    cond = Conditions()
+    if nav == "gnss":
+        cond.gnss.mode = "ok"
+    ext = TargetExtension(seed, difficulty)
+    fs = FlightSystem(cfg or default_config(), world_dir=ensure_field_package(data_dir() / "v4"),
+                      localizer="vision" if nav == "vision" else "off", seed=seed, extension=ext, conditions=cond,
+                      pose_source="truth" if nav == "truth" else "ekf", **kw)
+    return fs, ext

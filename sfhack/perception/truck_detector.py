@@ -16,9 +16,10 @@ detected class (a roof h above ground at camera height H would otherwise project
 
 from __future__ import annotations
 
+import json
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -66,6 +67,11 @@ class TruckDetector:
         if not w.exists():
             raise FileNotFoundError(f"detector weights not found: {w} (train them: demos/14_det_train.py)")
         self.weights = w
+        # Operating point chosen on the validation split (demos/15_det_eval.py) travels with the weights
+        cal = w.parent.parent / "calibration.json"
+        if cfg is None and cal.exists():
+            c = json.loads(cal.read_text(encoding="utf-8"))
+            self.cfg = replace(self.cfg, temperature=float(c["temperature"]), truck_threshold=float(c["truck_threshold"]))
         self.model = YOLO(str(w))
         if device is None:
             import torch

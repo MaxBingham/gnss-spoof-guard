@@ -312,3 +312,75 @@ def breakdown(gts: list[ImageGT], preds: dict[str, ImagePred], thr: float) -> di
                 r = out.setdefault(dim, {}).setdefault(b, {"k": 0, "n": 0, "fp": 0, "imgs": 0})
                 r["n"] += 1; r["k"] += int(j in found)
     return out
+
+
+# ---------------------------------------------------------------------------------------- OWLv2 baseline
+
+OWL_MODEL = "google/owlv2-base-patch16-ensemble"
+OWL_TRUCK_PROMPT = "a brown box truck"
+OWL_NEGATIVES = ("a car", "a pickup truck", "an SUV", "a tent", "a small hut", "a tree")
+
+
+class OwlDetector:
+    """Zero-shot open-vocabulary baseline (OWLv2, Hugging Face transformers). Same `detect` interface as the
+    onboard TruckDetector. negatives=False: only the truck prompt (every box is a 'truck' with its score);
+    negatives=True: the other class prompts compete and a box is a truck only where the truck prompt wins."""
+
+    def __init__(self, negatives: bool = False, device: str | None = None, conf_min: float = 0.01,
+                 temperature: float = 1.0) -> None:
+        import torch
+        from transformers import Owlv2ForObjectDetection, Owlv2Processor
+
+        self.torch = torch
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = torch.float16 if self.device == "cuda" else torch.float32
+        self.proc = Owlv2Processor.from_pretrained(OWL_MODEL)
+        self.model = Owlv2ForObjectDetection.from_pretrained(OWL_MODEL, torch_dtype=self.dtype).to(self.device).eval()
+        self.prompts = [OWL_TRUCK_PROMPT] + (list(OWL_NEGATIVES) if negatives else [])
+        self.negatives = negatives
+        self.conf_min = conf_min
+        self.temperature = temperature
+        self.last_ms = 0.0
+
+    def predict_raw(self, rgb: np.ndarray) -> ImagePred:
+        import time
+        torch = self.torch
+        t0 = time.perf_counter()
+        h, w = rgb.shape[:2]
+        inp = self.proc(text=[self.prompts], images=rgb, return_tensors="pt").to(self.device)
+        inp["pixel_values"] = inp["pixel_values"].to(self.dtype)
+        with torch.no_grad():
+            out = self.model(**inp)
+        logits = out.logits[0].float()  # (boxes, prompts)
+        probs = torch.sigmoid(logits)
+        score, which = probs.max(-1)
+        boxes = out.pred_boxes[0].float()  # cx, cy, w, h normalized to the padded square image
+        s = max(h, w)
+        xyxy = torch.stack([(boxes[:, 0] - boxes[:, 2] / 2) * s, (boxes[:, 1] - boxes[:, 3] / 2) * s,
+                            (boxes[:, 0] + boxes[:, 2] / 2) * s, (boxes[:, 1] + boxes[:, 3] / 2) * s], -1)
+        truck = probs[:, 0]
+        keep = truck >= self.conf_min
+        if self.negatives:  # truck only where the truck prompt beats every other prompt
+            keep &= which == 0
+        keep_idx = torch.nonzero(keep).flatten()
+        b, c = xyxy[keep_idx].cpu().numpy(), truck[keep_idx].cpu().numpy()
+        # NMS (OWL emits one box per patch)
+        import torchvision
+        k = torchvision.ops.nms(torch.as_tensor(b), torch.as_tensor(c), 0.3).numpy()[:300] if len(c) else np.zeros(0, int)
+        self.last_ms = 1000 * (time.perf_counter() - t0)
+        b = np.clip(b[k], 0, [w, h, w, h]) if len(k) else np.zeros((0, 4))
+        return ImagePred(b, c[k] if len(k) else np.zeros(0), np.zeros(len(k), int))
+
+    def detect(self, rgb: np.ndarray, altitude: float, attitude: np.ndarray) -> list:
+        from sfhack.config import DetectorConfig
+        from sfhack.perception.truck_detector import Detection, calibrate, ground_offsets
+        p = self.predict_raw(rgb)
+        if len(p.conf) == 0:
+            return []
+        cfg = DetectorConfig()
+        h, w = rgb.shape[:2]
+        centers = np.column_stack([(p.boxes[:, 0] + p.boxes[:, 2]) / 2, (p.boxes[:, 1] + p.boxes[:, 3]) / 2])
+        g = ground_offsets(centers, np.full(len(centers), cfg.class_heights[0] / 2), w, h, cfg.fovy_deg, altitude, attitude)
+        cal = calibrate(p.conf, self.temperature)
+        return [Detection("truck", float(q), tuple(float(v) for v in bb), gg, float(r))
+                for bb, q, r, gg in zip(p.boxes, cal, p.conf, g)]

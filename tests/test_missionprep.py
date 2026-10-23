@@ -183,3 +183,67 @@ def test_planner_api(mission: str) -> None:
     assert {lay["file"] for lay in view["layers"]} >= {"ortho.jpg", "dsm.npz", "map_cloud.ply", "mission.json"}
     assert c.get("/api/missions/..%2Fescape").status_code in (400, 404)
     assert c.post("/api/upload", json={"mission_id": "../x"}).status_code == 400
+
+
+class FakeViewer:
+    """Stands in for subprocess.Popen in the /api/fly test: records the call, exits when told to."""
+
+    instances: list["FakeViewer"] = []
+
+    def __init__(self, args, **kw) -> None:
+        self.args, self.kw, self.returncode, self.terminated = args, kw, None, False
+        self.pid = 4242 + len(FakeViewer.instances)
+        FakeViewer.instances.append(self)
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated, self.returncode = True, 1
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+
+def test_fly_endpoint_launches_one_viewer(mission: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+    import sys
+
+    from fastapi.testclient import TestClient
+
+    from sfhack.config import REPO_ROOT
+    from sfhack.missionprep import server
+
+    monkeypatch.setattr(server.subprocess, "Popen", FakeViewer)
+    FakeViewer.instances.clear()
+    c = TestClient(server.app)
+    assert c.post("/api/fly", json={"mission_id": "../x"}).status_code == 400
+    assert c.post("/api/fly", json={"mission_id": "never-built"}).status_code == 404
+
+    r = c.post("/api/fly", json={"mission_id": mission}).json()
+    v = FakeViewer.instances[0]
+    assert r["pid"] == v.pid and r["command"].endswith(f"--mission {mission}")
+    assert v.args == [sys.executable, str(REPO_ROOT / "demos" / "demo_live.py"), "--mission", mission]
+    assert v.kw["cwd"] == str(REPO_ROOT) and v.kw["stderr"] == subprocess.STDOUT
+    if sys.platform == "win32":
+        assert v.kw["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
+    assert c.get("/api/fly/status").json()["state"] == "running"
+
+    c.post("/api/fly", json={"mission_id": mission})  # one viewer at a time: the first one is stopped
+    assert v.terminated and len(FakeViewer.instances) == 2
+
+    w = FakeViewer.instances[1]  # crash: status shows the tail of viewer.log
+    w.kw["stdout"].write(b"Traceback (most recent call last):\nRuntimeError: no OpenGL context\n")
+    w.kw["stdout"].flush()
+    w.returncode = 1
+    s = c.get("/api/fly/status").json()
+    assert s["state"] == "exited" and s["exit_code"] == 1 and s["log_tail"][-1] == "RuntimeError: no OpenGL context"
+    assert c.post("/api/fly/stop").json()["state"] == "stopped"
+
+    c.post("/api/fly", json={"mission_id": mission})  # a user stop is not reported as a crash
+    c.post("/api/fly/stop")
+    s = c.get("/api/fly/status").json()
+    assert s["state"] == "stopped" and "log_tail" not in s

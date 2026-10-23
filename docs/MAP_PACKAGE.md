@@ -7,6 +7,7 @@ without the planner's code: JSON, JPEG, NumPy `.npz` and binary PLY only.
 ```
 $SFHACK_DATA/missions/<id>/          <id>: [A-Za-z0-9][A-Za-z0-9_-]{0,63}
   build_report.json                  inputs, per-layer sources / seconds / notes, file sizes
+  viewer.log                         output of the last live viewer the planner page launched
   world/                             TRUTH: what the simulator builds MuJoCo from (onboard code never reads it)
     manifest.json
     landmarks.json
@@ -28,7 +29,8 @@ Make one:
 
 ```
 . scripts/env.ps1                                                    # (bash: . scripts/env.sh)
-uv run python -m sfhack.missionprep serve                            # browser: http://127.0.0.1:8765/
+uv run python -m sfhack.missionprep serve                            # browser: http://127.0.0.1:8765/ (Prepare = build,
+                                                                     # upload and launch the viewer in one click)
 uv run python -m sfhack.missionprep build --id berkeley              # default A / B, no browser
 uv run python -m sfhack.missionprep build --a 37.8716 -122.2638 --b 37.87215 -122.2566 --radius 40 --id campus-glade
 uv run python -m sfhack.missionprep upload berkeley --mbps 2         # simulated link + checksum check

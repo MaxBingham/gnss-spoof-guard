@@ -95,6 +95,9 @@
     </section>
 
     <section>
+      <label class="row" style="justify-content:flex-start;gap:8px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="autoFly" checked style="flex:0 0 auto;accent-color:var(--accent)">
+        <span>Fly automatically after prepare <span class="muted">(upload + launch the sim)</span></span></label>
       <button class="primary" id="prepBtn" disabled>Prepare mission</button>
       <div style="margin-top:10px" class="bar" id="prepBar"><i></i></div>
       <div class="muted" id="prepStage" style="font-size:12px;margin-top:4px"></div>
@@ -117,6 +120,17 @@
       <table id="upLayers" style="margin-top:8px"></table>
       <div class="ready" id="ready"><b>READY TO FLY</b><div class="muted" style="font-size:12.5px;margin-top:4px">Every layer verified on the drone (SHA-256). Start the live demo on this mission:</div>
         <code id="cmd"></code><button id="copyBtn">Copy command</button></div>
+    </section>
+
+    <section id="simSec">
+      <h2>Simulator</h2>
+      <div class="row"><span id="simTxt" class="muted" style="font-size:12.5px">not running</span>
+        <button id="stopBtn" style="flex:0 0 auto;display:none">Stop</button></div>
+      <pre id="simErr" style="display:none;background:#26100f;border:1px solid #6b2c2c;border-radius:6px;padding:8px;
+        font:11.5px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap;color:#ffb3ad;max-height:220px;overflow:auto;margin:8px 0 0"></pre>
+      <div id="simCmd" class="muted" style="display:none;font-size:12px;margin-top:8px">If no window opens, run this in a
+        terminal in the repo (after <code>. scripts/env.ps1</code>):<code id="simCmdTxt" style="display:block;background:#0b0f14;
+        border:1px solid var(--line);border-radius:5px;padding:7px;margin-top:4px;color:#e6edf3;word-break:break-all"></code></div>
     </section>
 
     <section>
@@ -194,24 +208,89 @@ async function poll(job, onTick) {
   }
 }
 
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+const post = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+const logLine = (s) => { $("log").textContent += s + "\n"; $("log").scrollTop = 1e9; };
+function overall(frac, stage) { $("prepBar").firstChild.style.width = (100 * frac).toFixed(0) + "%"; $("prepStage").textContent = stage; }
+
+// One progress bar for the whole chain: preparing 0-60 %, uploading to drone 60-90 %, launching sim 90-100 %
+// (without auto-fly, preparing fills it).
+async function runPrepare(scale) {
+  const body = { a: { lat: A.lat, lon: A.lng }, b: { lat: B.lat, lon: B.lng }, radius_m: radius, mission_id: $("mid").value.trim() || null };
+  const r = await post("/api/prepare", body);
+  if (!r.ok) { logLine("error: " + (await r.text())); return null; }
+  const { job } = await r.json();
+  return await poll(job, (j) => {
+    overall(scale * j.progress, "preparing" + (j.stage ? ": " + j.stage : ""));
+    if (j.log.length) logLine(j.log.join("\n"));
+  });
+}
+
 $("prepBtn").onclick = async () => {
+  const auto = $("autoFly").checked;
   $("prepBtn").disabled = true; $("log").textContent = ""; $("warn").innerHTML = "";
   $("pkgSec").style.display = "none"; $("upSec").style.display = "none"; $("ready").style.display = "none";
+  $("prepBar").className = "bar"; overall(0, "preparing");
   overlays.forEach((o) => map.removeLayer(o)); overlays = [];
-  const body = { a: { lat: A.lat, lon: A.lng }, b: { lat: B.lat, lon: B.lng }, radius_m: radius, mission_id: $("mid").value.trim() || null };
-  const r = await fetch("/api/prepare", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) { $("log").textContent = "error: " + (await r.text()); $("prepBtn").disabled = false; return; }
-  const { job } = await r.json();
-  const j = await poll(job, (j) => {
-    $("prepBar").firstChild.style.width = (100 * j.progress).toFixed(0) + "%";
-    $("prepStage").textContent = j.stage;
-    if (j.log.length) { $("log").textContent += j.log.join("\n") + "\n"; $("log").scrollTop = 1e9; }
-  });
-  $("prepBtn").disabled = false;
-  $("prepBar").classList.toggle("bad", j.status !== "done"); $("prepBar").classList.toggle("ok", j.status === "done");
-  if (j.status === "done") showMission(j.result.mission); else $("warn").innerHTML = `<div class="err">${j.error}</div>`;
-  loadMissions();
+  const finish = (ok, stage) => { $("prepBar").classList.add(ok ? "ok" : "bad"); if (stage) $("prepStage").textContent = stage;
+    $("prepBtn").disabled = false; loadMissions(); };
+  const j = await runPrepare(auto ? 0.6 : 1.0);
+  if (!j || j.status !== "done") { if (j) $("warn").innerHTML = `<div class="err">${j.error}</div>`; return finish(false, "prepare failed"); }
+  const m = j.result.mission;
+  showMission(m);
+  if (!auto) return finish(true, "prepared");
+  if (j.result.cached && m.uploaded) {
+    logLine("already prepared and on the drone (checksums match): skipping straight to fly");
+  } else {
+    overall(0.6, "uploading to drone");
+    const ok = await runUpload((f) => overall(0.6 + 0.3 * f, "uploading to drone"));
+    if (!ok) return finish(false, "upload failed");
+  }
+  overall(0.9, "launching sim");
+  const ok = await flyMission(m.mission_id);
+  overall(1.0, ok ? "sim running" : "sim did not start");
+  finish(ok);
 };
+
+async function flyMission(mid) {
+  $("simErr").style.display = "none"; $("simCmd").style.display = "block";
+  $("simCmdTxt").textContent = `uv run python demos/demo_live.py --mission ${mid}`;
+  $("simTxt").textContent = `launching ${mid} ...`;
+  const r = await post("/api/fly", { mission_id: mid });
+  if (!r.ok) { $("simTxt").textContent = "launch failed"; $("simErr").textContent = await r.text(); $("simErr").style.display = "block"; return false; }
+  const f = await r.json();
+  $("simCmdTxt").textContent = f.command;
+  $("simTxt").textContent = `launching ${mid} (PID ${f.pid}) ...`;
+  for (let i = 0; i < 10; i++) {  // crash watch: an early exit shows viewer.log here
+    await sleep(1000);
+    const s = await (await fetch("/api/fly/status")).json();
+    if (s.state !== "running") { showSim(s); watchSim(); return false; }
+  }
+  showSim(await (await fetch("/api/fly/status")).json());
+  watchSim();
+  return true;
+}
+
+function showSim(s) {
+  $("stopBtn").style.display = s.state === "running" ? "" : "none";
+  if (s.state === "running") {
+    $("simErr").style.display = "none";
+    $("simTxt").innerHTML = `<span class="chk">sim running</span> &middot; ${s.mission_id} &middot; PID ${s.pid} &middot; ${s.uptime_s.toFixed(0)} s`;
+  } else if (s.state === "stopped") {
+    $("simTxt").textContent = `viewer stopped (${s.mission_id})`;
+  } else if (s.state === "exited") {
+    $("simTxt").textContent = s.exit_code === 0 ? `viewer closed (${s.mission_id})` : `viewer crashed (exit code ${s.exit_code})`;
+    if (s.exit_code !== 0 && s.log_tail) {
+      $("simErr").textContent = `viewer.log (${s.log}):\n` + s.log_tail.join("\n"); $("simErr").style.display = "block";
+    }
+  } else $("simTxt").textContent = "not running";
+}
+let simTimer = null;
+function watchSim() {
+  clearInterval(simTimer);
+  simTimer = setInterval(async () => { const s = await (await fetch("/api/fly/status")).json(); showSim(s); if (s.state !== "running") clearInterval(simTimer); }, 3000);
+}
+$("stopBtn").onclick = async () => { await post("/api/fly/stop"); showSim(await (await fetch("/api/fly/status")).json()); };
 
 function showMission(m) {
   mission = m;
@@ -236,14 +315,16 @@ function showMission(m) {
   if (m.uploaded) $("upTxt").textContent = "already on the drone (verified); upload again to re-check";
 }
 
-$("upBtn").onclick = async () => {
+$("upBtn").onclick = () => runUpload();
+
+async function runUpload(onProgress) {
   $("upBtn").disabled = true; $("ready").style.display = "none"; $("upBar").className = "bar";
-  const r = await fetch("/api/upload", { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ mission_id: mission.mission_id, mbps: +$("mbps").value || 2 }) });
+  const r = await post("/api/upload", { mission_id: mission.mission_id, mbps: +$("mbps").value || 2 });
+  if (!r.ok) { $("upTxt").textContent = "upload failed: " + (await r.text()); $("upBtn").disabled = false; return false; }
   const { job } = await r.json();
-  const rows = {};
   const j = await poll(job, (j) => {
     $("upBar").firstChild.style.width = (100 * j.progress).toFixed(1) + "%";
+    if (onProgress) onProgress(j.progress);
     for (const e of j.events) {
       if (e.type === "start") {
         $("upTxt").textContent = `${fmtMB(e.total_bytes)} at ${e.mbps} MB/s, ETA ${e.eta_s} s`;
@@ -265,7 +346,8 @@ $("upBtn").onclick = async () => {
   $("upBar").classList.add(ok ? "ok" : "bad");
   if (ok) { $("cmd").textContent = j.result.command; $("ready").style.display = "block"; }
   loadMissions();
-};
+  return ok;
+}
 $("copyBtn").onclick = async () => { try { await navigator.clipboard.writeText($("cmd").textContent); $("copyBtn").textContent = "Copied"; setTimeout(() => $("copyBtn").textContent = "Copy command", 1500); } catch (e) {} };
 
 async function loadMissions() {
@@ -274,8 +356,12 @@ async function loadMissions() {
   $("missions").innerHTML = "";
   for (const m of ms) {
     const d = document.createElement("div");
-    d.style.cssText = "padding:4px 0;cursor:pointer";
-    d.innerHTML = `<span style="color:var(--text)">${m.mission_id}</span> &middot; r ${m.radius_m} m &middot; ${m.created_at.slice(0, 16).replace("T", " ")}${m.uploaded ? ' &middot; <span class="chk">on drone</span>' : ""}`;
+    d.className = "row"; d.style.cssText = "padding:4px 0;cursor:pointer";
+    d.innerHTML = `<span><span style="color:var(--text)">${m.mission_id}</span> &middot; r ${m.radius_m} m &middot; ${m.created_at.slice(0, 16).replace("T", " ")}${m.uploaded ? ' &middot; <span class="chk">on drone</span>' : ""}</span>`;
+    const fly = document.createElement("button");
+    fly.textContent = "Fly"; fly.title = "launch the live viewer on this mission (no rebuild)"; fly.style.cssText = "flex:0 0 auto;padding:3px 12px";
+    fly.onclick = async (e) => { e.stopPropagation(); fly.disabled = true; await flyMission(m.mission_id); fly.disabled = false; };
+    d.appendChild(fly);
     d.onclick = async () => showMission(await (await fetch("/api/missions/" + m.mission_id)).json());
     $("missions").appendChild(d);
   }
@@ -288,6 +374,8 @@ async function loadMissions() {
   radius = d.radius_m; $("radius").value = radius; $("rTxt").textContent = radius + " m"; circle.setRadius(radius);
   $("mbps").value = d.mbps; setMode("A");
   loadMissions();
+  const s = await (await fetch("/api/fly/status")).json();
+  showSim(s); if (s.state === "running") watchSim();
 })();
 </script>
 </body>

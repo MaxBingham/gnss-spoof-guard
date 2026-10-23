@@ -10,11 +10,17 @@ API (all JSON):
   GET  /api/jobs/{job}?since=N             status, progress, log lines from N, upload events, result
   GET  /api/missions                       prepared missions
   GET  /api/missions/{id}                  build report + mission.json + route/bbox in lat/lon
+  POST /api/fly {mission_id}               start the live viewer (demos/demo_live.py --mission id), one at a time
+  GET  /api/fly/status                     running / exited, exit code, viewer.log tail after a crash
+  POST /api/fly/stop                       stop the viewer
 """
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -25,10 +31,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from ..config import REPO_ROOT
 from ..geo import GeoOrigin, LatLon
-from .build import DEFAULT_A, DEFAULT_B, DEFAULT_RADIUS_M, mission_dir, missions_dir, prepare_mission, summarize
+from .build import (DEFAULT_A, DEFAULT_B, DEFAULT_RADIUS_M, default_mission_id, mission_dir, missions_dir,
+                    prepare_mission, summarize)
 from .sources import Fetcher, Nominatim
-from .upload import FLY_COMMAND, upload
+from .upload import FLY_COMMAND, is_uploaded, upload
 
 STATIC = Path(__file__).resolve().parent / "static"
 app = FastAPI(title="sfhack mission planner")
@@ -97,6 +105,8 @@ def prepare(req: PrepareReq) -> dict[str, str]:
 
     def run() -> None:
         try:
+            _release(req.mission_id or default_mission_id(LatLon(req.a.lat, req.a.lon), LatLon(req.b.lat, req.b.lon),
+                                                          req.radius_m))
             rep = prepare_mission(LatLon(req.a.lat, req.a.lon), LatLon(req.b.lat, req.b.lon), req.radius_m,
                                   req.mission_id or None, force=req.force, log=lambda s: _log(job, s),
                                   progress=lambda f, s: job.update(progress=f, stage=s))
@@ -131,6 +141,7 @@ def upload_pkg(req: UploadReq) -> dict[str, str]:
 
     def run() -> None:
         try:
+            _release(req.mission_id)
             ok = upload(req.mission_id, req.mbps, on_event)
             job["result"] = {"ok": ok, "command": FLY_COMMAND.format(id=req.mission_id)}
             job["status"] = "done" if ok else "failed"
@@ -164,7 +175,7 @@ def _mission_view(mid: str) -> dict[str, Any]:
               for k, v in man["layers"].items()]
     return {"mission_id": mid, "bbox": man["bbox"], "route": route, "layers": layers, "report": rep,
             "a": mission["a"], "b": mission["b"], "warnings": mission.get("warnings", []),
-            "uploaded": (d / "drone" / "upload_receipt.json").exists(), "command": FLY_COMMAND.format(id=mid),
+            "uploaded": is_uploaded(mid), "command": FLY_COMMAND.format(id=mid),
             "cloud": man["map_cloud"]["kind"]}
 
 
@@ -177,7 +188,7 @@ def missions() -> list[dict[str, Any]]:
             r = json.loads(rep.read_text(encoding="utf-8"))
             out.append({"mission_id": d.name, "a": r["inputs"]["a"], "b": r["inputs"]["b"],
                         "radius_m": r["inputs"]["radius_m"], "created_at": r["created_at"],
-                        "uploaded": (d / "drone" / "upload_receipt.json").exists()})
+                        "uploaded": is_uploaded(d.name)})
     return out
 
 
@@ -190,3 +201,95 @@ def mission(mid: str) -> dict[str, Any]:
     if not (d / "build_report.json").exists():
         raise HTTPException(404, f"mission {mid} not prepared")
     return _mission_view(mid)
+
+
+# ------------------------------------------------------------------------------------------- live viewer
+
+VIEWER = REPO_ROOT / "demos" / "demo_live.py"
+_viewer: dict[str, Any] = {"proc": None, "mission_id": None, "log": None, "started": 0.0, "fh": None, "stopped": False}
+_viewer_lock = threading.Lock()
+
+
+class FlyReq(BaseModel):
+    mission_id: str
+
+
+def _stop_viewer() -> int | None:
+    """Terminate the running viewer (if any); returns its exit code. Caller holds _viewer_lock."""
+    proc = _viewer["proc"]
+    if proc is None:
+        return None
+    if proc.poll() is None:
+        _viewer["stopped"] = True  # our doing: terminate() exits with 1 on Windows, which is not a crash
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    if _viewer["fh"] is not None:
+        _viewer["fh"].close()
+        _viewer["fh"] = None
+    return proc.returncode
+
+
+def _release(mission_id: str) -> None:
+    """Stop the viewer if it flies this mission: a rebuild / re-upload replaces files it holds open (Windows)."""
+    with _viewer_lock:
+        if _viewer["mission_id"] == mission_id:
+            _stop_viewer()
+
+
+def _log_tail(path: Path | None, n: int = 30) -> list[str]:
+    if path is None or not path.exists():
+        return []
+    return path.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+
+
+@app.post("/api/fly")
+def fly(req: FlyReq) -> dict[str, Any]:
+    """Start demos/demo_live.py --mission <id> with this server's interpreter (the same venv), detached
+    from the server's console; one viewer at a time. Output goes to <mission>/viewer.log."""
+    try:
+        d = mission_dir(req.mission_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if not ((d / "world" / "manifest.json").exists() and (d / "onboard" / "manifest.json").exists()):
+        raise HTTPException(404, f"mission {req.mission_id} not prepared")
+    with _viewer_lock:
+        _stop_viewer()
+        log = d / "viewer.log"
+        fh = open(log, "wb")  # noqa: SIM115 - stays open for the child's lifetime, closed in _stop_viewer
+        kw: dict[str, Any] = {}
+        if sys.platform == "win32":
+            kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kw["start_new_session"] = True
+        proc = subprocess.Popen([sys.executable, str(VIEWER), "--mission", req.mission_id], cwd=str(REPO_ROOT),
+                                stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                env={**os.environ, "PYTHONUNBUFFERED": "1"}, **kw)
+        _viewer.update(proc=proc, mission_id=req.mission_id, log=log, started=time.time(), fh=fh, stopped=False)
+    return {"pid": proc.pid, "mission_id": req.mission_id, "log": str(log), "command": FLY_COMMAND.format(id=req.mission_id)}
+
+
+@app.get("/api/fly/status")
+def fly_status() -> dict[str, Any]:
+    with _viewer_lock:
+        proc = _viewer["proc"]
+        if proc is None:
+            return {"state": "none"}
+        code = proc.poll()
+        state = "running" if code is None else "stopped" if _viewer["stopped"] else "exited"
+        out = {"state": state, "pid": proc.pid, "mission_id": _viewer["mission_id"],
+               "exit_code": code, "uptime_s": round(time.time() - _viewer["started"], 1), "log": str(_viewer["log"])}
+        if out["state"] == "exited" and code != 0:  # crashed: show why
+            out["log_tail"] = _log_tail(_viewer["log"])
+        return out
+
+
+@app.post("/api/fly/stop")
+def fly_stop() -> dict[str, Any]:
+    with _viewer_lock:
+        if _viewer["proc"] is None:
+            return {"state": "none"}
+        return {"state": "stopped", "pid": _viewer["proc"].pid, "exit_code": _stop_viewer()}

@@ -76,7 +76,8 @@ stack and the object placer): [docs/MAP_PACKAGE.md](docs/MAP_PACKAGE.md).
 
 ```
 uv run python -m sfhack.missionprep serve                  # http://127.0.0.1:8765/: search, click A and B,
-                                                           # radius slider, Prepare mission, Upload to drone
+                                                           # radius slider, Prepare mission: with "Fly automatically"
+                                                           # (default on) it uploads and opens the live viewer itself
 uv run python -m sfhack.missionprep build --id berkeley    # same without the browser (default A / B)
 uv run python -m sfhack.missionprep upload berkeley        # simulated 2 MB/s link, SHA-256 per layer
 uv run python demos/demo_live.py --mission berkeley        # fly it (also --headless / --record)
@@ -89,6 +90,13 @@ run, 1.6 s once prepared. The world has real terrain (height field) and extruded
 ortho-textured roofs; the onboard package is a deliberately imperfect copy (heights +-20 %, 10 % of the
 buildings and trees missing, noisy DTM, re-processed ortho, real LiDAR cloud), and the route is planned
 on that onboard map around tall obstacles.
+
+One click: "Prepare mission" runs prepare -> upload (2 MB/s) -> launch, on one progress bar ("preparing", "uploading
+to drone", "launching sim"). Same A / B / radius already prepared and uploaded: straight to the launch. The server
+starts `demos/demo_live.py --mission <id>` with its own interpreter (one viewer at a time, output in
+`<mission>/viewer.log`, a crash within 10 s shows the log on the page); every prepared mission has a Fly button,
+and the terminal command stays on the page as a fallback. API: `POST /api/fly {mission_id}`, `GET /api/fly/status`,
+`POST /api/fly/stop`.
 
 ## Degradation levers
 

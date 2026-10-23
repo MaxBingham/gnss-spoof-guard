@@ -82,6 +82,17 @@ def upload(mission_id: str, mbps: float = 2.0, on_event: Callable[[dict[str, Any
     return ok_all
 
 
+def is_uploaded(mission_id: str) -> bool:
+    """The drone holds a verified copy of the CURRENT onboard package (receipt checksums = manifest checksums)."""
+    try:
+        mdir = mission_dir(mission_id)
+        receipt = json.loads((mdir / "drone" / "upload_receipt.json").read_text(encoding="utf-8"))
+        manifest = json.loads((mdir / "onboard" / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return all(receipt["layers"].get(k, {}).get("sha256") == v["sha256"] for k, v in manifest["layers"].items())
+
+
 def drone_package(mdir: Path) -> Path | None:
     """The verified on-drone copy, if the package was uploaded."""
     d = mdir / "drone"

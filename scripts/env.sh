@@ -1,7 +1,7 @@
 # Project environment for macOS / Linux. Source it:  . "$(dirname "$0")/env.sh"
 # The virtualenv and all generated data live outside the repo (and outside any synced folder).
 
-export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$HOME/.venvs/sf-hack}"
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$HOME/.venvs/sf-hack-v4}"
 export SFHACK_DATA="${SFHACK_DATA:-$HOME/sf-hack-data}"
 export UV_LINK_MODE=copy
 export PYTHONUTF8=1

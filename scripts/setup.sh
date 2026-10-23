@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup on macOS / Linux: Python 3.12 (uv-managed) + dependencies into ~/.venvs/sf-hack.
+# One-time setup on macOS / Linux: Python 3.12 (uv-managed) + dependencies into ~/.venvs/sf-hack-v4.
 #   bash scripts/setup.sh
 set -euo pipefail
 . "$(dirname "$0")/env.sh"

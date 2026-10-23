@@ -191,6 +191,47 @@ class LocalizerConfig:
 
 
 @dataclass
+class TrnConfig:
+    """TRN (perception/trn.py): nadir lidar vs onboard DSM particle filter. Values = death-v3's urban set."""
+
+    enabled: bool = True  # --trn on|off. Fused into the main filter only while no GNSS arrives (the naive
+    # GNSS baseline and the spoof demo stay as they were); always into the GNSS-free track.
+    dsm_mpp: float = 1.0  # m, onboard DSM raster
+    n_particles: int = 3000
+    sigma_meas: float = 2.0  # m, lidar + map error (1 sigma core of the Student-t)
+    nu: float = 3.0  # Student-t dof (heavy tails: trees, footprint polygon vs simulated box walls)
+    outlier_floor: float = 0.05  # likelihood floor (fraction of the peak)
+    beam_weight: float = 0.35  # log-likelihood weight per beam (the 8 beams span ~11 m: correlated map error)
+    corr_length: float = 3.0  # m, map-error correlation length along track (likelihood tempering)
+    update_hz: float = 10.0
+    min_range: float = 0.5  # m
+    init_inflate: float = 1.5  # initial cloud = EKF covariance x this (std), at least init_min_std
+    init_min_std: float = 4.0
+    init_max_std: float = 150.0
+    bias_init_std: float = 4.0  # m
+    bias_keep_std: float = 1.0  # m, bias spread on a restart once the bias has been learned
+    bias_rw: float = 0.05  # m/sqrt(s)
+    vel_err_min_std: float = 0.2  # m/s
+    vel_err_rw: float = 0.02  # m/s/sqrt(s), on top of the EKF's velocity-variance growth
+    pos_rw: float = 0.05  # m/sqrt(m travelled), roughening
+    min_travel: float = 60.0  # m of matched track after (re)initialization before the first fix
+    max_fix_std: float = 5.0  # m, cloud 1-sigma below this always qualifies for a fix ...
+    rel_fix_std: float = 0.4  # ... or below this x the INS 1-sigma ...
+    cap_fix_std: float = 25.0  # ... but never wider than this
+    min_fix_std: float = 1.0  # m, floor of the published fix sigma
+    # Closed-loop dead reckoning drifts 2-3 m/s here (no airframe drag in calm air, so the accelerometer cannot
+    # see velocity): with V3's sparse fixes (every 20 m, sigma x 2) the EKF ran 10-25 m off while the TRN cloud
+    # itself stayed within 1-3 m, and hovering over B drifted 60 m. So fixes are frequent, and while hovering
+    # one every hover_fix_s (the cloud then spreads with the INS velocity error, so its covariance stays honest).
+    fix_inflate: float = 1.5  # published sigma = cloud sigma x this (correlated map errors)
+    fix_interval: float = 0.5  # s between published fixes
+    fix_travel: float = 6.0  # m of new track between two fixes ...
+    hover_fix_s: float = 2.0  # ... or this long when (almost) hovering
+    info_track_m: float = 120.0  # along-track window for the information-content report
+    lost_after_s: float = 8.0  # likelihood at the outlier floor this long -> re-initialize (keeps the bias)
+
+
+@dataclass
 class HealthConfig:
     """Thresholds on the 2-sigma horizontal radius and the time since the last accepted visual fix."""
 
@@ -204,6 +245,10 @@ class HealthConfig:
     # V3.2: sigma2 > land_sigma2 means HOLD (hover and keep searching), not LAND, while blind. LAND only
     # after land_no_fix_s without any fix. False = the old rule (sigma-based LAND).
     hold_when_blind: bool = True
+    # V3.2 TRN: hovering gives terrain-referenced navigation no new terrain (no fixes while hovering), so while
+    # TRN is tracking the drone keeps flying at the degraded speed across flat stretches, up to these limits.
+    hold_sigma2_trn: float = 40.0
+    hold_no_fix_s_trn: float = 30.0
     degraded_speed_scale: float = 0.5
 
 
@@ -224,6 +269,7 @@ class Config:
     ahrs: AhrsConfig = field(default_factory=AhrsConfig)
     localizer: LocalizerConfig = field(default_factory=LocalizerConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
+    trn: TrnConfig = field(default_factory=TrnConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
     # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
     conditions: Conditions = field(default_factory=Conditions)

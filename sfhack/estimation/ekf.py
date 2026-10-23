@@ -52,6 +52,7 @@ class Ekf:
         self.nis_log: list[tuple[float, float, bool]] = []  # (t, NIS, accepted) for every visual fix
         self.last_decision = ""  # set when a fix is accepted by re-localization
         self.bias_handed = np.zeros(2)  # (bx, by) handed to the AHRS by the last take_tilt_correction
+        self.vel_var_growth = 0.0  # accumulated horizontal velocity-variance growth (TRN particle random walk)
 
     def predict(self, acc_world: np.ndarray, dt: float, t: float) -> None:
         self.t = t
@@ -72,7 +73,9 @@ class Ekf:
         Q[:3, 3:6] = Q[3:6, :3] = np.eye(3) * q * dt**2 / 2
         Q[3:6, 3:6] = np.eye(3) * q * dt
         Q[6:8, 6:8] = np.eye(2) * self.cfg.acc_bias_rw**2 * dt
+        v_old = self.P[3, 3] + self.P[4, 4]
         self.P = F @ self.P @ F.T + Q
+        self.vel_var_growth += max(0.5 * (self.P[3, 3] + self.P[4, 4] - v_old), 0.0)
 
     def take_tilt_correction(self, g: float = 9.81) -> np.ndarray:
         """Error-state reset: hand the learned bias to the attitude as a world-frame tilt correction
@@ -109,7 +112,7 @@ class Ekf:
         S = self.P[:2, :2] + fix.cov
         return float(y @ np.linalg.solve(S, y))
 
-    def update_fix(self, fix: VisualFix) -> bool:
+    def update_fix(self, fix: VisualFix, allow_reloc: bool = True) -> bool:
         """Fuse a visual fix with a chi-square gate on the NIS (2 dof). Returns False if gated out.
 
         - Long dead-reckoning stretches: the KF covariance already grows with the process noise; a
@@ -133,6 +136,11 @@ class Ekf:
         d2 = self.mahalanobis2(fix)
         R = fix.cov
         if d2 > self.cfg.gate_chi2:
+            if not allow_reloc:  # (TRN: a wrong terrain mode must not force its way in)
+                self.n_fix_rejected += 1
+                self.nis_log.append((fix.t, d2, False))
+                fix.accepted = False
+                return False
             if self.consecutive_rejects < MAX_CONSECUTIVE_REJECTS:
                 self.consecutive_rejects += 1
                 self.n_fix_rejected += 1

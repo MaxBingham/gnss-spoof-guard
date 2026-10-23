@@ -54,3 +54,51 @@ def test_jam_after_gnss_jump_hands_over_and_lands_at_b() -> None:
     fs.close()
     assert any(d.startswith("HANDOVER") for d in decisions), decisions
     assert r.success, r.summary()
+
+
+# ---------------------------------------------------------------------------------------- TRN
+
+
+def test_onboard_dsm_has_the_campus_buildings() -> None:
+    from sfhack.config import SAMPLE_WORLD_DIR
+    from sfhack.world.onboard_dsm import build_dsm
+    from sfhack.world.onboard_map import OnboardMap
+
+    om = OnboardMap(SAMPLE_WORLD_DIR)
+    dsm = build_dsm(om)
+    campanile = next(lm for lm in om.landmarks if lm["type"] == "tower")
+    assert float(dsm.sample(np.asarray(campanile["centroid_enu"]))) > 80.0
+    assert float(dsm.sample(om.a_enu)) < 1.0 and 0.2 < float((dsm.z > 0.5).mean()) < 0.6
+
+
+def test_trn_converges_on_a_building_profile() -> None:
+    """Ideal lidar ranges from the DSM along the Berkeley route: from a 6 m-off prior the cloud converges near
+    the true track and publishes fixes (the filter itself; closed-loop numbers are in MERGE_NOTES_V32.md)."""
+    from sfhack.config import SAMPLE_WORLD_DIR
+    from sfhack.messages import LidarMsg, PoseEstimate
+    from sfhack.perception.trn import TrnFilter, beam_dirs_body
+    from sfhack.world.onboard_dsm import build_dsm
+    from sfhack.world.onboard_map import OnboardMap
+
+    om = OnboardMap(SAMPLE_WORLD_DIR)
+    cfg = default_config()
+    dsm = build_dsm(om)
+    trn = TrnFilter(cfg.trn, dsm, seed=0)
+    angles = np.array([-0.14, -0.10, -0.06, -0.02, 0.02, 0.06, 0.10, 0.14])
+    dirs = beam_dirs_body(angles)
+    vel = np.array([0.0, 8.0])
+    true = np.array([-15.0, -230.0])
+    offset = np.array([6.0, -3.0])  # the INS prior is off by this
+    fixes = []
+    for k in range(150):  # 15 s at 10 Hz = 120 m over the southern campus buildings
+        t = k * 0.1
+        true = true + vel * 0.1
+        r = np.array([(40.0 - float(dsm.sample(true + 40.0 * d[:2] / -d[2]))) / -d[2] for d in dirs])
+        cov = np.diag([9.0, 9.0, 1.0, 0.04, 0.04, 0.04])
+        pose = PoseEstimate(t, np.array([*(true + offset), 40.0]), np.array([*vel, 0.0]), 0.0, cov, np.eye(3),
+                            np.zeros(3), "ekf")
+        fix = trn.step(LidarMsg(t, angles, r), pose, 0.0)
+        if fix is not None:
+            fixes.append(np.linalg.norm(fix.pos - true))
+    assert fixes, trn.status
+    assert np.median(fixes) < 2.5, fixes

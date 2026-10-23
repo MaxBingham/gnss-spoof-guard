@@ -122,6 +122,7 @@ class FlightSystem:
             localizer=make_localizer(localizer, self.cfg, self.truth, seed) if self.onboard_map else None,
             truth_pose_source=TruthPoseSource(self.truth),
             pose_source=pose_source,
+            seed=seed,
         )
         self.localizer_name = localizer if self.onboard_map else "off"
         self.recorder = recorder

@@ -40,8 +40,11 @@ class HealthMonitor:
         if self.active_since is None:
             self.active_since = t
 
-    def update(self, t: float, pose: PoseEstimate) -> HealthState:
+    def update(self, t: float, pose: PoseEstimate, trn_tracking: bool = False) -> HealthState:
+        """`trn_tracking`: terrain-referenced navigation is converged / tracking and needs motion to keep working,
+        so HOLD (hover) uses the wider `*_trn` limits."""
         c = self.cfg
+        hold_s2, hold_s = (c.hold_sigma2_trn, c.hold_no_fix_s_trn) if trn_tracking else (c.hold_sigma2, c.hold_no_fix_s)
         ref = self.last_fix_t if self.last_fix_t is not None else (self.active_since if self.active_since is not None else t)
         tsf = max(0.0, t - ref)
         s2 = pose.sigma2_horizontal()
@@ -57,7 +60,7 @@ class HealthMonitor:
                 self._set(Health.NOMINAL, "fix recovered", t)
             elif self.state == Health.HOLD and t - self.hold_since > c.return_after_hold_s and self.last_fix_pos is not None:
                 self._set(Health.RETURN_TO_LAST_FIX, f"no recovery after {c.return_after_hold_s:.0f} s hold", t)
-        elif s2 > c.hold_sigma2 or tsf > c.hold_no_fix_s:
+        elif s2 > hold_s2 or tsf > hold_s:
             self._set(Health.HOLD, f"sigma2 {s2:.1f} m / no fix {tsf:.1f} s", t)
         elif not good:
             self._set(Health.DEGRADED, f"sigma2 {s2:.1f} m / no fix {tsf:.1f} s", t)

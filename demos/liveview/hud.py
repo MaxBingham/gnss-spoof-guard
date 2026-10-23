@@ -78,6 +78,7 @@ class HudState:
     paused: bool
     recording: bool
     labels: list[tuple[tuple[int, int], str, tuple[int, int, int, int]]] = field(default_factory=list)
+    sources_line: str = ""  # V3.2: position sources the estimate uses (GNSS / VISION / TRN), age or status
 
 
 class Hud:
@@ -152,7 +153,7 @@ class Hud:
         w = self.px(self.COL_W)
         x0 = self.px(14)
         # Dropped the truth footnote and tightened the three nav rows so the card is shorter.
-        h = self.px(214)
+        h = self.px(214 + (17 if st.sources_line else 0))
         im, d = self._card(w, h)
         d.text((x0, self.px(8)), "MISSION", font=self.f(12, True), fill=MUTED)
         hc = HEALTH_COLOR.get(st.health, AMBER)
@@ -182,6 +183,8 @@ class Hud:
                fill=RED if over else GREEN)
         rows = [("Navigating on", st.nav_source, TEXT), ("Last visual fix", st.fix_age, TEXT),
                 ("GNSS", st.gnss_line, LEVEL_COLOR[st.gnss_level])]
+        if st.sources_line:
+            rows.append(("Fixes from", st.sources_line, TEXT))
         ry = by + bh + self.px(24)
         key_w = self.px(108)
         value_w = w - x0 - key_w - self.px(8)

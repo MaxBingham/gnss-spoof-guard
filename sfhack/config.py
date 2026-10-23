@@ -251,6 +251,31 @@ class TargetConfig:
 
 
 @dataclass
+class DetectorConfig:
+    """V4 learned truck detector (sfhack/perception/truck_detector.py): a YOLO model trained on synthetic,
+    auto-labeled MuJoCo renders (demos/13-17). Runtime input = one RGB down-camera frame + the altitude and
+    attitude ESTIMATES; output = boxes, class, calibrated confidence, ground offset from the drone."""
+
+    weights: str = "v4/detector/train/weights/best.pt"  # relative to $SFHACK_DATA (or absolute)
+    classes: tuple[str, ...] = ("truck", "car", "pickup", "suv", "tent", "hut", "tree")
+    target_class: str = "truck"
+    imgsz: int = 640  # network input (letterboxed); the data camera is 640 x 480, fovy 70 deg
+    width: int = 640
+    height: int = 480
+    fovy_deg: float = 70.0
+    conf_min: float = 0.05  # boxes below this are not returned at all
+    iou_nms: float = 0.5
+    temperature: float = 1.0  # confidence calibration (temperature scaling fitted on val, demos/15)
+    truck_threshold: float = 0.5  # operating point for "this box is the truck" (chosen on val, demos/15)
+    # Typical object heights [m]: a box is projected to the ground plane at half this height (parallax).
+    class_heights: tuple[float, ...] = (3.2, 1.45, 1.9, 1.7, 1.8, 3.2, 10.0)
+    # Target selection over a burst of frames (demos/16): ground clusters, accumulated truck evidence.
+    select_cluster_m: float = 2.5  # detections closer than this on the ground belong to one object
+    select_min_frames: int = 3  # a cluster needs this many truck-scored detections to be selectable
+    select_margin: float = 0.25  # best cluster mean truck score must beat the runner-up by this
+
+
+@dataclass
 class Config:
     sim: SimConfig = field(default_factory=SimConfig)
     noise: SensorNoise = field(default_factory=SensorNoise)
@@ -263,6 +288,7 @@ class Config:
     health: HealthConfig = field(default_factory=HealthConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
     target: TargetConfig = field(default_factory=TargetConfig)  # V4 target landing (off unless extension)
+    detector: DetectorConfig = field(default_factory=DetectorConfig)  # V4 learned truck detector
     # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
     conditions: Conditions = field(default_factory=Conditions)
 

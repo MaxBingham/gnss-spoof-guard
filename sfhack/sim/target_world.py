@@ -91,7 +91,7 @@ class TargetWorld:
             raise ValueError(f"unknown part shape {p.shape!r}")
 
 
-def keep_out_circles(base: Any, margin: float = 2.0) -> list[tuple[float, float, float]]:
+def keep_out_circles(base: Any, margin: float = 4.0) -> list[tuple[float, float, float]]:
     """Buildings and mapped trees of a PackageWorld as (x, y, radius) circles (the objects must not overlap them)."""
     from ..world.scene import building_boxes
     out: list[tuple[float, float, float]] = []

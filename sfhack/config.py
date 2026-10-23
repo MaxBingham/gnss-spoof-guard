@@ -223,6 +223,7 @@ class TargetConfig:
     det_register_m: float = 3.0  # m, residual camera <-> map shift searched before differencing
     det_thresh_k: float = 5.0  # change threshold = max(floor, k x robust noise of the difference)
     det_thresh_floor: float = 22.0  # color distance (0..255 albedo units)
+    det_edge_bias: float = 0.4  # m, blobs come out this much too long / wide (blur halo, rectangle fit)
     det_min_area: float = 2.0  # m^2, smaller change blobs are noise
     det_max_area: float = 60.0  # m^2, larger blobs: merged objects / misregistration, not a candidate
     nominal_contrast: float = 1.0  # camera / map contrast in clear air (radiometric calibration, measured)

@@ -10,6 +10,8 @@ V1 (browser prototype) is the separate repo `gnss-free-nav/` next to this one (g
 . scripts/env.ps1                                  # Windows (bash: . scripts/env.sh); venv + data live outside OneDrive
 uv run python -m pytest tests -q                   # all tests (~2 min)
 uv run python demos/demo_live.py                   # LIVE DEMO (viewer); --headless / --record; see README
+uv run python -m sfhack.missionprep serve          # mission planner page (A / B on a map); see docs/MAP_PACKAGE.md
+uv run python demos/demo_live.py --mission berkeley  # fly a prepared mission
 uv run python demos/02_mission_ekf.py              # default Berkeley mission, EKF + mock localizer
 uv run python demos/06_ekf_diagnostics.py          # dead reckoning only, plot -> $SFHACK_DATA/diagnostics
 uv run python demos/07_eval_seeds.py --seeds 10    # success rate over seeds (parallel)
@@ -81,6 +83,25 @@ lidar loss) are simulated reality too: only the simulator and harness read them;
   for a fix (`WAIT_FOR_FIX` / `DESCEND` decisions).
 - Decisions go to `autopilot.decisions` and the `decision` bus topic. The runner adds the scored outcome
   `ARRIVED` / `MISSED` / `MISSION_TIMEOUT` with the final error (harness, truth-scored).
+
+## Mission packages (decisions and why)
+
+`sfhack/missionprep` (tooling / harness: it makes the truth) builds `$SFHACK_DATA/missions/<id>/{world,onboard,drone}`;
+format and frames in `docs/MAP_PACKAGE.md` (the contract with V3.2 and the object placer: change both together).
+`FlightSystem(mission=id)` / `demo_live.py --mission id`. Onboard code reads only the onboard package via `OnboardMap`.
+- **z datum = ground under A.** Spawn, baro-relative EKF z and the old flat sample all stay at z = 0 at A; B and the
+  route carry absolute z. Scoring compares truth z with the TRUE ground (`FlightSystem.true_ground_z`).
+- **Launch pad:** the X2 calibrates its IMU on the ground assuming level. On A's 2.5 deg slope that put 0.4 m/s^2 of
+  gravity into the accel bias and it flew off downhill. A is flattened in the truth DTM, and invisible contact pads in
+  the terrain plane sit at A and B: MuJoCo hfield contacts left the X2 resting 9 deg tilted, and rocking after
+  touchdown on B's 6.5 deg slope (the IMU never looked still).
+- **Vision over terrain:** `map_localizer` projects each template cell at the onboard DSM height (roofs, slopes) and
+  sizes the template by the distance to the surface below. A single ground plane put 20 m roofs at 2-3x scale at
+  30 m AGL and fixes stopped mid-route. Without a DSM it is the old flat z = 0 (sample unchanged).
+- **Route:** planned on the onboard DSM (Dijkstra, cost grows with the altitude a cell forces): around the Campanile
+  instead of 132 m over it (vision needs < ~60 m). Onboard buildings removed from the map are only ones lower than
+  the 30 m minimum cruise AGL.
+- Results (vision, seeds 0-4): berkeley 5/5 ARRIVED, mean 0.79 m from B; campus-glade 5/5, mean 1.21 m (worst 2.14 m).
 
 ## Conventions
 

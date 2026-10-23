@@ -11,7 +11,7 @@ The earlier TypeScript rig that previously lived on `main` is archived at tag [`
 ## Setup
 
 macOS / Linux (Windows: the `.ps1` twins in `scripts/`). Needs [uv](https://docs.astral.sh/uv/); Python 3.12
-is installed by uv. The venv lives in `~/.venvs/sf-hack`, generated data in `~/sf-hack-data`.
+is installed by uv. The venv lives in `~/.venvs/sf-hack-v5` (this branch), generated data in `~/sf-hack-data`.
 
 ```
 bash scripts/setup.sh                          # once
@@ -67,6 +67,28 @@ Spoof scenario (`P`, times after the press): GNSS drag 1.5 m/s east; +14 s fog 0
 crosswind with gusts; +24 s camera lost; +34 s camera back and weather clears while the spoof keeps
 dragging. From t = 25 s (seed 0) the naive baseline lands about 120 m from B with 2σ near 1.2 m and health
 NOMINAL throughout.
+
+## Mission planner (any A / B)
+
+Pick A and B on a map, download open data, build the simulated world and the onboard map package,
+"upload" it to the drone and fly it in the live demo. Package format (the contract for the LiDAR / TRN
+stack and the object placer): [docs/MAP_PACKAGE.md](docs/MAP_PACKAGE.md).
+
+```
+uv run python -m sfhack.missionprep serve                  # http://127.0.0.1:8765/: search, click A and B,
+                                                           # radius slider, Prepare mission, Upload to drone
+uv run python -m sfhack.missionprep build --id berkeley    # same without the browser (default A / B)
+uv run python -m sfhack.missionprep upload berkeley        # simulated 2 MB/s link, SHA-256 per layer
+uv run python demos/demo_live.py --mission berkeley        # fly it (also --headless / --record)
+```
+
+Data: OpenStreetMap (Overpass), USDA NAIP ortho, USGS 3DEP 1 m DEM and 3DEP LiDAR (read straight from
+the public Entwine octrees on AWS, no PDAL), with fallbacks (OSM API, USGS tiles, Copernicus GLO-30,
+a synthetic cloud), all cached in `$SFHACK_DATA/cache/missionprep`. Default Berkeley: 37 s on the first
+run, 1.6 s once prepared. The world has real terrain (height field) and extruded footprints with
+ortho-textured roofs; the onboard package is a deliberately imperfect copy (heights +-20 %, 10 % of the
+buildings and trees missing, noisy DTM, re-processed ortho, real LiDAR cloud), and the route is planned
+on that onboard map around tall obstacles.
 
 ## Degradation levers
 

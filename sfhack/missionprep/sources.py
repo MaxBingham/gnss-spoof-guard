@@ -35,8 +35,10 @@ from .geometry import Grid
 
 USER_AGENT = "sfhack-mission-planner/0.5 (GNSS-free nav research prototype; contact via github.com/MaxBingham/gnss-spoof-guard)"
 OVERPASS_ENDPOINTS = [
-    ("https://overpass-api.de/api/interpreter", 90.0),
-    ("https://overpass.private.coffee/api/interpreter", 45.0),
+    # One attempt each, short enough that the whole OSM chain stays under ~90 s: the cold Berkeley run once
+    # saw both Overpass servers fail and the OSM API answer in 3 s.
+    ("https://overpass-api.de/api/interpreter", 60.0),
+    ("https://overpass.private.coffee/api/interpreter", 25.0),
 ]
 OSM_API_MAP = "https://api.openstreetmap.org/api/0.6/map"
 NAIP_EXPORT = "https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPImagery/ImageServer/exportImage"
@@ -210,7 +212,7 @@ def fetch_osm(f: Fetcher, bbox: BBox) -> tuple[dict[str, Any], dict[str, Any]]:
     for url, timeout in OVERPASS_ENDPOINTS:
         try:
             t0 = time.time()
-            b = f.get(url, data={"data": q}, timeout=timeout, retries=1, check=_check_overpass)
+            b = f.get(url, data={"data": q}, timeout=timeout, retries=0, check=_check_overpass)
             return json.loads(b), {**SRC_OSM, "endpoint": url, "seconds": round(time.time() - t0, 1)}
         except FetchError as e:
             errors.append(str(e))

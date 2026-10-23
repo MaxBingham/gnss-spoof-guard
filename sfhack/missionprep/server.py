@@ -114,7 +114,11 @@ def prepare(req: PrepareReq) -> dict[str, str]:
 
 @app.post("/api/upload")
 def upload_pkg(req: UploadReq) -> dict[str, str]:
-    if not (mission_dir(req.mission_id) / "onboard" / "manifest.json").exists():
+    try:
+        d = mission_dir(req.mission_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if not (d / "onboard" / "manifest.json").exists():
         raise HTTPException(404, f"mission {req.mission_id} not prepared")
     job = _new_job("upload")
 
@@ -179,6 +183,10 @@ def missions() -> list[dict[str, Any]]:
 
 @app.get("/api/missions/{mid}")
 def mission(mid: str) -> dict[str, Any]:
-    if not (mission_dir(mid) / "build_report.json").exists():
+    try:
+        d = mission_dir(mid)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if not (d / "build_report.json").exists():
         raise HTTPException(404, f"mission {mid} not prepared")
     return _mission_view(mid)

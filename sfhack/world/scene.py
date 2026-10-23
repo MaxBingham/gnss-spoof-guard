@@ -305,3 +305,20 @@ class PackageWorld:
                                pos=[x, y, z0 + trunk_h / 2], rgba=trunk, contype=0, conaffinity=0, group=1)
                 world.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r, 0, 0],
                                pos=[x, y, z0 + trunk_h], rgba=crown, contype=0, conaffinity=0, group=1)
+        self._add_target_scene(spec)
+
+    def _add_target_scene(self, spec: mujoco.MjSpec) -> None:
+        """Objects the object placer put into world/target_scene.json (TRUTH: the drone has no map of them).
+        Each: {"mesh": STL path (absolute or relative to world/), "pos": [x, y, z], "yaw_deg", "scale", "rgba"}."""
+        p = self.dir / "target_scene.json"
+        if not p.exists():
+            return
+        for k, ob in enumerate(json.loads(p.read_text(encoding="utf-8")).get("objects", [])):
+            mesh = Path(ob["mesh"]) if Path(ob["mesh"]).is_absolute() else self.dir / ob["mesh"]
+            spec.add_mesh(name=f"target{k}", file=str(mesh), scale=[float(ob.get("scale", 1.0))] * 3)
+            x, y = ob["pos"][:2]
+            z = float(ob["pos"][2]) if len(ob["pos"]) > 2 else self.ground_z(x, y)
+            yaw = math.radians(float(ob.get("yaw_deg", 0.0)))
+            spec.worldbody.add_geom(name=f"target{k}", type=mujoco.mjtGeom.mjGEOM_MESH, meshname=f"target{k}",
+                                    pos=[x, y, z], quat=[math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)],
+                                    rgba=ob.get("rgba", [0.85, 0.85, 0.85, 1]))

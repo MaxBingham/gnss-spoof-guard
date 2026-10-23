@@ -339,8 +339,10 @@ def _is_complete(mdir: Path, inputs: dict[str, Any]) -> bool:
 def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: float = DEFAULT_RADIUS_M,
                     mission_id: str | None = None, *, force: bool = False, offline: bool = False,
                     no_lidar: bool = False, log: Callable[[str], None] = print,
+                    downloads: dict[str, Callable[..., Any]] | None = None,
                     progress: Callable[[float, str], None] | None = None) -> dict[str, Any]:
-    """Build (or reuse) $SFHACK_DATA/missions/<id>. Returns the build report."""
+    """Build (or reuse) $SFHACK_DATA/missions/<id>. Returns the build report. `downloads` replaces layer
+    fetchers by name (osm, ortho, terrain, lidar; same signatures as the defaults): offline tests."""
     prog = progress or (lambda frac, stage: None)
     t_start = time.time()
     mid = mission_id or default_mission_id(a, b, radius_m)
@@ -367,11 +369,12 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
     results: dict[str, Any] = {}
     deadline = time.time() + LIDAR_TIMEBOX_S
     with ThreadPoolExecutor(4) as ex:
-        jobs = {ex.submit(_timed, fetch_osm, f, bbox): "osm",
-                ex.submit(_timed, fetch_ortho, f, bbox, g_ortho): "ortho",
-                ex.submit(_timed, fetch_dem, f, bbox, g_dem): "terrain"}
+        dl = {"osm": fetch_osm, "ortho": fetch_ortho, "terrain": fetch_dem, "lidar": _fetch_lidar, **(downloads or {})}
+        jobs = {ex.submit(_timed, dl["osm"], f, bbox): "osm",
+                ex.submit(_timed, dl["ortho"], f, bbox, g_ortho): "ortho",
+                ex.submit(_timed, dl["terrain"], f, bbox, g_dem): "terrain"}
         if not no_lidar:
-            jobs[ex.submit(_timed, _fetch_lidar, f, bbox, deadline)] = "lidar"
+            jobs[ex.submit(_timed, dl["lidar"], f, bbox, deadline)] = "lidar"
         log("downloading OSM (Overpass), orthophoto (NAIP), terrain (3DEP), LiDAR (3DEP EPT) in parallel ...")
         done = 0
         for fut in as_completed(jobs):
@@ -488,6 +491,11 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
     terrain_hf = cv2.resize(dtm, (g_hf.cols, g_hf.rows), interpolation=cv2.INTER_AREA)
     np.savez_compressed(wdir / "terrain.npz", z=terrain_hf.astype(np.float32), **{k: np.float64(v) for k, v in g_hf.meta().items()})
     (wdir / "landmarks.json").write_text(json.dumps(landmarks, separators=(",", ":")), encoding="utf-8")
+    target = {"status": "pending", "center_enu": [round(float(v), 2) for v in b_xy], "radius_m": float(radius_m),
+              "ground_z": round(b_ground_truth, 2), "objects": [],
+              "object_format": {"mesh": "STL path, absolute or relative to world/", "pos": "[x, y, z] ENU m (z optional: "
+                                "true ground)", "yaw_deg": "about +z, 0 = +x (east), CCW", "scale": 1.0, "rgba": [0.85, 0.85, 0.85, 1]}}
+    (wdir / "target_scene.json").write_text(json.dumps(target, indent=2), encoding="utf-8")
     common = {
         "bbox": {"south": bbox.south, "west": bbox.west, "north": bbox.north, "east": bbox.east},
         "origin": {"lat": origin.lat, "lon": origin.lon},
@@ -507,7 +515,7 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
         "buildings": "extruded",
         "ortho": ortho_meta,
         "sources": sources, "attribution": attribution, "landmark_counts": counts, "hand_made": False,
-        "files": ["manifest.json", "landmarks.json", "ortho.jpg", "terrain.npz"],
+        "files": ["manifest.json", "landmarks.json", "ortho.jpg", "terrain.npz", "target_scene.json"],
     }
     (wdir / "manifest.json").write_text(json.dumps(world_manifest, indent=2), encoding="utf-8")
     t_world = time.time() - t0
@@ -565,8 +573,9 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
             "center_enu": [round(float(v), 2) for v in b_xy], "radius_m": float(radius_m),
             "ground_z": round(b_ground, 2),
             "objects": [],
-            "note": "Search area around B. The object placer fills `objects` later (catalog: 7 SF Hack Objects/catalog.json, "
-                    "origin bottom_center, z = ground height). Nothing is placed yet.",
+            "note": "Search area around B (the drone knows only this). The object placer puts the objects into "
+                    "world/target_scene.json (truth, loaded by the simulator); `objects` here stays empty. Nothing "
+                    "is placed yet.",
         },
         "warnings": warnings,
     }

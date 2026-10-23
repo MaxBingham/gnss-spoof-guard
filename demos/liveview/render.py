@@ -6,6 +6,7 @@ it tracks the weather lever every frame. MuJoCo's own fog is fixed when the rend
 
 from __future__ import annotations
 
+import time
 from typing import Callable
 
 import cv2
@@ -14,6 +15,9 @@ import numpy as np
 
 SKY_TOP = np.array([0.32, 0.50, 0.75], np.float32)
 SKY_HORIZON = np.array([0.80, 0.86, 0.92], np.float32)
+# Chase-view only. Sensor haze and weather_effect stay on the visibility curve; this floor keeps
+# fog 0.65 as haze so building edges survive (transmission never falls below this).
+FOG_TRANSMISSION_FLOOR = np.float32(0.35)
 
 
 class SceneRenderer:
@@ -37,6 +41,8 @@ class SceneRenderer:
         self._c, self._d = -0.5 * c - 0.5, -0.5 * d  # reverse-Z depth -> metric distance: d / (z + c)
         self._sky = self._sky_gradient()
         self.gl_cam: tuple | None = None
+        self.t_view = 0.0
+        self.t_fog = 0.0
 
     def _sky_gradient(self) -> np.ndarray:
         t = np.linspace(0.0, 1.0, self.H, dtype=np.float32)[:, None] ** 0.6
@@ -45,6 +51,7 @@ class SceneRenderer:
 
     def render(self, data: mujoco.MjData, cam: mujoco.MjvCamera, draw: Callable[[mujoco.MjvScene], None],
                visibility_m: float | None, fog_rgb: tuple[float, float, float], fog_start_m: float = 0.0) -> np.ndarray:
+        t0 = time.perf_counter()
         r = self.r
         r.update_scene(data, camera=cam, scene_option=self.opt)
         scn = r.scene
@@ -66,11 +73,21 @@ class SceneRenderer:
         sky = z <= 1e-9
         out = rgb.astype(np.float32)
         out[sky] = self._sky[sky]
+        t1 = time.perf_counter()
+        # Clear frames skip the distance buffer (visibility is None). Fog math stays float32.
+        # The exp is ~2 ms; the full-frame blend is the rest of this slice. Half-res transmission
+        # was timed and did not move the frame, so the composite stays full resolution.
         if visibility_m is not None and visibility_m < 5000.0:
-            dist = np.where(sky, 1e6, self._d / (z.astype(np.float64) + self._c)).astype(np.float32)
-            tr = np.exp(-3.0 * np.maximum(dist - fog_start_m, 0.0) / visibility_m)[..., None]
-            fog = np.array(fog_rgb, np.float32) * 255.0
-            out = out * tr + fog * (1.0 - tr)
+            zf = np.asarray(z, np.float32)
+            dist = np.float32(self._d) / (zf + np.float32(self._c))
+            dist[sky] = np.float32(1.0e6)
+            travel = np.maximum(dist - np.float32(fog_start_m), np.float32(0.0))
+            tr = np.exp(np.float32(-3.0) * travel / np.float32(visibility_m))
+            tr = np.maximum(tr, FOG_TRANSMISSION_FLOOR)[..., None]
+            fog = np.asarray(fog_rgb, np.float32) * np.float32(255.0)
+            out = out * tr + fog * (np.float32(1.0) - tr)
+        self.t_view = t1 - t0
+        self.t_fog = time.perf_counter() - t1
         return np.clip(out, 0, 255).astype(np.uint8)
 
     def project(self, p) -> tuple[int, int] | None:

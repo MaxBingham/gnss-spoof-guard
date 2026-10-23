@@ -46,6 +46,17 @@ def yaw_from_R(R: np.ndarray) -> float:
     return math.atan2(R[1, 0], R[0, 0])
 
 
+def announce_scene_compile() -> None:
+    """One line before the model compile, so the first launch is not a silent hang.
+
+    Restart passes `reuse` and never reaches `spec.compile()`, so this stays quiet the second time.
+    """
+    if getattr(announce_scene_compile, "done", False):
+        return
+    announce_scene_compile.done = True  # type: ignore[attr-defined]
+    print("compiling MuJoCo scene, once…", flush=True)
+
+
 class _RateTimer:
     def __init__(self, hz: float, t0: float = 0.0) -> None:
         self.period = 1.0 / hz
@@ -163,6 +174,7 @@ class MujocoSim:
         spec.visual.map.zfar = 30.0  # 3 km
         if world is not None:
             world.add_to_spec(spec)
+        announce_scene_compile()
         return spec.compile()
 
     def vehicle_params(self) -> VehicleParams:

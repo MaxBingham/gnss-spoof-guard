@@ -1,5 +1,6 @@
 """Heads-up display: cards drawn with PIL (anti-aliased TrueType text, readable from across a room) and
-alpha-composited onto the rendered frame. Everything is laid out for 1600x900 and scaled with the height.
+alpha-composited onto the rendered frame. Layout is in design pixels for a 900px-tall frame and scaled
+with the window height. The left column is 400 design pixels; the Saturday panel is unchanged.
 """
 
 from __future__ import annotations
@@ -80,16 +81,39 @@ class HudState:
 
 
 class Hud:
+    COL_W = 400  # design px, was 470
+    MAP = 240
+    CAM_W = 320
+    CAM_H = 240
+
     def __init__(self, width: int, height: int) -> None:
         self.W, self.H = width, height
         self.s = height / 900.0
         self.hits: list[tuple[int, int, int, int, str]] = []  # clickable rects (x0, y0, x1, y1, key)
+        self._saturday_im: Image.Image | None = None
+        self._legend_im: Image.Image | None = None
+        self._lever_key: tuple | None = None
+        self._lever_im: Image.Image | None = None
+        self._lever_hits: list[tuple[int, int, int, int, str]] = []
 
     def px(self, v: float) -> int:
         return int(round(v * self.s))
 
     def f(self, size: float, bold: bool = False) -> ImageFont.FreeTypeFont:
         return font(max(8, self.px(size)), bold)
+
+    def _fit(self, text: str, max_w: int, size: float, bold: bool = False, min_size: float = 11) -> ImageFont.FreeTypeFont:
+        probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        s = size
+        fnt = self.f(s, bold)
+        while s > min_size and probe.textlength(text, font=fnt) > max_w:
+            s -= 1
+            fnt = self.f(s, bold)
+        return fnt
+
+    def _chip_w(self, text: str, size: float) -> int:
+        tw = int(ImageDraw.Draw(Image.new("RGBA", (1, 1))).textlength(text, font=self.f(size, True)))
+        return tw + 2 * self.px(8)
 
     def _card(self, w: int, h: int, accent=None) -> tuple[Image.Image, ImageDraw.ImageDraw]:
         im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -112,59 +136,63 @@ class Hud:
     # ------------------------------------------------------------------ cards
 
     def _title(self, st: HudState) -> Image.Image:
-        w, h = self.px(470), self.px(66)
+        w, h = self.px(self.COL_W), self.px(58)
         im, d = self._card(w, h, CYAN)
-        d.text((self.px(18), self.px(8)), "GNSS SPOOF GUARD", font=self.f(25, True), fill=TEXT)
-        d.text((self.px(18), self.px(40)), "Skydio X2 over Berkeley, flying A to B  |  MuJoCo live", font=self.f(14), fill=MUTED)
+        d.text((self.px(14), self.px(6)), "GNSS SPOOF GUARD", font=self.f(22, True), fill=TEXT)
+        sub = "Skydio X2 over Berkeley, flying A to B  |  MuJoCo live"
+        d.text((self.px(14), self.px(32)), sub, font=self._fit(sub, w - self.px(70), 12), fill=MUTED)
         rec = "REC  " if st.recording else ""
-        d.text((w - self.px(14), self.px(14)), f"{rec}t {st.t:5.1f} s", font=self.f(16, True),
+        d.text((w - self.px(12), self.px(10)), f"{rec}t {st.t:5.1f} s", font=self.f(15, True),
                fill=RED if st.recording else TEXT, anchor="ra")
         sp = "PAUSED" if st.paused else f"{st.speed}x"
-        d.text((w - self.px(14), self.px(40)), sp, font=self.f(14, True), fill=AMBER if st.paused else MUTED, anchor="ra")
+        d.text((w - self.px(12), self.px(34)), sp, font=self.f(13, True), fill=AMBER if st.paused else MUTED, anchor="ra")
         return im
 
     def _mission(self, st: HudState) -> Image.Image:
-        w, h = self.px(470), self.px(292)
+        w = self.px(self.COL_W)
+        x0 = self.px(14)
+        # Dropped the truth footnote and tightened the three nav rows so the card is shorter.
+        h = self.px(214)
         im, d = self._card(w, h)
-        x0 = self.px(18)
-        d.text((x0, self.px(12)), "MISSION", font=self.f(13, True), fill=MUTED)
-        d.text((x0, self.px(30)), st.phase.replace("_", " "), font=self.f(30, True), fill=TEXT)
+        d.text((x0, self.px(8)), "MISSION", font=self.f(12, True), fill=MUTED)
         hc = HEALTH_COLOR.get(st.health, AMBER)
-        self._chip(d, self.px(250), self.px(36), st.health, hc, 15)
-        # error vs claimed 2-sigma
-        y = self.px(84)
+        chip_w = self._chip_w(st.health, 12)
+        self._chip(d, w - self.px(12) - chip_w, self.px(5), st.health, hc, 12)
+        phase = st.phase.replace("_", " ")
+        d.text((x0, self.px(28)), phase, font=self._fit(phase, w - 2 * x0, 26, True, 16), fill=TEXT)
+        y = self.px(62)
         col_w = (w - 2 * x0) // 2
         over = st.err > st.sigma2
-        d.text((x0, y), "TRUE ERROR", font=self.f(13, True), fill=MUTED)
-        d.text((x0 + col_w, y), "CLAIMED 2\u03c3", font=self.f(13, True), fill=MUTED)
-        d.text((x0, y + self.px(16)), f"{st.err:.1f} m", font=self.f(42, True), fill=RED if over else WHITE)
-        d.text((x0 + col_w, y + self.px(16)), f"{st.sigma2:.1f} m", font=self.f(42, True), fill=CYAN)
-        # bar: the 2-sigma band vs the true error
-        by, bh = y + self.px(78), self.px(14)
+        d.text((x0, y), "TRUE ERROR", font=self.f(12, True), fill=MUTED)
+        d.text((x0 + col_w, y), "CLAIMED 2\u03c3", font=self.f(12, True), fill=MUTED)
+        num = self.f(34, True)
+        d.text((x0, y + self.px(14)), f"{st.err:.1f} m", font=num, fill=RED if over else WHITE)
+        d.text((x0 + col_w, y + self.px(14)), f"{st.sigma2:.1f} m", font=num, fill=CYAN)
+        by, bh = y + self.px(54), self.px(12)
         bx0, bx1 = x0, w - x0
         scale = max(st.err, st.sigma2, 5.0) * 1.15
         d.rounded_rectangle((bx0, by, bx1, by + bh), radius=bh // 2, fill=mix(WHITE, 0.12))
         sx = bx0 + int((bx1 - bx0) * min(st.sigma2 / scale, 1.0))
         d.rounded_rectangle((bx0, by, max(sx, bx0 + bh), by + bh), radius=bh // 2, fill=mix(CYAN, 0.5))
         ex = bx0 + int((bx1 - bx0) * min(st.err / scale, 1.0))
-        d.rectangle((ex - self.px(2), by - self.px(5), ex + self.px(2), by + bh + self.px(5)), fill=RED if over else WHITE)
+        d.rectangle((ex - self.px(2), by - self.px(4), ex + self.px(2), by + bh + self.px(4)), fill=RED if over else WHITE)
         verdict = ("OVERCONFIDENT: true error outside the claimed 2\u03c3" if over
                    else "CONSISTENT: true error inside the claimed 2\u03c3")
-        d.text((x0, by + bh + self.px(10)), verdict, font=self.f(14, True), fill=RED if over else GREEN)
-        # navigation rows
+        d.text((x0, by + bh + self.px(6)), verdict, font=self._fit(verdict, w - 2 * x0, 12, True, 10),
+               fill=RED if over else GREEN)
         rows = [("Navigating on", st.nav_source, TEXT), ("Last visual fix", st.fix_age, TEXT),
                 ("GNSS", st.gnss_line, LEVEL_COLOR[st.gnss_level])]
-        ry = by + bh + self.px(38)
+        ry = by + bh + self.px(24)
+        key_w = self.px(108)
+        value_w = w - x0 - key_w - self.px(8)
         for k, v, c in rows:
-            d.text((x0, ry), k, font=self.f(14), fill=MUTED)
-            d.text((x0 + self.px(130), ry), v, font=self.f(14, True), fill=c)
-            ry += self.px(22)
-        d.text((x0, h - self.px(20)), "true error is scored on simulator truth (display only, never onboard)",
-               font=self.f(11), fill=MUTED)
+            d.text((x0, ry), k, font=self.f(13), fill=MUTED)
+            d.text((x0 + key_w, ry), v, font=self._fit(v, value_w, 13, True, 10), fill=c)
+            ry += self.px(17)
         return im
 
     def _degradations(self, st: HudState) -> Image.Image:
-        w, h = self.px(470), self.px(74)
+        w, h = self.px(self.COL_W), self.px(74)
         im, d = self._card(w, h)
         d.text((self.px(18), self.px(8)), "ACTIVE DEGRADATIONS", font=self.f(13, True), fill=MUTED)
         x, y = self.px(18), self.px(34)
@@ -231,17 +259,28 @@ class Hud:
         return im
 
     def _sensors(self, st: HudState) -> Image.Image:
-        w, h = self.px(716), self.px(40)
-        im, d = self._card(w, h)
-        d.text((self.px(14), h // 2), "SENSORS", font=self.f(13, True), fill=MUTED, anchor="lm")
-        x = self.px(96)
-        for name, state in st.sensors:
-            c = SENSOR_COLOR[state]
-            r = self.px(6)
-            d.ellipse((x, h // 2 - r, x + 2 * r, h // 2 + r), fill=c)
-            d.text((x + 2 * r + self.px(6), h // 2), name, font=self.f(14, True),
-                   fill=TEXT if state != "off" else MUTED, anchor="lm")
-            x += 2 * r + self.px(14) + int(d.textlength(name, font=self.f(14, True))) + self.px(12)
+        w, h = self.px(self.MAP + 16 + self.CAM_W), self.px(40)
+        # Shrink the row until every name, including COMPASS, sits inside the card.
+        for size in (13, 12, 11, 10):
+            im, d = self._card(w, h)
+            label_f = self.f(size, True)
+            d.text((self.px(12), h // 2), "SENSORS", font=label_f, fill=MUTED, anchor="lm")
+            x = self.px(12) + int(d.textlength("SENSORS", font=label_f)) + self.px(14)
+            r = self.px(5)
+            gap = self.px(8)
+            fit = True
+            for name, state in st.sensors:
+                c = SENSOR_COLOR[state]
+                d.ellipse((x, h // 2 - r, x + 2 * r, h // 2 + r), fill=c)
+                fnt = self.f(size, True)
+                d.text((x + 2 * r + self.px(4), h // 2), name, font=fnt,
+                       fill=TEXT if state != "off" else MUTED, anchor="lm")
+                x += 2 * r + self.px(4) + int(d.textlength(name, font=fnt)) + gap
+                if x > w - self.px(8):
+                    fit = False
+                    break
+            if fit:
+                return im
         return im
 
     def _weather(self, st: HudState) -> Image.Image:
@@ -317,45 +356,128 @@ class Hud:
         d.text((w // 2, h // 2), text, font=fnt, fill=color, anchor="mm")
         return im
 
+    def _static_cards(self) -> tuple[Image.Image, Image.Image]:
+        if self._saturday_im is None or self._legend_im is None:
+            self._saturday_im = self._saturday()
+            self._legend_im = self._legend()
+        return self._saturday_im, self._legend_im
+
+    def _lever_card(self, st: HudState, ox: int, oy: int) -> Image.Image:
+        """Rebuild the lever card only when a key or a scenario step changes what it shows.
+        Click hits are restored with the cached card so the rows stay live."""
+        key = (tuple(tuple(row) for row in st.levers), tuple(tuple(row) for row in st.controls), ox, oy)
+        if key != self._lever_key or self._lever_im is None:
+            self._lever_im = self._levers(st, ox, oy)
+            self._lever_key = key
+            self._lever_hits = list(self.hits)
+        else:
+            self.hits = list(self._lever_hits)
+        return self._lever_im
+
+    def _layout_labels(self, labels: list) -> list[tuple[Image.Image, int, int]]:
+        """Nudge GNSS, ghost, and truth apart in screen space when their boxes overlap."""
+        placed: list[list] = []
+        for (u, v), text, color in labels:
+            lab = self._label(text, color)
+            placed.append([lab, float(u - lab.width / 2), float(v - lab.height - self.px(8))])
+        gap = float(self.px(6))
+        for _ in range(12):
+            hit = False
+            for i in range(len(placed)):
+                for j in range(i + 1, len(placed)):
+                    a, b = placed[i], placed[j]
+                    ax0, ay0, aw, ah = a[1], a[2], a[0].width, a[0].height
+                    bx0, by0, bw, bh = b[1], b[2], b[0].width, b[0].height
+                    ox = min(ax0 + aw, bx0 + bw) - max(ax0, bx0)
+                    oy = min(ay0 + ah, by0 + bh) - max(ay0, by0)
+                    if ox <= 0 or oy <= 0:
+                        continue
+                    hit = True
+                    if oy <= ox:
+                        shift = (oy + gap) / 2.0
+                        if ay0 <= by0:
+                            a[2] -= shift
+                            b[2] += shift
+                        else:
+                            b[2] -= shift
+                            a[2] += shift
+                    else:
+                        shift = (ox + gap) / 2.0
+                        if ax0 <= bx0:
+                            a[1] -= shift
+                            b[1] += shift
+                        else:
+                            b[1] -= shift
+                            a[1] += shift
+            if not hit:
+                break
+        self._keep_labels_clear(placed)
+        return [(lab, int(round(x)), int(round(y))) for lab, x, y in placed]
+
+    def _keep_labels_clear(self, placed: list) -> None:
+        """Slide a label that lands on a card back into the open part of the frame."""
+        p = self.px
+        m = p(16)
+        col_r = m + p(self.COL_W)
+        left_bottom = m + p(380)  # title + mission + degradation stack
+        lev_l = self.W - m - p(360)
+        panels_top = self.H - m - max(p(self.MAP), p(self.CAM_H)) - p(48)
+        panels_r = m + p(self.MAP + 16 + self.CAM_W)
+        for item in placed:
+            lab, x, y = item
+            w, h = lab.width, lab.height
+            if x + w > lev_l and y < self.H - m - p(100):
+                item[1] = float(lev_l - w - p(6))
+            if y < left_bottom and x < col_r and (x + w / 2) < col_r:
+                item[1] = float(col_r + p(6))
+            if y + h > panels_top and x < panels_r:
+                item[2] = float(panels_top - h - p(6))
+
     # ------------------------------------------------------------------ compose
 
     def compose(self, frame: np.ndarray, st: HudState, map_img: np.ndarray, cam_img: np.ndarray) -> np.ndarray:
         W, H, p = self.W, self.H, self.px
         m = p(16)
-        for (u, v), text, color in st.labels:
-            lab = self._label(text, color)
-            blend_rgba(frame, np.asarray(lab), u - lab.width // 2, v - lab.height - p(10))
-        blend_rgba(frame, np.asarray(self._title(st)), m, m)
-        blend_rgba(frame, np.asarray(self._mission(st)), m, m + p(76))
-        blend_rgba(frame, np.asarray(self._degradations(st)), m, m + p(378))
+        for lab, x, y in self._layout_labels(st.labels):
+            blend_rgba(frame, np.asarray(lab), x, y)
+        title = self._title(st)
+        blend_rgba(frame, np.asarray(title), m, m)
+        y_left = m + title.height + p(8)
+        mission = self._mission(st)
+        blend_rgba(frame, np.asarray(mission), m, y_left)
+        y_left += mission.height + p(8)
+        blend_rgba(frame, np.asarray(self._degradations(st)), m, y_left)
         rx = W - m - p(360)
-        lev = self._levers(st, rx, m)
+        lev = self._lever_card(st, rx, m)
         blend_rgba(frame, np.asarray(lev), rx, m)
         y = m + lev.height + p(10)
-        sat = self._saturday()
+        sat, legend = self._static_cards()
         blend_rgba(frame, np.asarray(sat), rx, y)
-        y += sat.height + p(10)
-        if y + p(150) <= H - m - p(122):
-            blend_rgba(frame, np.asarray(self._weather(st)), rx, y)
-        blend_rgba(frame, np.asarray(self._legend()), rx, H - m - p(112))
-        # bottom-left: onboard map + live down camera + sensor strip
-        side = p(300)
-        cw = p(400)
-        paste(frame, map_img, m, H - m - side, side, side)
-        paste(frame, cam_img, m + side + p(16), H - m - side, cw, side)
-        blend_rgba(frame, np.asarray(self._sensors(st)), m, H - m - side - p(50))
-        cx0, cx1 = m + p(470), rx  # free strip between the left and right columns
+        # Wind stays on the lever row and the 3D arrow. The compass card is not placed:
+        # it missed its slot by one pixel and would cover the only open patch of scene.
+        blend_rgba(frame, np.asarray(legend), rx, H - m - p(112))
+        side = p(self.MAP)
+        cw, ch = p(self.CAM_W), p(self.CAM_H)
+        bottom = max(side, ch)
+        paste(frame, map_img, m, H - m - bottom, side, side)
+        paste(frame, cam_img, m + side + p(16), H - m - bottom + (bottom - ch), cw, ch)
+        blend_rgba(frame, np.asarray(self._sensors(st)), m, H - m - bottom - p(50))
+        cx0, cx1 = m + p(self.COL_W), rx  # free strip between the left and right columns
+        ban_y = m
+        ban = None
         if st.result:
-            ban = self._banner(st.result, 0.0, cx1 - cx0 - 2 * m, big=True)
+            # Own row under the title. The clock stays on the title card.
+            ban = self._banner(st.result, 0.0, cx1 - cx0 - p(8), big=True)
+            ban_y = m + title.height + p(6)
         elif st.banner:
-            ban = self._banner(st.banner[0], st.banner[1], cx1 - cx0 - 2 * m)
-        else:
-            ban = None
+            ban = self._banner(st.banner[0], st.banner[1], cx1 - cx0 - p(8))
+            ban_y = m + max(0, (title.height - (ban.height if ban is not None else 0)) // 2)
         if ban is not None:
-            blend_rgba(frame, np.asarray(ban), (cx0 + cx1 - ban.width) // 2, m)
+            blend_rgba(frame, np.asarray(ban), (cx0 + cx1 - ban.width) // 2, ban_y)
         if st.scenario:
             sc = self._label(st.scenario, CYAN)
-            blend_rgba(frame, np.asarray(sc), (cx0 + cx1 - sc.width) // 2, m + p(64))
+            sy = ban_y + ban.height + p(6) if st.result and ban is not None else m + title.height + p(6)
+            blend_rgba(frame, np.asarray(sc), (cx0 + cx1 - sc.width) // 2, sy)
         return frame
 
 

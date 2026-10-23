@@ -31,7 +31,7 @@ uv run python demos/demo_live.py --headless --scenario-at 25         # no window
 
 The viewer is an OpenCV window over an offscreen MuJoCo render; run it with plain `python` (not `mjpython`).
 `--record` writes H.264 through `ffmpeg` when it is installed, else OpenCV's `mp4v`. `--size WxH` sets the
-frame size (viewer 1600x900, video 1920x1080), `--snap-at 30,60` saves PNGs at those sim times, `Z` saves
+frame size (viewer 1280x720, video 1920x1080), `--snap-at 30,60` saves PNGs at those sim times, `Z` saves
 one from the window. All lever flags below (`--gnss`, `--weather`, `--cond-at`, ...) work here too.
 
 What is on screen:

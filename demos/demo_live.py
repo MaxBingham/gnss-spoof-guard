@@ -49,6 +49,7 @@ from sfhack.config import data_dir
 from sfhack.degradation import Conditions
 from sfhack.degradation.cli import add_cli_args, conditions_from_args, parse_schedule
 from sfhack.runner import FlightSystem
+from sfhack.sim.mujoco_sim import announce_scene_compile
 
 DEMO_SEED = 0
 DEMO_LOCALIZER = "vision"  # 10/10 seeds within 3 m of B
@@ -70,8 +71,10 @@ LASER = (1.0, 0.18, 0.15)
 DARK = (0.18, 0.18, 0.2)
 WIND_RGB = (0.1, 0.45, 1.0)
 
-VIEW_SIZE = (1600, 900)
+VIEW_SIZE = (1280, 720)  # live window. --record stays 1920x1080.
 RECORD_SIZE = (1920, 1080)
+# Positive OpenCV wheel delta zooms in. Set to -1 if a trackpad's natural scrolling feels backwards.
+WHEEL_ZOOM_SIGN = 1
 
 
 def _rgb255(c) -> tuple[int, int, int]:
@@ -84,6 +87,15 @@ def _decimate(pts: list[np.ndarray], max_n: int) -> np.ndarray:
         idx = np.unique(np.r_[np.linspace(0, len(a) - 1, max_n).astype(int), len(a) - 1])
         a = a[idx]
     return a
+
+
+def _mouse_wheel_delta(flags: int) -> int:
+    """Wheel delta from the high 16 bits of the mouse flags. `cv2.getMouseWheelDelta` is that read;
+    some Python builds omit the inline helper."""
+    fn = getattr(cv2, "getMouseWheelDelta", None)
+    if fn is not None:
+        return int(fn(int(flags)))
+    return int(np.int16(np.uint16((int(flags) >> 16) & 0xFFFF)))
 
 
 def _label(img: np.ndarray, text: str, org: tuple[int, int], scale: float, color=(255, 255, 255)) -> None:
@@ -134,8 +146,8 @@ class LiveDemo:
         self.cam_tan = (math.tan(math.radians(cc.down_fovy_deg) / 2) * cc.down_width / cc.down_height,
                         math.tan(math.radians(cc.down_fovy_deg) / 2))
         rng = np.random.default_rng(7)
-        self.wind_pts = rng.uniform(-1, 1, (70, 3)) * [45, 45, 18]
-        self.rain_pts = rng.uniform(-1, 1, (260, 3)) * [30, 30, 16]
+        self.wind_pts = rng.uniform(-1, 1, (24, 3)) * [45, 45, 18]
+        self.rain_pts = rng.uniform(-1, 1, (80, 3)) * [30, 30, 16]
         self.draw_scale = DRONE_SCALE
 
     # ------------------------------------------------------------------ inputs (bus = what the sensors deliver)
@@ -243,8 +255,8 @@ class LiveDemo:
                 g.dashed(a, b, 0.12, WHITE, 0.35, dash=3.0)
         # trails
         if len(self.truth_trail) > 1:
-            g.tube(_decimate(self.truth_trail, 220), 0.3, WHITE, 0.95, emission=0.3)
-            g.tube(_decimate(self.est_trail, 220), 0.3, CYAN, 0.9, emission=0.4)
+            g.stroke(_decimate(self.truth_trail, 80), WHITE, 4.0, 0.95)
+            g.stroke(_decimate(self.est_trail, 80), CYAN, 4.0, 0.9)
         # the true drone and its ghost
         scale = self.draw_scale
         g.drone(tr.pos, tr.R, scale, (0.93, 0.93, 0.96), (0.12, 0.12, 0.14), 1.0, nose_rgb=ORANGE)
@@ -259,7 +271,12 @@ class LiveDemo:
             mat[:, 0] *= -1
         g.ellipsoid(est.pos, [radii[0], radii[1], rz], mat, CYAN, 0.13)
         s2 = est.sigma2_horizontal()
-        g.ring([est.pos[0], est.pos[1], 0.25], max(s2, 0.8), 0.18, CYAN, 0.8, n=56)
+        g.ring([est.pos[0], est.pos[1], 0.25], max(s2, 0.8), 0.18, CYAN, 0.8, n=24)
+        # True-radius ring at the ghost, no inflated minimum: a 1 m claim stays visible on the scaled body.
+        if s2 > 0.05:
+            # Above the scaled rotors, true radius: a 1 m claim reads on the body instead of inside it.
+            halo = np.array([est.pos[0], est.pos[1], est.pos[2] + 0.22 * scale])
+            g.line_ring(halo, float(s2), (0.75, 1.0, 1.0), 1.0, width=6.0, n=40)
         g.dashed(est.pos, [est.pos[0], est.pos[1], 0.25], 0.06, CYAN, 0.6, dash=1.5)
         g.dashed(tr.pos, [tr.pos[0], tr.pos[1], 0.25], 0.06, WHITE, 0.5, dash=1.5)
         if np.linalg.norm(est.pos - tr.pos) > 1.5:
@@ -313,8 +330,11 @@ class LiveDemo:
         fixes = list(self.gnss_fixes)
         last = fixes[-1]
         rgb = DARK if state == "jam" else ORANGE
-        for f in fixes[:-1]:
-            g.sphere(f, 0.35, rgb, 0.5)
+        tail = fixes[:-1][-6:]  # short faded tail; the pin and the ground ring stay
+        n_tail = len(tail)
+        for i, f in enumerate(tail):
+            fade = (i + 1) / (n_tail + 1)
+            g.sphere(f, 0.22, rgb, 0.12 + 0.40 * fade)
         g.sphere(last, 1.0, rgb, 0.95, emission=0.0 if state == "jam" else 0.6)
         g.ring(last, 3.3, 0.12, rgb, 0.85)
         g.capsule(last, [last[0], last[1], 0.3], 0.1, rgb, 0.6)
@@ -363,17 +383,20 @@ class LiveDemo:
         pt = project(tr.pos + np.array([0, 0, 2.0]))
         pe = project(est.pos + np.array([0, 0, 2.0]))
         if pt is not None and pe is not None and math.dist(pt, pe) < 60:
-            out.append((pt, "TRUE = ESTIMATE", (255, 255, 255, 255)))
+            mid = ((pt[0] + pe[0]) // 2, (pt[1] + pe[1]) // 2)
+            out.append((mid, "TRUE = ESTIMATE", (255, 255, 255, 255)))
         else:
             if pt is not None:
                 out.append((pt, "TRUE", (255, 255, 255, 255)))
             if pe is not None:
-                out.append((pe, "THINKS IT IS HERE", (0, 217, 255, 255)))
-        if self.gnss_fixes and self.gnss_state() not in ("off",):
-            pg = project(self.gnss_fixes[-1] - np.array([0, 0, 9.0]))  # below the pin: clear of the ghost label
-            if pg is not None and (pt is None or math.dist(pg, pt) > 40):
-                txt = "GNSS (no fix)" if self.gnss_state() == "jam" else "GNSS FIX"
-                out.append((pg, txt, (255, 140, 30, 255) if self.gnss_state() != "jam" else (140, 140, 150, 255)))
+                out.append((pe, "ESTIMATE", (0, 217, 255, 255)))
+        gs = self.gnss_state()
+        if self.gnss_fixes and gs not in ("off",):
+            pg = project(self.gnss_fixes[-1] - np.array([0, 0, 9.0]))  # below the pin; screen nudge separates overlaps
+            # A spoof always keeps the GNSS label. An honest fix colocated with the true drone does not.
+            if pg is not None and (gs == "spoof" or pt is None or math.dist(pg, pt) > 40):
+                txt = "GNSS (no fix)" if gs == "jam" else "GNSS FIX"
+                out.append((pg, txt, (255, 140, 30, 255) if gs != "jam" else (140, 140, 150, 255)))
         for xy, name, col in ((self.start, "A", (70, 215, 120, 255)), (self.goal, "B", (255, 75, 65, 255))):
             pp = project(np.array([xy[0], xy[1], 62.0]))
             if pp is not None:
@@ -423,7 +446,7 @@ class LiveDemo:
         result = None
         if self.result is not None:
             r = self.result
-            result = f"{r.outcome}: landed {r.final_error:.1f} m from B   (R restarts)"
+            result = f"{r.outcome} \u00b7 {r.final_error:.0f} m from B"
         return HudState(
             t=self.t, phase=fs.mission.phase, health=hs.state.value,
             health_reason=hs.reason or "", err=err, sigma2=est.sigma2_horizontal(), nav_source=nav, fix_age=fix_age,
@@ -528,7 +551,22 @@ class Composer:
         self.W, self.H = width, height
         self.sr = SceneRenderer(demo.fs.sim.model, width, height)
         self.hud = Hud(width, height)
+        self.fovy = float(demo.fs.sim.model.vis.global_.fovy)
         self.chase = self._new_chase(demo)
+        self.times = {"view": 0.0, "fog": 0.0, "hud": 0.0, "map": 0.0}
+
+    def _clear_aim(self) -> tuple | None:
+        """Pixel where the truth/estimate midpoint should sit: above the bottom-left block, left of the levers."""
+        p = self.hud.px
+        m = p(16)
+        # Inset so the pair's labels stay off the lever column and the bottom-left block.
+        x0 = m + p(Hud.COL_W) + p(24)
+        x1 = self.W - m - p(360) - p(80)
+        y0 = m + p(100)
+        y1 = self.H - m - p(Hud.MAP) - p(90)
+        if x1 - x0 < 80 or y1 - y0 < 80:
+            return None
+        return ((x0 + x1) * 0.5, (y0 + y1) * 0.5, self.W, self.H, self.fovy)
 
     @staticmethod
     def _new_chase(demo: LiveDemo) -> ChaseCam:
@@ -542,7 +580,7 @@ class Composer:
 
     def frame(self, demo: LiveDemo, dt: float, speed: int, paused: bool, recording: bool) -> np.ndarray:
         tr, est = demo.fs.truth.state(), demo.fs.autopilot.pose()
-        cam = self.chase.update(dt, tr.pos, tr.vel, est.pos)
+        cam = self.chase.update(dt, tr.pos, tr.vel, est.pos, aim=self._clear_aim())
         demo.update_particles(0.0 if paused else dt * speed, np.array(cam.lookat), cam.distance)
         wv = demo.fs.sim.weather_visuals()
         vis = wv.visibility_m if wv.kind != "clear" and wv.intensity > 0 else None
@@ -553,7 +591,16 @@ class Composer:
         img = self.sr.render(demo.fs.sim.data, cam, demo.draw_geoms, vis, wv.fog_rgb, fog_start)
         st = demo.hud_state(speed, paused, recording, demo.labels(self.sr.project))
         p = self.hud.px
-        return self.hud.compose(img, st, demo.map_panel(p(300)), demo.cam_panel(p(400), p(300)))
+        t_map = time.perf_counter()
+        map_img = demo.map_panel(p(Hud.MAP))
+        t_cam = time.perf_counter()
+        cam_img = demo.cam_panel(p(Hud.CAM_W), p(Hud.CAM_H))
+        t_hud = time.perf_counter()
+        out = self.hud.compose(img, st, map_img, cam_img)
+        t_end = time.perf_counter()
+        self.times = {"view": self.sr.t_view, "fog": self.sr.t_fog,
+                      "map": t_cam - t_map, "hud": (t_hud - t_cam) + (t_end - t_hud)}
+        return out
 
     def close(self) -> None:
         self.sr.close()
@@ -585,8 +632,18 @@ def _make_demo(args, reuse: LiveDemo | None = None) -> LiveDemo:
 WINDOW = "GNSS Spoof Guard - live demo"
 
 
+def _timing_line(acc: dict[str, float], n: int) -> str:
+    if n <= 0:
+        return ""
+    def ms(k: str) -> float:
+        return 1000.0 * acc[k] / n
+    return (f"sim {ms('sim'):5.1f}  view {ms('view'):5.1f}  fog {ms('fog'):5.1f}  "
+            f"hud {ms('hud'):5.1f}  map {ms('map'):5.1f} ms")
+
+
 def run_viewer(args: argparse.Namespace) -> None:
     W, H = args.size
+    announce_scene_compile()
     demo = _make_demo(args)
     comp = Composer(demo, W, H)
     keys: deque[str] = deque()
@@ -607,7 +664,9 @@ def run_viewer(args: argparse.Namespace) -> None:
         elif event == cv2.EVENT_LBUTTONUP:
             mouse["drag"] = None
         elif event == cv2.EVENT_MOUSEWHEEL:
-            comp.chase.zoom = float(np.clip(comp.chase.zoom * (0.9 if flags > 0 else 1.1), 0.3, 6.0))
+            delta = WHEEL_ZOOM_SIGN * _mouse_wheel_delta(flags)
+            if delta != 0:
+                comp.chase.zoom = float(np.clip(comp.chase.zoom * (0.9 if delta > 0 else 1.1), 0.3, 6.0))
 
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_NORMAL)
     cv2.resizeWindow(WINDOW, W, H)
@@ -624,6 +683,8 @@ def run_viewer(args: argparse.Namespace) -> None:
     next_log = 0.0
     reported = False
     fps_t, fps_n, fps = time.perf_counter(), 0, 0.0
+    acc = {"sim": 0.0, "view": 0.0, "fog": 0.0, "hud": 0.0, "map": 0.0}
+    acc_n = 0
     snap_dir = Path(args.snap_dir)
     snaps = sorted(float(x) for x in args.snap_at.split(",") if x.strip())
     while True:
@@ -668,7 +729,9 @@ def run_viewer(args: argparse.Namespace) -> None:
             sim_budget += wall_dt * speed
             n = int(sim_budget / demo.fs.sim.model.opt.timestep)
             sim_budget -= n * demo.fs.sim.model.opt.timestep
+            t_sim = time.perf_counter()
             demo.advance(n)
+            acc["sim"] += time.perf_counter() - t_sim
             if demo.t >= next_log:
                 next_log = demo.t + 5.0
                 print(f"t={demo.t:6.1f}s {demo.fs.mission.phase:14s} {demo.c.summary()}  view {fps:4.1f} fps", flush=True)
@@ -676,6 +739,9 @@ def run_viewer(args: argparse.Namespace) -> None:
                 reported = True
                 print(f"t={demo.t:6.1f}s {demo.result.summary()}")
         frame = comp.frame(demo, wall_dt, speed, paused, False)
+        for k in ("view", "fog", "hud", "map"):
+            acc[k] += comp.times[k]
+        acc_n += 1
         if snaps and demo.t >= snaps[0]:
             snaps.pop(0)
             snap_dir.mkdir(parents=True, exist_ok=True)
@@ -689,8 +755,14 @@ def run_viewer(args: argparse.Namespace) -> None:
         if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
             break
         fps_n += 1
-        if now - fps_t > 2.0:
-            fps, fps_t, fps_n = fps_n / (now - fps_t), now, 0
+        t_fps = time.perf_counter()
+        if t_fps - fps_t > 2.0:
+            fps = fps_n / (t_fps - fps_t)
+            print(f"t={demo.t:6.1f}s {demo.fs.mission.phase:14s}  {fps:4.1f} fps  {_timing_line(acc, acc_n)}",
+                  flush=True)
+            fps_t, fps_n = t_fps, 0
+            acc = {k: 0.0 for k in acc}
+            acc_n = 0
     demo.close()
     comp.close()
     cv2.destroyAllWindows()
@@ -831,7 +903,7 @@ def main() -> None:
     ap.add_argument("--record", nargs="?", const=str(data_dir() / "demo" / "v2_demo.mp4"), default=None,
                     help="render offscreen to an mp4 (default $SFHACK_DATA/demo/v2_demo.mp4)")
     ap.add_argument("--until", type=float, default=0.0, help="with --record: stop at this sim time")
-    ap.add_argument("--size", type=_size, default=None, help="frame size WxH (viewer 1600x900, video 1920x1080)")
+    ap.add_argument("--size", type=_size, default=None, help="frame size WxH (viewer 1280x720, video 1920x1080)")
     ap.add_argument("--fullscreen", action="store_true", help="viewer: start fullscreen (Tab toggles)")
     ap.add_argument("--snap-at", default="", help="sim times to save PNG frames, e.g. '30,60'")
     ap.add_argument("--snap-dir", default=str(data_dir() / "demo"), help="where --snap-at / Z write PNGs")

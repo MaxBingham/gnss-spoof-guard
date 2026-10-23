@@ -75,11 +75,29 @@ class Geoms:
         for a, b in zip(pts[:-1], pts[1:]):
             self.capsule(a, b, r, rgb, alpha, emission)
 
+    def stroke(self, pts: np.ndarray, rgb, width: float = 3.0, alpha: float = 1.0) -> None:
+        """Screen-space line strip. A trail is a stroke; a capsule tube is not worth a geom per segment."""
+        pts = np.asarray(pts, float)
+        if len(pts) < 2:
+            return
+        for a, b in zip(pts[:-1], pts[1:]):
+            self.line(a, b, rgb, width, alpha)
+
     def ring(self, center, radius: float, r: float, rgb, alpha: float = 1.0, n: int = 40) -> None:
         ang = np.linspace(0, 2 * np.pi, n + 1)
         pts = np.column_stack([center[0] + radius * np.cos(ang), center[1] + radius * np.sin(ang),
                                np.full(n + 1, center[2])])
         self.tube(pts, r, rgb, alpha)
+
+    def line_ring(self, center, radius: float, rgb, alpha: float = 1.0, width: float = 2.0, n: int = 32) -> None:
+        """Thin line ring at `radius` meters. No inflated minimum: a tight 2σ stays a tight ring."""
+        if radius <= 0.05:
+            return
+        ang = np.linspace(0, 2 * np.pi, n + 1)
+        c = np.asarray(center, float)
+        pts = np.column_stack([c[0] + radius * np.cos(ang), c[1] + radius * np.sin(ang),
+                               np.full(n + 1, c[2])])
+        self.stroke(pts, rgb, width, alpha)
 
     def dashed(self, a, b, r: float, rgb, alpha: float = 1.0, dash: float = 2.0) -> None:
         a, b = np.asarray(a, float), np.asarray(b, float)

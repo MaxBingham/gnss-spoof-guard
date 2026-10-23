@@ -13,21 +13,31 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import time
+
+# One thread per flight: 18 workers x (BLAS + OpenCV pools over all cores) ran ~10x slower than one flight alone.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 
-CONFIG_ORDER = ["ins", "ins_trn", "ins_ibn", "ins_trn_ibn", "mismatch_heavy"]
+CONFIG_ORDER = ["ins", "ins_trn", "ins_ibn", "ins_trn_ibn", "mismatch_heavy", "trn_off30", "ibn_off30"]
 LABEL = {"ins": "INS only", "ins_trn": "INS+TRN", "ins_ibn": "INS+IBN", "ins_trn_ibn": "INS+TRN+IBN",
-         "mismatch_heavy": "all, map mismatch heavy"}
+         "mismatch_heavy": "all, map mismatch heavy", "trn_off30": "INS+TRN, TRN off 30 s",
+         "ibn_off30": "IBN off 30 s"}
 
 
 def fly(job: tuple[str, str, int]) -> dict:
     world, config, seed = job
+    import cv2
+
     from sfhack.nav_runner import NavFlightSystem
+
+    cv2.setNumThreads(1)
 
     fs = NavFlightSystem(world, config, seed)
     try:
@@ -89,7 +99,7 @@ def charts(runs: list[dict], rows: list[dict], out: Path) -> None:
                 for c in cfgs]
         bp = ax.boxplot(data, tick_labels=[LABEL[c].replace(", ", "\n") for c in cfgs], showfliers=True,
                         patch_artist=True)
-        colors = ["#888888", "#2a9d8f", "#e9c46a", "#264653", "#e76f51"]
+        colors = ["#888888", "#2a9d8f", "#e9c46a", "#264653", "#e76f51", "#8ab17d", "#b56576"]
         for patch, c in zip(bp["boxes"], cfgs):
             patch.set_facecolor(colors[CONFIG_ORDER.index(c)])
         for i, c in enumerate(cfgs):
@@ -133,6 +143,7 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=20)
     ap.add_argument("--tag", default="main")
     ap.add_argument("--headless", action="store_true")
+    ap.add_argument("--resume", action="store_true", help="keep the flights already in runs.jsonl, fly the rest")
     args = ap.parse_args()
     from sfhack.world.build_v3 import v3_dir
 
@@ -142,9 +153,15 @@ def main() -> None:
     jobs = [(w, c, s) for w in worlds for c in configs for s in range(args.seed0, args.seed0 + args.seeds)]
     # long natural-terrain flights first so the pool stays busy
     jobs.sort(key=lambda j: (j[0] == "s1", j[1], j[2]))
-    t0 = time.time()
     runs = []
-    with ProcessPoolExecutor(args.workers) as ex, open(out / "runs.jsonl", "w", encoding="utf-8") as f:
+    if args.resume and (out / "runs.jsonl").exists():
+        runs = [json.loads(line) for line in (out / "runs.jsonl").read_text(encoding="utf-8").splitlines() if line]
+        done = {(r["world"], r["config"], r["seed"]) for r in runs}
+        jobs = [j for j in jobs if j not in done]
+        print(f"resume: {len(runs)} flights kept, {len(jobs)} to fly")
+    t0 = time.time()
+    with ProcessPoolExecutor(args.workers) as ex, open(out / "runs.jsonl", "a" if args.resume else "w",
+                                                       encoding="utf-8") as f:
         futs = {ex.submit(fly, j): j for j in jobs}
         for k, fut in enumerate(as_completed(futs), 1):
             j = futs[fut]
@@ -158,7 +175,7 @@ def main() -> None:
             f.flush()
             print(f"[{k}/{len(jobs)} {time.time() - t0:5.0f}s] {r['world']}/{r['config']:15s} seed {r['seed']:2d}: "
                   f"{r['outcome']:16s} {'OK ' if r['success'] else 'FAIL'} final {r['final_error']:7.1f} m "
-                  f"arrival {r['arrival_error']:7.1f} m max2s {r['max_sigma2']:6.1f} excl {r['exclusions']}")
+                  f"arrival {r['arrival_error']:7.1f} m max2s {r['max_sigma2']:6.1f} excl {r['exclusions']}", flush=True)
     rows = [s for w in worlds for c in configs if (s := summarize(runs, w, c)) is not None]
     md = table(rows)
     (out / "table.md").write_text(md + "\n", encoding="utf-8")

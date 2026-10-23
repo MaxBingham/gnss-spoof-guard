@@ -1,0 +1,104 @@
+{
+  "key": "tent",
+  "variant": "ridge_orange_b",
+  "files": {
+    "whole": {
+      "path": "objects/tent/ridge_orange_b/ridge_orange_b.stl",
+      "rgba": [
+        0.92,
+        0.45,
+        0.1,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "fabric",
+        "path": "objects/tent/ridge_orange_b/parts/fabric.stl",
+        "rgba": [
+          0.92,
+          0.45,
+          0.1,
+          1
+        ],
+        "triangles": 113
+      },
+      {
+        "name": "poles",
+        "path": "objects/tent/ridge_orange_b/parts/poles.stl",
+        "rgba": [
+          0.25,
+          0.2,
+          0.15,
+          1
+        ],
+        "triangles": 112
+      },
+      {
+        "name": "fabric_accent",
+        "path": "objects/tent/ridge_orange_b/parts/fabric_accent.stl",
+        "rgba": [
+          0.7,
+          0.3,
+          0.06,
+          1
+        ],
+        "triangles": 3
+      }
+    ]
+  },
+  "size_m": [
+    3.2,
+    2.328,
+    2.052
+  ],
+  "scale_factor": 3.65744,
+  "triangles": 228,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -1.6,
+      -1.164,
+      0.0
+    ],
+    "max": [
+      1.6,
+      1.164,
+      2.052
+    ]
+  },
+  "footprint_m": [
+    3.2,
+    2.328
+  ],
+  "height_m": 2.052,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      1.026
+    ],
+    "half_size": [
+      1.6,
+      1.164,
+      1.026
+    ]
+  },
+  "source_url": "https://kenney.nl/assets/nature-kit",
+  "author": "Kenney (kenney.nl)",
+  "license": "CC0 1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+  "title": null,
+  "source_file": "sources/kenney_nature-kit/tent_detailedClosed.glb",
+  "procedural": false,
+  "note": "Kenney Nature Kit tent_detailedClosed",
+  "size_check": {
+    "L": "ok",
+    "W": "2.33 outside 2.5-3.5",
+    "H": "ok"
+  }
+}

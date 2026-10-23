@@ -1,0 +1,120 @@
+{
+  "key": "tree",
+  "variant": "deciduous_b",
+  "files": {
+    "whole": {
+      "path": "objects/tree/deciduous_b/deciduous_b.stl",
+      "rgba": [
+        0.22,
+        0.48,
+        0.18,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "crown",
+        "path": "objects/tree/deciduous_b/parts/crown.stl",
+        "rgba": [
+          0.22,
+          0.48,
+          0.18,
+          1
+        ],
+        "triangles": 280
+      },
+      {
+        "name": "trunk",
+        "path": "objects/tree/deciduous_b/parts/trunk.stl",
+        "rgba": [
+          0.36,
+          0.25,
+          0.16,
+          1
+        ],
+        "triangles": 122
+      }
+    ]
+  },
+  "size_m": [
+    6.358,
+    5.716,
+    10.0
+  ],
+  "scale_factor": 7.50516,
+  "triangles": 402,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -3.179,
+      -2.858,
+      0.0
+    ],
+    "max": [
+      3.179,
+      2.858,
+      10.0
+    ]
+  },
+  "footprint_m": [
+    6.358,
+    5.716
+  ],
+  "height_m": 10.0,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      5.0
+    ],
+    "half_size": [
+      3.179,
+      2.858,
+      5.0
+    ]
+  },
+  "collision_boxes_detailed": {
+    "trunk": {
+      "center": [
+        -0.105,
+        0.215,
+        3.292
+      ],
+      "half_size": [
+        2.46,
+        2.127,
+        3.292
+      ]
+    },
+    "crown": {
+      "center": [
+        0.0,
+        0.0,
+        6.675
+      ],
+      "half_size": [
+        3.179,
+        2.858,
+        3.325
+      ]
+    }
+  },
+  "crown_diameter_m": 6.358,
+  "source_url": "https://kenney.nl/assets/nature-kit",
+  "author": "Kenney (kenney.nl)",
+  "license": "CC0 1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+  "title": null,
+  "source_file": "sources/kenney_nature-kit/tree_detailed.glb",
+  "procedural": false,
+  "note": "Kenney Nature Kit tree_detailed",
+  "size_check": {
+    "L": "ok",
+    "W": "ok",
+    "H": "ok"
+  }
+}

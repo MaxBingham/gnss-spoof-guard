@@ -1,0 +1,126 @@
+{
+  "key": "hut",
+  "variant": "cabin_shed_b",
+  "files": {
+    "whole": {
+      "path": "objects/hut/cabin_shed_b/cabin_shed_b.stl",
+      "rgba": [
+        0.52,
+        0.36,
+        0.22,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "walls",
+        "path": "objects/hut/cabin_shed_b/parts/walls.stl",
+        "rgba": [
+          0.52,
+          0.36,
+          0.22,
+          1
+        ],
+        "triangles": 1340
+      },
+      {
+        "name": "trim",
+        "path": "objects/hut/cabin_shed_b/parts/trim.stl",
+        "rgba": [
+          0.64,
+          0.48,
+          0.32,
+          1
+        ],
+        "triangles": 1065
+      },
+      {
+        "name": "roof",
+        "path": "objects/hut/cabin_shed_b/parts/roof.stl",
+        "rgba": [
+          0.38,
+          0.38,
+          0.4,
+          1
+        ],
+        "triangles": 242
+      },
+      {
+        "name": "stone",
+        "path": "objects/hut/cabin_shed_b/parts/stone.stl",
+        "rgba": [
+          0.5,
+          0.5,
+          0.5,
+          1
+        ],
+        "triangles": 92
+      },
+      {
+        "name": "windows",
+        "path": "objects/hut/cabin_shed_b/parts/windows.stl",
+        "rgba": [
+          0.12,
+          0.16,
+          0.22,
+          1
+        ],
+        "triangles": 6
+      }
+    ]
+  },
+  "size_m": [
+    4.239,
+    3.004,
+    3.4
+  ],
+  "scale_factor": 9.70261,
+  "triangles": 2745,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -2.119,
+      -1.502,
+      0.0
+    ],
+    "max": [
+      2.119,
+      1.502,
+      3.4
+    ]
+  },
+  "footprint_m": [
+    4.239,
+    3.004
+  ],
+  "height_m": 3.4,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      1.7
+    ],
+    "half_size": [
+      2.119,
+      1.502,
+      1.7
+    ]
+  },
+  "source_url": "https://poly.pizza/m/HTx7PZt6Zm",
+  "author": "CreativeTrio",
+  "license": "CC0 1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "download_url": "https://static.poly.pizza/9f69cf1b-e9f0-495a-9f68-0dab4bffd6d2.glb",
+  "title": null,
+  "source_file": "sources/polypizza/HTx7PZt6Zm.glb",
+  "procedural": false,
+  "note": "CreativeTrio 'Cabin Shed' (single texture; parts split by texture color)",
+  "size_check": {
+    "L": "ok",
+    "W": "ok",
+    "H": "ok"
+  }
+}

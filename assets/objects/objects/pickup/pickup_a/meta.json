@@ -1,0 +1,104 @@
+{
+  "key": "pickup",
+  "variant": "pickup_a",
+  "files": {
+    "whole": {
+      "path": "objects/pickup/pickup_a/pickup_a.stl",
+      "rgba": [
+        0.92,
+        0.92,
+        0.92,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "body",
+        "path": "objects/pickup/pickup_a/parts/body.stl",
+        "rgba": [
+          0.92,
+          0.92,
+          0.92,
+          1
+        ],
+        "triangles": 5872
+      },
+      {
+        "name": "lights_front",
+        "path": "objects/pickup/pickup_a/parts/lights_front.stl",
+        "rgba": [
+          0.95,
+          0.93,
+          0.8,
+          1
+        ],
+        "triangles": 360
+      },
+      {
+        "name": "lights_rear",
+        "path": "objects/pickup/pickup_a/parts/lights_rear.stl",
+        "rgba": [
+          0.7,
+          0.05,
+          0.05,
+          1
+        ],
+        "triangles": 200
+      }
+    ]
+  },
+  "size_m": [
+    5.3,
+    2.366,
+    1.891
+  ],
+  "scale_factor": 1.02309,
+  "triangles": 6432,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -2.65,
+      -1.183,
+      0.0
+    ],
+    "max": [
+      2.65,
+      1.183,
+      1.891
+    ]
+  },
+  "footprint_m": [
+    5.3,
+    2.366
+  ],
+  "height_m": 1.891,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      0.946
+    ],
+    "half_size": [
+      2.65,
+      1.183,
+      0.946
+    ]
+  },
+  "source_url": "https://poly.pizza/m/qn4grQgHm8",
+  "author": "Quaternius",
+  "license": "CC0 1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "download_url": "https://static.poly.pizza/4e925a01-dbb8-4aab-848b-221306b835ea.glb",
+  "title": null,
+  "source_file": "sources/polypizza/qn4grQgHm8.glb",
+  "procedural": false,
+  "note": "Quaternius 'Pickup Truck' (texture atlas, single body part)",
+  "size_check": {
+    "L": "ok",
+    "W": "2.37 outside 1.9-2.3",
+    "H": "ok"
+  }
+}

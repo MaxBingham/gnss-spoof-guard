@@ -1,0 +1,120 @@
+{
+  "key": "tree",
+  "variant": "conifer_e",
+  "files": {
+    "whole": {
+      "path": "objects/tree/conifer_e/conifer_e.stl",
+      "rgba": [
+        0.12,
+        0.34,
+        0.16,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "crown",
+        "path": "objects/tree/conifer_e/parts/crown.stl",
+        "rgba": [
+          0.12,
+          0.34,
+          0.16,
+          1
+        ],
+        "triangles": 190
+      },
+      {
+        "name": "trunk",
+        "path": "objects/tree/conifer_e/parts/trunk.stl",
+        "rgba": [
+          0.36,
+          0.25,
+          0.16,
+          1
+        ],
+        "triangles": 16
+      }
+    ]
+  },
+  "size_m": [
+    4.427,
+    3.834,
+    10.0
+  ],
+  "scale_factor": 7.98178,
+  "triangles": 206,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -2.214,
+      -1.917,
+      0.0
+    ],
+    "max": [
+      2.214,
+      1.917,
+      10.0
+    ]
+  },
+  "footprint_m": [
+    4.427,
+    3.834
+  ],
+  "height_m": 10.0,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      5.0
+    ],
+    "half_size": [
+      2.214,
+      1.917,
+      5.0
+    ]
+  },
+  "collision_boxes_detailed": {
+    "trunk": {
+      "center": [
+        0.0,
+        0.0,
+        0.798
+      ],
+      "half_size": [
+        0.98,
+        0.848,
+        0.798
+      ]
+    },
+    "crown": {
+      "center": [
+        0.0,
+        0.0,
+        5.56
+      ],
+      "half_size": [
+        2.214,
+        1.917,
+        4.44
+      ]
+    }
+  },
+  "crown_diameter_m": 4.427,
+  "source_url": "https://kenney.nl/assets/nature-kit",
+  "author": "Kenney (kenney.nl)",
+  "license": "CC0 1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+  "title": null,
+  "source_file": "sources/kenney_nature-kit/tree_pineRoundC.glb",
+  "procedural": false,
+  "note": "Kenney Nature Kit tree_pineRoundC",
+  "size_check": {
+    "L": "ok",
+    "W": "ok",
+    "H": "ok"
+  }
+}

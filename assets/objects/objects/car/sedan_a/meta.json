@@ -1,0 +1,151 @@
+{
+  "key": "car",
+  "variant": "sedan_a",
+  "files": {
+    "whole": {
+      "path": "objects/car/sedan_a/sedan_a.stl",
+      "rgba": [
+        0.92,
+        0.92,
+        0.92,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "trim",
+        "path": "objects/car/sedan_a/parts/trim.stl",
+        "rgba": [
+          0.3,
+          0.3,
+          0.32,
+          1
+        ],
+        "triangles": 1136
+      },
+      {
+        "name": "tires",
+        "path": "objects/car/sedan_a/parts/tires.stl",
+        "rgba": [
+          0.07,
+          0.07,
+          0.07,
+          1
+        ],
+        "triangles": 590
+      },
+      {
+        "name": "body",
+        "path": "objects/car/sedan_a/parts/body.stl",
+        "rgba": [
+          0.92,
+          0.92,
+          0.92,
+          1
+        ],
+        "triangles": 1148,
+        "rgba_options": {
+          "white": [
+            0.92,
+            0.92,
+            0.92,
+            1
+          ],
+          "brown": [
+            0.4,
+            0.26,
+            0.15,
+            1
+          ]
+        }
+      },
+      {
+        "name": "windows",
+        "path": "objects/car/sedan_a/parts/windows.stl",
+        "rgba": [
+          0.12,
+          0.16,
+          0.22,
+          1
+        ],
+        "triangles": 62
+      },
+      {
+        "name": "lights_front",
+        "path": "objects/car/sedan_a/parts/lights_front.stl",
+        "rgba": [
+          0.95,
+          0.93,
+          0.8,
+          1
+        ],
+        "triangles": 12
+      },
+      {
+        "name": "lights_rear",
+        "path": "objects/car/sedan_a/parts/lights_rear.stl",
+        "rgba": [
+          0.7,
+          0.05,
+          0.05,
+          1
+        ],
+        "triangles": 6
+      }
+    ]
+  },
+  "size_m": [
+    4.7,
+    2.013,
+    1.31
+  ],
+  "scale_factor": 1.11355,
+  "triangles": 2954,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -2.35,
+      -1.006,
+      0.0
+    ],
+    "max": [
+      2.35,
+      1.006,
+      1.31
+    ]
+  },
+  "footprint_m": [
+    4.7,
+    2.013
+  ],
+  "height_m": 1.31,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      0.655
+    ],
+    "half_size": [
+      2.35,
+      1.006,
+      0.655
+    ]
+  },
+  "source_url": "https://poly.pizza/m/Cz6yDaUcM9",
+  "author": "Quaternius",
+  "license": "CC0 1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "download_url": "https://static.poly.pizza/59a67a6c-490e-472e-bae6-5a4d2541f1c7.glb",
+  "title": null,
+  "source_file": "sources/polypizza/Cz6yDaUcM9.glb",
+  "procedural": false,
+  "note": "Quaternius 'Car' (low-poly sedan)",
+  "size_check": {
+    "L": "ok",
+    "W": "ok",
+    "H": "ok"
+  }
+}

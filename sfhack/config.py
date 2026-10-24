@@ -276,6 +276,9 @@ class ThermalConfig:
     # direction (8 m/s x 1.5 deg = 0.2 m/s cross-track drift). With yaw_feedback the yaw corrections of accepted
     # thermal fixes (yaw search of the template) teach the autopilot the compass bias, slowly.
     yaw_feedback: bool = False
+    confirm_jump_m: float = 5.0  # a fix moving the estimate more than this needs a second, consistent fix (0 = off)
+    confirm_window_s: float = 2.0
+    confirm_tol_m: float = 3.0
     yaw_feedback_gain: float = 0.05  # per accepted fix
     yaw_feedback_min_quality: float = 0.6
     yaw_feedback_max_deg: float = 5.0

@@ -466,6 +466,14 @@ class ThermalLocalizer:
             if cnt < c.road_min_px:
                 continue
             cost = cv2.matchTemplate(dt, sk, cv2.TM_CCORR) / cnt  # mean truncated distance per shift
+            # Symmetric chamfer: mapped centerlines inside the footprint must be seen too. One-sided, the
+            # minimum slid onto dense mapped footway networks (median 11-13 m off in the open-loop bench).
+            dto = np.minimum(cv2.distanceTransform((sk < 0.5).astype(np.uint8), cv2.DIST_L2, 3) * mpp,
+                             c.road_trunc_m).astype(np.float32)
+            regf = (reg > 0.5).astype(np.float32)
+            num = cv2.matchTemplate(regf, dto, cv2.TM_CCORR)
+            den = cv2.matchTemplate(regf, np.ones_like(dto), cv2.TM_CCORR)
+            cost = 0.5 * cost + 0.5 * np.where(den > 5, num / np.maximum(den, 1.0), c.road_trunc_m)
             v = float(cost.min())
             if best is None or v < best[0]:
                 best = (v, cost, rot, sk)

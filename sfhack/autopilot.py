@@ -80,6 +80,8 @@ class Autopilot:
         self.last_thermal_fix: VisualFix | None = None
         self.thermal_log: list[tuple[float, str, float, float, bool, float]] = []  # t, method, x, y, accepted, yaw_corr
         self.lidar_agl: float | None = None  # nadir lidar: camera height above the surface below
+        self._thermal_pending: tuple[float, np.ndarray] | None = None  # (t, innovation) of a held big-jump fix
+        self.thermal_held = 0  # big-jump fixes held for confirmation (and not confirmed)
         self.mag_bias_est = 0.0  # rad, compass heading bias learned from thermal yaw corrections (yaw_feedback)
         self._lidar_t = -1.0
         self.health = HealthMonitor(cfg.health)
@@ -304,7 +306,7 @@ class Autopilot:
             return
         agl = self.lidar_agl if self.lidar_agl is not None and frame.t - self._lidar_t < 0.5 else None
         free = self.ekf_free
-        if free is not None:
+        if free is not None and self.receiving_gnss:  # (after the loss both filters fuse the same fix, below)
             ff = self.thermal.update(frame.image_K, free.pose(self.ahrs.R, self.ahrs.omega, self.ahrs.yaw, report=False),
                                      agl, frame.intrinsics, t=frame.t)
             if ff is not None:
@@ -317,6 +319,10 @@ class Autopilot:
         if tf is None:
             return
         fix = self._thermal_visual_fix(tf, frame)
+        if not self._thermal_confirmed(fix):
+            return
+        if free is not None and not self.receiving_gnss:
+            free.update_fix(copy.copy(fix))
         self.thermal_fixes += 1
         stats = self.thermal_by_method.setdefault(tf.method, [0, 0])
         stats[0] += 1
@@ -336,6 +342,27 @@ class Autopilot:
         self.health.on_fix(fix)
         self.last_thermal_fix = fix
         self.bus.publish(topics.FIX, fix)
+
+    def _thermal_confirmed(self, fix: VisualFix) -> bool:
+        """A thermal fix that would move the estimate by more than confirm_jump_m is held until a second fix
+        within confirm_window_s shows the same innovation (within confirm_tol_m). A single wrong peak (repetitive
+        footways, a roof whose polarity the prior got wrong) otherwise pulls the INS off and the accel-bias
+        states with it; a true offset shows up again in the next frame."""
+        tc = self.cfg.thermal
+        if tc.confirm_jump_m <= 0:
+            return True
+        innov = fix.pos - self.ekf.x[:2]
+        if float(np.linalg.norm(innov)) <= tc.confirm_jump_m:
+            self._thermal_pending = None
+            return True
+        p = self._thermal_pending
+        if p is not None and fix.t - p[0] <= tc.confirm_window_s and float(np.linalg.norm(innov - p[1])) <= tc.confirm_tol_m:
+            self._thermal_pending = None
+            return True
+        if p is not None:
+            self.thermal_held += 1
+        self._thermal_pending = (fix.t, innov)
+        return False
 
     @staticmethod
     def _thermal_visual_fix(tf: Any, frame: ThermalFrame) -> VisualFix:

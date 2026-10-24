@@ -159,6 +159,28 @@ class Autopilot:
     def set_localizer(self, localizer: Localizer | None) -> None:
         self.localizer = localizer
 
+    def attach_mission(self, mission: Any) -> None:
+        """Replace the waypoint Mission (before takeoff) with another one of the same interface, e.g. the recon
+        mission (sfhack/mission/recon.py). A mission with `on_thermal(frame, pose)` gets every thermal frame."""
+        self.mission = mission
+        if hasattr(mission, "on_thermal"):
+            self.bus.subscribe(topics.THERMAL, lambda f: mission.on_thermal(f, self.pose(report=False)))
+        if hasattr(mission, "rear_tilt_deg") and hasattr(topics, "CAMERA_REAR_TILT"):
+            from .messages import CameraTiltCmd
+
+            nxt = [0.0]
+
+            def point_rear_camera(est: PoseEstimate) -> None:  # 5 Hz: the rear gimbal looks at the base
+                if getattr(self, "light_localizer", None) is not None:
+                    return  # recon-nav's light localizer aims the gimbal itself (every rear frame)
+                if est.t >= nxt[0]:
+                    nxt[0] = est.t + 0.2
+                    tilt = mission.rear_tilt_deg(est)
+                    if tilt is not None:
+                        self.bus.publish(topics.CAMERA_REAR_TILT, CameraTiltCmd(est.t, tilt))
+
+            self.bus.subscribe(topics.POSE, point_rear_camera)
+
     def log_decision(self, t: float, text: str) -> None:
         self.decisions.append((t, text))
         self.bus.publish(topics.DECISION, Decision(t, text))
@@ -563,7 +585,7 @@ class Autopilot:
         self.setpoint = sp
         while self.mission.events:
             self.log_decision(*self.mission.events.pop(0))
-        if self.mission.phase in ("PREFLIGHT", "LANDED"):
+        if self.mission.phase == "PREFLIGHT" or self.mission.done:
             motors = np.zeros(4)
         elif self.mission.ground_contact and self.pose_source == "ekf":
             motors = np.full(4, self.cfg.mission.ground_idle * self.controller.mass * self.controller.g / 4)

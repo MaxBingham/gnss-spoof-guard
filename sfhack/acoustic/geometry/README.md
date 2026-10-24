@@ -7,7 +7,7 @@ Product page: https://www.minidsp.com/products/usb-audio-interface/uma-16-microp
 Rule of thumb for this geometry: spatial aliasing above c / (2 d) = 343 / 0.084 ~ 4.1 kHz;
 good localization roughly 1-4 kHz; below ~500 Hz the beam is very wide.
 
-## geometry/
+## geometry/ (copied from https://github.com/JLrobot/Mic-Challenge, hardware/uma16/)
 - `minidsp_uma-16.xml`: mic positions per channel (Acoular 26.8, corrected in x after Acoular 24.03, GitHub issue #63).
   Use this one.
 - `minidsp_uma-16_mirrored.xml`: the older, mirrored version (kept for reference).

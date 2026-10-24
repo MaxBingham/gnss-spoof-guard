@@ -16,6 +16,9 @@ Night 23:00, 60 m AGL, GNSS completely off from 20 % of the route, 20 seeds each
 | ukraine-1 (1870 m) | **18/20** | 70-97 % | 1.2 / 4143 (2 runaways) | 12/20 | 0/20 |
 | all | **58/60** | 89-99 % | | 51/60 | 10/60 |
 
+IMU + TRN with the same gyro-bias learning: 11/20, 3/20, 0/20 (no km runaways on berkeley / hill any more, median
+3 km on ukraine-1).
+
 Sanity check on night-thermal's final data (traffic, contrast 0.7), 2 seeds each: berkeley 2/2, hill 2/2,
 ukraine-1 1/2. night-demo's independent 20-seed run of this fix on the final data (their numbers): berkeley 20/20,
 hill 20/20, ukraine-1 with their ROADS route 20/20 (15/20 without the fix).

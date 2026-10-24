@@ -117,6 +117,17 @@ as in night-research's ASTER notes, while the prior keeps the full model contras
 Normalized gradient matching does not care about the amplitude (NETD 50 mK is far below 2 K); what matters is
 that the structure is where the prior says. (ukraine-1 at 0.4x not run: time.)
 
+Baseline with the same gyro-bias learning (IMU + baro + TRN, no thermal), 20 seeds:
+
+| mission | within 5 m | 95 % Wilson CI | error at B median / max (m) | without gyro-bias learning |
+|---|---|---|---|---|
+| berkeley | 11/20 | 34-74 % | 4.2 / 351 | 10/20, max 5944 m |
+| m-c804bb84 | 3/20 | 5-36 % | 16.4 / 105 (3 timeouts) | 0/20, median 29.9 m, max 6107 m |
+| ukraine-1 | 0/20 | 0-16 % | 3058 / 4941 | 0/20, median 6431 m |
+
+The gyro-bias learning makes dead reckoning degrade more gracefully (no km runaways on berkeley / hill), but
+without absolute fixes it is no substitute for the thermal matching.
+
 Sanity check on night-thermal's FINAL data (moving traffic, truth contrast 0.7, rebuilt 01:17; the live mission
 folders, latest camera code, this branch at 4e2f977), only 2 seeds each: berkeley 2/2 (0.1 / 0.4 m), m-c804bb84
 2/2 (0.8 / 1.4 m), ukraine-1 1/2 (0.8 m; seed 1 ran away). Consistent with the frozen-data table, too few seeds

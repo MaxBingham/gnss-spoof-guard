@@ -85,15 +85,17 @@ IMU + TRN 10/20, 0/20, 0/20. Open-loop bench: grad 66-79 % fix rate, median 0.5-
 
 ## Next steps
 
-1. Guard forced re-localization for thermal (rejections spread over seconds and mutually consistent) and widen
-   the search window after blind stretches (ukraine-1 seed 5).
-2. Route choice around featureless stretches (night-demo's ROADS route on ukraine-1) - evaluate with this branch's
-   gyro-bias fix.
-3. Re-run the final rows on night-thermal's final data (moving traffic, contrast 0.7); small sanity check below
-   if it finished.
-4. Rotor-drag model + drag-velocity fusion (death-v3) would make IMU + TRN degrade gracefully instead of running
-   away; needs a team decision (changes baseline physics).
-5. `yaw_feedback` closed-loop check; fusing the yaw correction would remove the ~0.8 deg compass bias.
+1. For the demo: fly ukraine-1 on night-demo's ROADS route (20/20 in their run with this fix) - the straight
+   route's forest is the remaining failure case.
+2. Blind-stretch recovery (ukraine-1 seeds 5, 9): search window from the distance flown blind x the velocity
+   uncertainty, and a slower handover from the INS after a blind stretch (accept only fixes that agree over several
+   seconds). The simple re-localization guard was not enough.
+3. Terrain following on the estimate is unsafe when the estimate runs away (seed 5 went down to 26 m AGL): use the
+   lidar height above ground as a floor for the altitude command.
+4. Rotor-drag model + drag-velocity fusion (death-v3) would let IMU + TRN degrade gracefully; needs a team
+   decision (changes baseline physics).
+5. `yaw_feedback` closed-loop check (the ~0.8 deg compass bias is constant; thermal yaw corrections could remove it).
+6. Full 20-seed rows of this branch on night-thermal's final data are in night-demo's eval; mine has 2 seeds each.
 
 ## Disclosure (pre-hackathon work)
 

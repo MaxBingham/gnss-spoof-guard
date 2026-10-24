@@ -7,6 +7,7 @@ controller is a `TruthPoseSource` injected from outside (dashboard "truth" switc
 
 from __future__ import annotations
 
+import copy
 import time
 
 import numpy as np
@@ -20,8 +21,8 @@ from .control.pose_source import EkfPoseSource, PoseSource
 from .estimation.ahrs import Ahrs
 from .estimation.ekf import Ekf
 from .messages import (
-    BaroMsg, CameraFrame, Decision, GnssMsg, Health, HealthState, ImuMsg, MagMsg, MotorCmd, PoseEstimate, RangeMsg, Setpoint,
-    VisualFix,
+    BaroMsg, CameraFrame, Decision, GnssMsg, Health, HealthState, ImuMsg, LidarMsg, MagMsg, MotorCmd, PoseEstimate,
+    RangeMsg, Setpoint, VisualFix,
 )
 from .perception.localizer import Localizer
 from .planning.health import HealthMonitor
@@ -44,6 +45,7 @@ class Autopilot:
         localizer: Localizer | None = None,
         truth_pose_source: PoseSource | None = None,
         pose_source: str = "ekf",
+        seed: int = 0,
     ) -> None:
         self.cfg = cfg
         self.bus = bus
@@ -52,6 +54,19 @@ class Autopilot:
         self.localizer = localizer
         self.ahrs = Ahrs(cfg.ahrs, start_yaw)
         self.ekf = Ekf(cfg.ekf, np.asarray(start_pos, float))
+        # GNSS-free track (V3.2): IMU + baro + vision only, started at the first GNSS fix, adopted on GNSS loss
+        self.ekf_free: Ekf | None = None
+        self.n_handover = 0
+        # TRN (V3.2): nadir lidar vs onboard DSM, a second GNSS-independent position source
+        self.trn = None
+        self.trn_fixes = 0  # fixes the TRN filter published
+        self.trn_accepted = 0  # ... fused into the main filter
+        self.last_trn_fix: VisualFix | None = None
+        if onboard_map is not None and cfg.trn.enabled:
+            from .perception.trn import TrnFilter
+            from .world.onboard_dsm import build_dsm
+            self.trn = TrnFilter(cfg.trn, build_dsm(onboard_map, cfg.trn.dsm_mpp), seed=seed)
+        self.sources_used: set[str] = set()  # position sources the main filter fused (gnss / vision / trn)
         self.health = HealthMonitor(cfg.health)
         self.controller = GeometricController(vehicle, cfg.gains)
         self._sources: dict[str, PoseSource] = {"ekf": EkfPoseSource(self)}
@@ -89,6 +104,7 @@ class Autopilot:
         bus.subscribe(topics.MAG, self.on_mag)
         bus.subscribe(topics.CAMERA_DOWN, self.on_camera)
         bus.subscribe(topics.GNSS, self.on_gnss)
+        bus.subscribe(topics.LIDAR, self.on_lidar)
 
     # ------------------------------------------------------------------ switches
 
@@ -133,10 +149,18 @@ class Autopilot:
         else:
             self.last_acc_world = self.ahrs.rotate_accel(msg.accel)
             self.ekf.predict(self.last_acc_world, dt, msg.t)
+            if self.ekf_free is not None:
+                self.ekf_free.predict(self.last_acc_world, dt, msg.t)
         if self.in_preflight or self.mission.done:
             self.ekf.update_zero_velocity()
+            if self.ekf_free is not None:
+                self.ekf_free.update_zero_velocity()
         if not self.ahrs.calibrating:
             self.ahrs.correct_tilt_world(self.ekf.take_tilt_correction())
+            if self.ekf_free is not None:  # same AHRS: its bias states lose what the main filter handed over
+                self.ekf_free.x[6:8] -= self.ekf.bias_handed
+        if self.ekf.gnss_lost_now(msg.t):
+            self._on_gnss_lost(msg.t)
         self._control(msg.t, dt)
 
     def on_baro(self, msg: BaroMsg) -> None:
@@ -145,6 +169,8 @@ class Autopilot:
             self._baro_n += 1
             return
         self.ekf.update_baro(msg.alt - self.baro_offset)
+        if self.ekf_free is not None:
+            self.ekf_free.update_baro(msg.alt - self.baro_offset)
 
     def on_range(self, msg: RangeMsg) -> None:
         if self.in_preflight:
@@ -163,13 +189,24 @@ class Autopilot:
 
     def on_gnss(self, msg: GnssMsg) -> None:
         """NAIVE baseline: every GNSS fix is fused as reported (no spoof check)."""
+        if self.ekf_free is None and self.cfg.ekf.gnss_free_track and not self.in_preflight:
+            self.ekf_free = copy.deepcopy(self.ekf)  # starts from the honest pre-flight / takeoff state
+            self.ekf_free.nis_log = []
         self.ekf.update_gnss(msg.t, msg.pos, msg.cov)
+        self.sources_used.add("gnss")
         self.health.on_gnss(msg.t, msg.pos)
         self.last_gnss = msg
 
     def on_camera(self, frame: CameraFrame) -> None:
         if self.localizer is None or self.onboard_map is None or self.in_preflight:
             return
+        free = self.ekf_free
+        if free is not None:  # GNSS-free track: own search window around its own prior. Called before the main
+            # localization so the panels (localizer.last_*) show the main one.
+            free_fix = self.localizer.update(frame, self.onboard_map,
+                                             free.pose(self.ahrs.R, self.ahrs.omega, self.ahrs.yaw, report=False))
+            if free_fix is not None:
+                free.update_fix(free_fix)
         # Search on the filter covariance. The reporting floor would widen this window and can
         # hand a spoofed prior a look at the truth.
         prior = self.pose(report=False)
@@ -180,12 +217,68 @@ class Autopilot:
         if fix is None:
             return
         self.loc_fixes += 1
-        self.ekf.update_fix(fix)
+        if self.ekf.update_fix(fix):
+            self.sources_used.add(fix.source)
         if self.ekf.last_decision:
             self.log_decision(frame.t, self.ekf.last_decision)
         self.health.on_fix(fix)
         self.last_fix = fix
         self.bus.publish(topics.FIX, fix)
+
+    @property
+    def trn_tracking(self) -> bool:
+        """TRN has converged before and is not lost (it then needs motion: no new terrain while hovering)."""
+        return self.trn is not None and self.trn.bias_known and not self.trn.needs_reset
+
+    @property
+    def receiving_gnss(self) -> bool:
+        return self.ekf.last_gnss_t is not None and not self.ekf.gnss_lost
+
+    def on_lidar(self, msg: LidarMsg) -> None:
+        """TRN: one lidar scan into the particle filter. Its prior is the GNSS-free track when there is one (TRN
+        must not inherit a spoof). Fixes go to the GNSS-free track always, to the main filter only while no GNSS
+        arrives (the naive GNSS baseline stays as it was)."""
+        if self.trn is None or self.in_preflight or self.mission.done:
+            return
+        ref = self.ekf_free if self.ekf_free is not None else self.ekf
+        pose = ref.pose(self.ahrs.R, self.ahrs.omega, self.ahrs.yaw)
+        if self.trn.needs_reset:
+            self.trn.reset(pose, msg.t, inflate=2.0)  # keeps the learned datum bias
+        fix = self.trn.step(msg, pose, ref.vel_var_growth)
+        if fix is None:
+            return
+        self.trn_fixes += 1
+        self.last_trn_fix = fix
+        v_ref = ref.x[3:5].copy()
+        if self.ekf_free is not None:
+            self.ekf_free.update_fix(copy.copy(fix), allow_reloc=False)
+        if self.receiving_gnss:
+            fix.accepted = False
+            self.trn.ins_corrected(ref.x[3:5] - v_ref)
+            return
+        accepted = self.ekf.update_fix(fix, allow_reloc=False)
+        self.trn.ins_corrected(ref.x[3:5] - v_ref)
+        if accepted:
+            self.trn_accepted += 1
+            self.sources_used.add("trn")
+            if self.ekf.last_decision:
+                self.log_decision(msg.t, self.ekf.last_decision.replace("vision fix", "TRN fix"))
+            self.health.on_fix(fix)
+        self.bus.publish(topics.FIX, fix)
+
+    def _on_gnss_lost(self, t: float) -> None:
+        """GNSS fixes stopped (jam / receiver off). Hand over to the GNSS-free track when it is healthy (it never
+        saw GNSS, so a spoof the naive main filter swallowed is gone at once); else inflate and re-localize."""
+        c = self.cfg.ekf
+        free = self.ekf_free
+        if (free is not None and free.last_fix_t is not None and t - free.last_fix_t < c.handover_max_fix_age_s
+                and free.sigma2_horizontal() < c.handover_max_sigma2):
+            jump = self.ekf.adopt(free)
+            self.n_handover += 1
+            self.log_decision(t, f"HANDOVER: GNSS lost, flying on the GNSS-free vision track (moved {jump:.1f} m, "
+                                 f"2-sigma {free.sigma2_horizontal():.1f} m)")
+        else:
+            self.log_decision(t, self.ekf.inflate_for_gnss_loss())
 
     # ------------------------------------------------------------------ control loop (IMU rate)
 
@@ -194,7 +287,7 @@ class Autopilot:
         ctrl_pose = self._sources[self.pose_source].get()
         if self.mission.phase == "CRUISE":
             self.health.reset_timer(t)
-        hs = self.health.update(t, est)
+        hs = self.health.update(t, est, trn_tracking=self.trn_tracking)
         self.health_state = hs
         fresh = self.range_agl is not None and t - self._range_t < 0.2
         self.mission.set_ground_sensing(self.range_agl if fresh else None, self.imu_still_s)

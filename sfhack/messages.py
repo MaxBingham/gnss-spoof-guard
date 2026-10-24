@@ -83,6 +83,16 @@ class CameraFrame:
 
 
 @dataclass
+class ThermalFrame:
+    """Downward LWIR frame. Orientation as the MuJoCo "down" camera: image top = forward, right = body right."""
+
+    t: float
+    seq: int
+    image_K: np.ndarray  # (H, W) float32 apparent temperature [K], row 0 = top
+    intrinsics: dict[str, float]  # pinhole: fx, fy, cx, cy, w, h (pixels)
+
+
+@dataclass
 class VisualFix:
     t: float  # timestamp of the camera frame the fix was computed from
     pos: np.ndarray  # (2,) x, y [m] world
@@ -94,6 +104,7 @@ class VisualFix:
     proc_ms: float = 0.0
     frame_seq: int = -1
     accepted: bool = True  # set by the EKF after Mahalanobis gating
+    quality: float = 1.0  # localizer confidence 0..1 (vision: NCC peak score); gates re-localization
 
 
 @dataclass

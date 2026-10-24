@@ -19,6 +19,7 @@ MAG = "mag"
 GNSS = "gnss"
 CAMERA_DOWN = "camera/down"
 CAMERA_FRONT = "camera/front"
+THERMAL = "camera/thermal"  # ThermalFrame: downward LWIR camera, apparent temperature in K
 FIX = "fix"
 POSE = "pose"
 HEALTH = "health"

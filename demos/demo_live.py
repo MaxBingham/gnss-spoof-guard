@@ -46,7 +46,7 @@ from liveview.hud import Hud, HudState
 from liveview.levers import LEVERS, LeverDeck
 from liveview.render import SceneRenderer
 from sfhack import bus as topics
-from sfhack.config import data_dir
+from sfhack.config import Config, data_dir, default_config
 from sfhack.degradation import Conditions
 from sfhack.degradation.cli import add_cli_args, conditions_from_args, parse_schedule
 from sfhack.degradation.models import gnss_sigma2_m
@@ -113,11 +113,12 @@ class LiveDemo:
     """One flight plus everything the jury sees. Truth: display + score only."""
 
     def __init__(self, seed: int, localizer: str, conditions: Conditions,
-                 schedule: list | None = None, reuse: FlightSystem | None = None, mission: str | None = None) -> None:
+                 schedule: list | None = None, reuse: FlightSystem | None = None, mission: str | None = None,
+                 cfg: Config | None = None) -> None:
         self.seed = seed
         self.mission = mission
         self.base_localizer = localizer if localizer != "off" else "mock"
-        self.fs = FlightSystem(pose_source="ekf", localizer=localizer, seed=seed,
+        self.fs = FlightSystem(cfg=cfg, pose_source="ekf", localizer=localizer, seed=seed,
                                reuse_sim=reuse.sim if reuse is not None else None,
                                conditions=conditions, schedule=list(schedule or []), mission=mission)
         self.loc_on = localizer != "off"
@@ -461,7 +462,28 @@ class LiveDemo:
             gnss_line=gnss_line, gnss_level=gnss_lvl, degradations=degr, levers=levers, controls=controls,
             sensors=sensors, wind=(w.speed, w.direction_deg, w.gust), weather=weather, banner=banner,
             scenario=self.deck.scenario_progress(), result=result, speed=speed, paused=paused,
-            recording=recording, labels=labels, place=f"mission {self.mission}" if self.mission else "Berkeley")
+            recording=recording, labels=labels, place=f"mission {self.mission}" if self.mission else "Berkeley",
+            sources_line=self.sources_line())
+
+    def sources_line(self) -> str:
+        """Age of the last fix each position source delivered to the estimate (TRN: its status until it does)."""
+        ap, t = self.fs.autopilot, self.t
+
+        def age(ts: float | None) -> str:
+            return "-" if ts is None else (f"{t - ts:.1f}s" if t - ts < 10 else "lost")
+
+        gt = ap.ekf.last_gnss_t
+        vt = ap.last_fix.t if ap.last_fix is not None and ap.last_fix.accepted else None
+        parts = [f"GNSS {'off' if gt is None else age(gt)}", f"VISION {age(vt)}"]
+        if ap.trn is None:
+            parts.append("TRN off")
+        else:
+            f = ap.last_trn_fix
+            if f is not None and f.accepted and t - f.t < 10:
+                parts.append(f"TRN {age(f.t)}")
+            else:
+                parts.append(f"TRN {ap.trn.status.split(' (')[0]}")
+        return "   ".join(parts)
 
     def map_panel(self, size: int) -> np.ndarray:
         om = self.fs.onboard_map
@@ -631,8 +653,10 @@ def _events(args) -> list[tuple[float, str]]:
 
 
 def _make_demo(args, reuse: LiveDemo | None = None) -> LiveDemo:
+    cfg = default_config()
+    cfg.trn.enabled = args.trn == "on"
     return LiveDemo(args.seed, args.localizer, args.conditions, parse_schedule(args.cond_at) if args.cond_at else None,
-                    reuse=reuse.fs if reuse is not None else None, mission=args.mission)
+                    reuse=reuse.fs if reuse is not None else None, mission=args.mission, cfg=cfg)
 
 
 # ---------------------------------------------------------------------------------------- viewer mode
@@ -910,6 +934,8 @@ def main() -> None:
     ap.add_argument("--events", default="", help="key presses at sim times, e.g. '45:C,55:C,30:P'")
     ap.add_argument("--scenario-at", type=float, default=None, help="play the spoof scenario at this sim time")
     ap.add_argument("--headless", action="store_true", help="no window: fly, print, score")
+    ap.add_argument("--trn", choices=["on", "off"], default="on",
+                    help="terrain-referenced navigation (lidar vs onboard DSM) as a GNSS-free position source")
     ap.add_argument("--record", nargs="?", const=str(data_dir() / "demo" / "v2_demo.mp4"), default=None,
                     help="render offscreen to an mp4 (default $SFHACK_DATA/demo/v2_demo.mp4)")
     ap.add_argument("--until", type=float, default=0.0, help="with --record: stop at this sim time")

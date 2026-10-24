@@ -10,11 +10,12 @@ cd C:\dev\night-thermal
 . .\scripts\env.ps1
 $env:UV_PROJECT_ENVIRONMENT = "$HOME\.venvs\sf-hack-night-thermal"     # env.ps1 sets the v5 venv; override after
 uv run python -m pytest tests -q                                        # full suite (thermal: tests/test_thermal.py)
-uv run python -m sfhack.thermal build --mission berkeley m-c804bb84 ukraine-1   # 9 / 12 / 42 s, rewrites the npz files
-uv run python -m sfhack.thermal build --mission berkeley --hour 21      # other hour (local clock); --contrast 0.4 = mild night
+uv run python -m sfhack.thermal build --mission berkeley m-c804bb84 ukraine-1   # 11 / 14 / 33 s; REWRITES the npz files (frozen for the final eval until 06:30)
+uv run python -m sfhack.thermal build --mission berkeley --hour 21      # other hour (local clock); --contrast 0.4 = mild night (default 0.7)
 uv run python demos/20_thermal_view.py --mission berkeley               # window: camera | ortho | prior (Esc, Space)
 uv run python demos/20_thermal_view.py --mission ukraine-1 --record     # mp4 -> $SFHACK_DATA\night\thermal\
-uv run python demos/21_thermal_figures.py                               # docs/figures/*
+uv run python demos/21_thermal_figures.py                               # docs/figures/* (writes nothing into missions)
+uv run python demos/22_thermal_matchability.py                          # is there signal? NCC vs predicted view, 60 m AGL
 ```
 
 In code:

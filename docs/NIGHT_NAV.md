@@ -85,7 +85,9 @@ What the benchmark changed:
 5. **Yaw.** The yaw search sign was inverted at first (yaw correction error 2.3 deg vs 0.95 deg compass error);
    fixed with a synthetic test. Grad's yaw correction (0.6-0.9 deg median error) is about as good as the compass
    (0.9-1.0 deg bias, constant per flight; the compass anchors yaw, so there is no yaw DRIFT). Feeding it back
-   (`thermal.yaw_feedback`) is implemented, off by default (not evaluated in closed loop yet).
+   (`thermal.yaw_feedback`) is implemented, off by default. Closed loop (final config + yaw_feedback, 10 seeds):
+   berkeley 10/10 (median 0.4 m), m-c804bb84 10/10 (1.0 m); mean |yaw error| 0.78 -> 0.32 deg and 0.76 -> 0.54
+   deg. ukraine-1: UKRAINE_YAW_PLACEHOLDER
 
 ## Closed-loop results
 

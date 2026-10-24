@@ -7,6 +7,7 @@ doors: TruthPoseSource (pose-source switch) and the MOCK localizer.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -104,6 +105,11 @@ class FlightSystem:
         self.night = night
         if night:
             localizer = "off"
+            if self.cfg.ahrs.tilt_bias_ki == 0.0 and self.cfg.thermal.night_tilt_bias_ki > 0.0:
+                # night (GNSS loss expected): learn the roll / pitch gyro bias from the EKF's tilt corrections
+                # (flight-local copy of the AHRS section; an explicit ahrs.tilt_bias_ki wins)
+                self.cfg = dataclasses.replace(self.cfg, ahrs=dataclasses.replace(
+                    self.cfg.ahrs, tilt_bias_ki=self.cfg.thermal.night_tilt_bias_ki))
         self.bus = Bus()
         self.seed = seed
         self.mission_dir = resolve_mission(mission) if mission is not None else None

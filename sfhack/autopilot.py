@@ -343,6 +343,23 @@ class Autopilot:
         self.last_thermal_fix = fix
         self.bus.publish(topics.FIX, fix)
 
+    def night_nav_source(self, t: float) -> tuple[str, str]:
+        """(active source, detail) for a HUD: GNSS while it is received, else the freshest accepted position
+        source among THERMAL / TRN (within 3 s), else INS (dead reckoning). Detail: age of each source's last
+        accepted fix."""
+        def age(ts: float | None) -> float | None:
+            return None if ts is None else t - ts
+        th = self.last_thermal_fix
+        tr = self.last_trn_fix
+        ages = {"GNSS": age(self.ekf.last_gnss_t) if self.receiving_gnss else None,
+                "THERMAL": age(th.t) if th is not None and th.accepted else None,
+                "TRN": age(tr.t) if tr is not None and tr.accepted else None}
+        detail = "  ".join(f"{k} {'-' if a is None else ('%.1fs' % a if a < 60 else 'lost')}" for k, a in ages.items())
+        if ages["GNSS"] is not None:
+            return "GNSS", detail
+        fresh = [(a, k) for k, a in ages.items() if k != "GNSS" and a is not None and a < 3.0]
+        return (min(fresh)[1] if fresh else "INS"), detail
+
     def _thermal_confirmed(self, fix: VisualFix) -> bool:
         """A thermal fix that would move the estimate by more than confirm_jump_m is held until a second fix
         within confirm_window_s shows the same innovation (within confirm_tol_m). A single wrong peak (repetitive

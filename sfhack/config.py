@@ -282,7 +282,7 @@ class ThermalConfig:
     yaw_feedback_gain: float = 0.05  # per accepted fix
     yaw_feedback_min_quality: float = 0.6
     yaw_feedback_max_deg: float = 5.0
-    method: str = "ncc"
+    method: str = "grad"  # best in the open-loop bench and the closed-loop eval (docs/NIGHT_NAV.md)
     tpl_mpp: float = 0.5  # m per template cell (= prior resolution)
     tpl_frac: float = 0.26  # template half size = this x height above the surface: the north-up square must fit
     # in the 56 x 45 m (at 60 m) footprint at any heading (inscribed half ~0.26 x h at 45 deg)

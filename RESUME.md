@@ -1,31 +1,43 @@
-# RESUME - branch v5-mission-planner (2026-10-23)
+# RESUME - branch night-nav (2026-10-24, night before the hackathon)
 
-## Done (all committed + pushed, 38/38 tests green incl. truth separation)
-- `sfhack/missionprep`: pick A/B -> parallel cached downloads (Overpass -> mirror -> OSM API; NAIP -> USGS z16;
-  3DEP 1 m DEM -> Copernicus GLO-30; real 3DEP LiDAR from the AWS EPT octree via laspy, synthetic fallback)
-  -> truth world (terrain hfield, extruded footprints, ortho roofs) + imperfect onboard package + route on the
-  onboard DSM (Dijkstra, avoids the Campanile) -> simulated upload with SHA-256 -> live viewer.
-- Contract: `docs/MAP_PACKAGE.md`. Object placer writes `world/target_scene.json` (STL loader in `PackageWorld`).
-- Flight: `FlightSystem(mission=id)`, `demo_live.py --mission id`. Vision localizer rectifies on the onboard DSM.
-  Launch pad at A + contact pads at A/B (hfield contact issues). 10/10 seeds arrive (berkeley mean 0.79 m,
-  campus-glade 1.21 m).
-- Timing: default Berkeley cold 37 s (99.6 s once when Overpass failed -> OSM API; timeouts now 60 + 25 s),
-  prepared mission 0.5-1.6 s, rebuild from cache 9-13 s. Real LiDAR worked (CA_AlamedaCo_3_2021).
-- One-click (last request): Prepare -> upload -> fly on one progress bar; checkbox "Fly automatically" (default on);
-  skip to fly when already prepared + uploaded; Fly button per mission; `/api/fly`, `/api/fly/status`,
-  `/api/fly/stop`; viewer output in `<mission>/viewer.log`, crash tail shown on the page; user Stop is not a crash.
-  Verified: API end-to-end (viewer alive after 10 s, stopped), page one-click, Fly button, Stop; unit test with
-  Popen mocked.
+Previous resume (V5 mission planner): `docs/RESUME_v5-mission-planner.md`.
+What happened tonight, numbers, what failed: `REPORT_night-nav.md`. Design + tables: `docs/NIGHT_NAV.md`.
 
-## Start it
-```
-. scripts/env.ps1                                   # venv ~/.venvs/sf-hack-v5
-uv run python -m sfhack.missionprep serve           # http://127.0.0.1:8765/ -> Prepare mission
-uv run python demos/demo_live.py --mission berkeley # direct
+## Setup (own venv, data outside the repo)
+
+```powershell
+$env:UV_PROJECT_ENVIRONMENT = "$HOME\.venvs\sf-hack-night-nav"   # env.ps1 keeps the V5 venv line; override it
+. scripts\env.ps1
+$env:UV_PROJECT_ENVIRONMENT = "$HOME\.venvs\sf-hack-night-nav"
+uv sync
+uv run python -m pytest tests -q                                  # 63 tests
 ```
 
-## Next / open
-- Chrome screenshots of the page timed out in this session: page verified via DOM/JS only; take a visual look.
-- Planner server once exited silently after ~40 min (no traceback): watch for it.
-- Cached rebuild is LAZ-decode bound (~5 s): cache the decoded cloud if < 10 s matters for rebuilds.
-- Object placer: fill `world/target_scene.json` (format in MAP_PACKAGE.md).
+## Night flight (GNSS off at 20 % of the route, thermal + TRN + IMU)
+
+```powershell
+# one seed, per-second trace
+uv run python demos/21_night_eval.py --mission berkeley --seeds 1 --methods grad --trace
+# the evaluation table (frozen mission copy, because night-thermal rebuilds thermal files in place)
+uv run python demos/21_night_eval.py --mission berkeley,m-c804bb84 --seeds 20 --methods grad,off,ncc,ncc+grad `
+    --mission-root "$env:SFHACK_DATA\night\nav_snap" --tag F --workers 11
+uv run python demos/21_night_eval.py --mission ukraine-1 --seeds 20 --methods grad,off --mission-root "$env:SFHACK_DATA\night\nav_snap" --tag F
+uv run python demos/21_night_eval.py --mission berkeley,m-c804bb84 --seeds 20 --methods grad --contrast 0.4 --tag F_c04 --mission-root "$env:SFHACK_DATA\night\nav_snap"
+# open-loop localizer benchmark (per method, perturbed priors)
+uv run python demos/22_bench_thermal.py --mission berkeley,m-c804bb84 --seeds 2 --methods ncc,grad,road,junction --sigmas 3,10
+# plots for docs/night_nav/
+uv run python demos/23_night_plots.py --mission berkeley,m-c804bb84,ukraine-1 --tags F_off,F_grad --out docs/night_nav
+```
+
+In code: `FlightSystem(cfg, mission=id, night=True, cruise_agl=60.0, conditions=Conditions().update({"gnss.mode": "ok"}))`,
+then `fs.update_conditions({"gnss.mode": "off"})`. Method: `cfg.thermal.method` (default `grad`; `off` = IMU + TRN).
+HUD helpers: `fs.autopilot.night_nav_source(t)`, `fs.autopilot.pose().sigma2_horizontal()`, `fs.thermal_sensor.last`.
+
+## Results so far
+
+See `REPORT_night-nav.md` (final table) and `$SFHACK_DATA/night/nav_eval/<mission>/<tag>/seed*.json` (per-flight
+JSON incl. per-second trace and every thermal fix).
+
+## Next
+
+See "Next steps" in `REPORT_night-nav.md`.

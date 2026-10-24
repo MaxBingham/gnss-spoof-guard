@@ -64,6 +64,12 @@ simulated downward LWIR camera, per the interface contract in NIGHT_PLAN.md. Det
 - Light insulated roofs come out at -6.6 K (literature typical -4..-6): slightly cold.
 - First renders were 203 ms per frame in flight: a second GL context costs ~50 ms per switch on Windows. Fixed
   by drawing into the simulator's context. ukraine-1 is still ~108 ms (GPU shared with the training).
+- Machine-wide (01:35): the Windows commit charge was nearly exhausted (1.7 GB free of 80.8 GB limit, 21.7 GB
+  RAM free). night-nav's eval workers died twice with BrokenProcessPool (~01:15, ~01:32), at the times of my
+  thermal rebuilds and a 2-worker QA flight. No process was killed; allocations most likely failed.
+  - Each sim worker is ~1.3 GB working set.
+  - Run fewer parallel workers, or enlarge the pagefile (a system setting, the user's call).
+  - I ran nothing heavy after that until the wrap-up.
 - Without LiDAR, canopy vs lawn is weak (ukraine-1 relies on OSM wood / meadow).
 - OSM quirks show up in the thermal map, consistently in truth and prior because the sim world has the same
   buildings: an OSM "Wheeler Hall" outline (GNIS import) sits where the ortho shows a plaza, and some campus

@@ -51,9 +51,10 @@ IMU + TRN 10/20, 0/20, 0/20. Open-loop bench: grad 66-79 % fix rate, median 0.5-
   velocity nor the AHRS tilt error in closed loop; after GNSS loss the tilt drifts ~1 deg per 10-20 s and the error
   grows quadratically (km-level runaways; ukraine-1 always). TRN helps over berkeley buildings only.
 - **Blind stretches are the real risk**: the ukraine-1 straight route crosses a ~250 m forest with a uniform prior
-  (~30 s without information). Before the gyro-bias fix 8/20 ukraine flights ran away there; after it 1 of the 9
-  selection seeds still does (seed 5: a wrong forced re-localization before the forest, then a wrong match after
-  it; it also descends to 26 m AGL because terrain following uses the wrong position).
+  (~30 s without information). Before the gyro-bias fix 8/20 ukraine flights ran away there; after it 2/20 still do
+  (seeds 5 and 9; seed 9 had arrived without the fix, so the gain is not uniform). Seed 5: a wrong forced
+  re-localization before the forest, then a wrong match after it; it also descends to 26 m AGL because terrain
+  following uses the wrong position - a real safety issue for terrain-following at night.
 - **Tried and rejected**: EKF accel-bias random walk x4 (wobble, flights stalled at waypoints), thermal fix
   covariance x4 (neutral), `yaw_feedback` (implemented, not evaluated; the compass bias is constant ~0.8 deg, there
   is no yaw drift).

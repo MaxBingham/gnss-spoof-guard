@@ -217,6 +217,8 @@ class NightState:
         self.hist: deque[tuple[float, float, float]] = deque(maxlen=2400)  # t, 2-sigma, true error
         self._next_hist = 0.0
         self.gnss_off_at: float | None = None
+        self.arrival: tuple[float, float] | None = None  # (t, |truth - B|) when the drone decides it is above B
+        self._n_dec = 0
         fs.bus.subscribe("fix", self._on_fix)
         self.prior_temp, self.prior_roads, self.prior_grid = self._load_prior(getattr(fs, "onboard_dir", None))
 
@@ -261,6 +263,13 @@ class NightState:
     def tick(self) -> None:
         d = self.demo
         self.feed.update()
+        if self.arrival is None:  # scored like demos/30_night_eval.py: truth vs B when the drone decides it is above B
+            ap = d.fs.autopilot
+            new = ap.decisions[self._n_dec:]
+            self._n_dec = len(ap.decisions)
+            if any(text.startswith(("ABOVE_B", "WAIT_FOR_FIX")) for _, text in new) or                     d.fs.mission.phase in ("DESCEND", "LAND", "LANDED"):
+                tr = d.fs.truth.state()
+                self.arrival = (d.t, float(np.linalg.norm(tr.pos[:2] - np.asarray(d.goal, float))))
         if d.t >= self._next_hist:
             self._next_hist = d.t + 0.25
             est, tr = d.fs.autopilot.pose(), d.fs.truth.state()
@@ -348,9 +357,9 @@ class NightComposer:
         t2 = time.perf_counter()
         card = self.hud_card(demo, speed, paused, recording)
         blend_rgba(img, np.asarray(card), m, m)
-        if demo.result is not None:
-            r = demo.result
-            ban = self._banner(f"{r.outcome} · {r.final_error:.1f} m from B", RED if not r.success else GREEN)
+        if ns.arrival is not None:  # tonight's scenario ends above B (the landing is not part of it)
+            ok = ns.arrival[1] <= 5.0
+            ban = self._banner(f"ABOVE B · {ns.arrival[1]:.1f} m from B" + ("" if ok else " (> 5 m)"), GREEN if ok else RED)
             blend_rgba(img, np.asarray(ban), (m + p(400) + self.W - m - tw - ban.width) // 2, m)
         elif demo.deck.banner is not None and demo.t - demo.deck.banner[0] < 4.0:
             ban = self._banner(demo.deck.banner[1], AMBER)

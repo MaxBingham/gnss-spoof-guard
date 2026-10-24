@@ -5,6 +5,10 @@ gimbal camera, the enemy's motion model (sfhack/sim/enemy.py), the bird flock, t
 Onboard: TrackerPilot (sfhack/mission/tracker_pilot.py) with the YOLO detector, fed only by bus messages.
 Base: the UMA-16 bearing (keys / UDP / script) and what arrives over the link.
 
+Base <-> drone transport (`comms`): "mavlink" (default) = MAVLink 2 over UDP loopback through sfhack/comms (base_link,
+drone_link; the link model gates every packet), "inproc" = the original in-process path (bus publish / direct calls).
+The tracker and the dashboard see the same objects either way (`received`, `rx_t`, the pilot's outbox).
+
 Truth is read here only to move the simulated world, to DISPLAY and to SCORE (frame-by-frame detection truth from
 the camera's segmentation buffer when `score=True`).
 """
@@ -72,7 +76,8 @@ class TrackScenario:
     def __init__(self, world: ew.EnemyWorld, seed: int = 0, detector=None, tcfg: TrackerConfig | None = None,
                  enemy_speed: float | None = 4.0, availability: float = 0.8, score: bool = False,
                  birds_near_route: bool = True, send_bearings: bool = True, forced_losses: int = 0,
-                 occlusion_s: float = 8.0, turn_deg: float = 30.0) -> None:
+                 occlusion_s: float = 8.0, turn_deg: float = 30.0, comms: str = "mavlink",
+                 fixed_ports: bool = True, qgc: bool | None = None) -> None:
         self.world, self.seed, self.score = world, seed, score
         self.tcfg = tcfg or TrackerConfig()
         m = self.model = world.model
@@ -141,6 +146,25 @@ class TrackScenario:
         self.prev_state = self.pilot.state
         self._read_truth()
         self.est = self.pilot.pose()
+        # base <-> drone transport
+        if comms not in ("mavlink", "inproc"):
+            raise ValueError(f"comms {comms!r}: 'mavlink' or 'inproc'")
+        self.comms = comms
+        self.mav = None
+        if comms == "mavlink":
+            from sfhack.comms.loopback import LoopbackPair
+
+            self.mav = LoopbackPair(self.pilot, self.bus, gate=self._on_air, fixed_ports=fixed_ports, qgc=qgc)
+            self.received, self.rx_t = self.mav.base.received, self.mav.base.rx_t
+            self.mav.step(self.t)
+
+    def _on_air(self) -> bool:
+        """MAVLink gate: the link model, except before takeoff (on the pad next to the base antenna)."""
+        return self.link.is_up or self.pilot.state == "WAIT"
+
+    def close(self) -> None:
+        if self.mav is not None:
+            self.mav.close()
 
     @property
     def t(self) -> float:
@@ -166,7 +190,20 @@ class TrackScenario:
             if self.birds_near_route:  # some birds over the approach, so the detector meets them
                 u = en.az_dir(az)
                 self.birds.place_near(np.array([u * r for r in np.linspace(120, 480, 6)]), 0.5)
-        if self.pilot.on_ground and self.pilot.state == "WAIT":
+        if self.mav is not None:
+            base = self.mav.base
+            if base.drone_state in (None, "WAIT"):  # launch over MAVLink; the drone answers in this step
+                cmd = base.m.MAV_CMD_NAV_TAKEOFF
+                base.launch(t, az, self.first_heard_t)
+                self.mav.exchange(t)
+                ack = base.acks.get(cmd)
+                if ack is None:
+                    base.cancel(cmd)
+                    return f"enemy heard at {az:05.1f} deg ({src}): launch NOT acknowledged"
+                if ack[1] == base.m.MAV_RESULT_ACCEPTED:
+                    self.launch_t = t
+                    return f"enemy heard at {az:05.1f} deg ({src}): LAUNCH"
+        elif self.pilot.on_ground and self.pilot.state == "WAIT":
             if self.pilot.launch(az, t, self.first_heard_t):
                 self.launch_t = t
                 return f"enemy heard at {az:05.1f} deg ({src}): LAUNCH"
@@ -192,14 +229,26 @@ class TrackScenario:
             if fr is not None and self.score and pilot.state in ("SEARCH", "DETECTED", "TRACKING", "LOST"):
                 self._score_frame(fr.t)
             up = self.link.step(t)
+            mav = self.mav
+            if mav is not None:
+                mav.step(t)
             if self.enemy.active and self.acoustic.due(t):
                 az, sig = self.acoustic.measure(t, self.enemy.pose.pos)
-                if up and self.send_bearings and not pilot.on_ground:
+                if mav is not None:
+                    if self.send_bearings and mav.base.drone_airborne:
+                        self.bearings_sent += mav.base.send_bearing(t, az, sig)
+                        mav.exchange(t)
+                elif up and self.send_bearings and not pilot.on_ground:
                     self.bus.publish(topics.UPLINK_BEARING, BearingUpdate(t, az, self.first_heard_t, sig))
                     self.bearings_sent += 1
             if self.forced_losses:
                 self._losses(t)
-            if up:
+            if mav is not None:
+                if self.recall_pending:
+                    mav.base.recall(t)
+                    self.recall_pending = False
+                    mav.exchange(t)
+            elif up:
                 if len(pilot.outbox):
                     for r in pilot.outbox.drain():
                         self.received.append(r)

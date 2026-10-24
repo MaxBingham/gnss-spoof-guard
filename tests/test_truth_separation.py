@@ -45,7 +45,8 @@ THERMAL_TRUTH_PATTERNS = [
 ]
 
 
-ONBOARD = ("autopilot.py", "estimation/", "control/", "planning/", "perception/", "world/onboard_map.py", "mission/")
+ONBOARD = ("autopilot.py", "estimation/", "control/", "planning/", "perception/", "world/onboard_map.py", "mission/",
+           "comms/")  # comms: the drone and base MAVLink endpoints get the link state only as a callable
 LEVER_PATTERNS = [  # the degradation levers are simulated reality: the drone must not know it is spoofed
     r"\bdegradation\b", r"\bConditions(Msg)?\b", r"\bCONDITIONS\b", r"\.conditions\b",
 ]

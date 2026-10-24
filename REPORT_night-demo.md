@@ -1,7 +1,7 @@
 # REPORT - night-demo (Fri 2026-10-23 23:30 -> Sat 07:00)
 
 Agent night-demo: Ukraine mission, route choice, night viewer, final integration + eval. Branch `night-demo` in
-`C:\dev\night-demo` (based on origin/v5-mission-planner; merged night-thermal 146a89f and night-nav 651b398).
+`C:\dev\night-demo` (based on origin/v5-mission-planner; merged night-thermal 146a89f and night-nav up to cd6de0e; the eval build is b5409f4 = night-nav 651b398).
 Nothing pushed. Commands to continue: `RESUME.md`. Saturday demo script: `DEMO_NIGHT.md`.
 
 ## Final eval (night 23:00, 60 m AGL, GNSS completely off from 20 % of the route, 20 seeds)
@@ -119,8 +119,12 @@ Reading it:
 - **Landing after arrival (not tonight's scope, found while recording)**: berkeley final build, seed 0: ABOVE B at
   0.7 m, then below the thermal localizer's minimum height (10 m) there are no fixes; the drone hovers in LAND and
   the estimate runs away (2-sigma 19.6 m at t = 139 s, estimate error up to 1.7 km later, "landed" 6.7 m from B).
-  The pre-fix take landed 1.38 m, ukraine-1 final build 1.43 m. Reported to night-nav (open issue in their
-  report). The backup video `berkeley_night_final_trim.mp4` ends during the clean descent.
+  The pre-fix take landed 1.38 m, ukraine-1 final build 1.43 m. night-nav reproduced it (6.0 m with the fix,
+  0.9 m with `night_tilt_bias_ki = 0`, but 5.9 m when only freezing the integral during the descent): the
+  velocity error jumps 0.07 -> 0.43 m/s at ~19 m AGL (last thermal fixes during the descent manoeuvre) and nothing
+  corrects it below the thermal minimum height. A landing-phase problem (fixes too high, no gating in the
+  descent), open in REPORT_night-nav.md. The backup video `berkeley_night_final_trim.mp4` ends during the clean
+  descent.
 - **Sim speed**: night mode costs ~230 ms per thermal frame (camera render ~97 ms, localizer ~135 ms) and ran at
   ~0.5x real time here (GPU busy with training); the viewer showed 2-3 fps.
 - Everything is simulated: thermal world, camera and traffic are night-thermal's model, calibrated to literature

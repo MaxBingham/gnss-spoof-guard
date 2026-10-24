@@ -188,7 +188,9 @@ def add_mast(w) -> None:
     _deco(w, type=mujoco.mjtGeom.mjGEOM_CYLINDER, pos=[0, 0, 0.07], size=[12, 0.01], rgba=[0.2, 0.8, 1.0, 0.35])
 
 
-def build_model(world: str = "farm"):
+def build_model(world: str = "farm", extra=None):
+    """Compile a world (farm / simple). `extra(spec)` may add bodies before the compile (e.g. the enemy drone and
+    birds of demos/52_track_enemy.py, sfhack/sim/enemy.py)."""
     spec = mujoco.MjSpec.from_file(str(X2_SCENE))
     spec.option.timestep = 0.002
     # clip planes relative to extent: 1 m .. 6 km (a 400 000:1 range made thin slabs z-fight)
@@ -229,6 +231,8 @@ def build_model(world: str = "farm"):
     spec.body("x2").pos = [PAD[0], PAD[1], 0.25]
     for k in list(spec.keys):
         spec.delete(k)
+    if extra is not None:
+        extra(spec)
     return spec.compile(), info
 
 

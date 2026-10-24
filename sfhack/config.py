@@ -6,6 +6,7 @@ Frames: world = local ENU (x east, y north, z up), origin = map center. Yaw 0 = 
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -494,3 +495,65 @@ class AcousticConfig:
     # Mounting: compass bearing of the array's +x axis, and whether the mics face up (flat on the table).
     x_axis_bearing_deg: float = 0.0
     mics_up: bool = True
+
+
+@dataclass
+class TrackerConfig:
+    """Enemy-drone tracker (onboard: sfhack/perception/drone_detector.py, sfhack/mission/tracker_pilot.py).
+
+    The UMA-16 bearing to an enemy drone launches our drone; it searches along the bearing with a gimballed front
+    camera, confirms the enemy with a YOLO detector, follows it at a standoff and reports it to the base."""
+
+    # gimbal camera (front, 2-axis pan / tilt, level horizon)
+    cam_w: int = 640
+    cam_h: int = 480
+    hfov_deg: float = 60.0
+    cam_hz: float = 10.0
+    pan_limit_deg: float = 170.0
+    tilt_min_deg: float = -60.0
+    tilt_max_deg: float = 30.0
+    gimbal_rate_deg: float = 150.0  # slew rate per axis
+    # detector (YOLO nano, weights trained on synthetic renders: demos/53-55)
+    weights: str = "tracker/detector/train/weights/best.pt"  # relative to $SFHACK_DATA
+    imgsz: int = 640
+    conf_min: float = 0.10  # kept by the network (the tracker applies its own thresholds)
+    iou_nms: float = 0.5
+    drone_conf: float = 0.35  # a drone detection counts as a hit at or above this
+    target_size_m: float = 1.6  # nominal enemy size tip to tip (range from apparent size)
+    size_sigma_frac: float = 0.15  # 1-sigma range error from the unknown aspect (side / diagonal view)
+    bearing_sigma_deg: float = 1.0  # camera ray direction (gimbal encoder + AHRS yaw)
+    # confirmation: DETECTED -> TRACKING
+    confirm_hits: int = 3
+    confirm_window: int = 5  # frames
+    gate_m: float = 25.0  # a hit farther than this from the predicted track (3D) is a different object
+    detected_timeout_s: float = 2.5  # DETECTED without confirmation -> back to SEARCH
+    # assumed enemy scenario (from the base): first sound = enemy at this range, approaching
+    assumed_range_m: float = 500.0
+    assumed_speed: float = 4.0
+    assumed_agl: float = 40.0
+    min_assumed_range_m: float = 80.0
+    # flight
+    search_speed: float = 10.0
+    search_agl: float = 38.0
+    search_pan_deg: float = 25.0  # gimbal sweep half-width around the bearing direction
+    search_sweep_s: float = 4.0
+    track_dist_m: float = 15.0  # standoff (horizontal)
+    track_above_m: float = 4.0
+    min_dist_m: float = 10.0  # never closer (3D)
+    track_speed_max: float = 12.0
+    lost_after_s: float = 2.0  # TRACKING without a hit
+    lost_circle_r: float = 20.0
+    lost_search_s: float = 40.0  # LOST longer than this -> SEARCH along the latest bearing
+    # battery (flight time budget)
+    battery_s: float = 900.0
+    reserve_s: float = 60.0
+    home_speed: float = 8.0
+    # reports to the base
+    report_every_s: float = 1.0
+    snapshot_px: int = 96
+
+    def vfov_deg(self) -> float:
+        return math.degrees(2 * math.atan(math.tan(math.radians(self.hfov_deg) / 2) * self.cam_h / self.cam_w))
+
+    def focal_px(self) -> float:
+        return (self.cam_w / 2) / math.tan(math.radians(self.hfov_deg) / 2)

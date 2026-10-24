@@ -220,3 +220,36 @@ def to_jsonable(obj: Any) -> Any:
     if hasattr(obj, "__dataclass_fields__"):
         return {k: to_jsonable(getattr(obj, k)) for k in obj.__dataclass_fields__ if k != "image"}
     return obj
+
+
+@dataclass
+class GimbalCmd:
+    """Onboard -> front gimbal (topic `camera/gimbal/cmd`): pan relative to the heading (deg, + = left / CCW) and tilt
+    up from the horizon (deg). The gimbal slews there at its rate limit; the horizon stays level."""
+
+    t: float
+    pan_deg: float
+    tilt_deg: float
+
+
+@dataclass
+class GimbalFrame:
+    """Front camera on the 2-axis gimbal (topic `camera/gimbal`): RGB plus the gimbal encoder readings at exposure.
+    Pixel -> world ray: optical axis = heading + pan, tilt up from the horizon; level horizon (no roll); square
+    pixels, principal point at the image centre, `hfov_deg` across the width."""
+
+    t: float
+    seq: int
+    image: np.ndarray  # (H, W, 3) uint8 RGB, row 0 = top
+    hfov_deg: float
+    pan_deg: float
+    tilt_deg: float
+
+
+@dataclass
+class BearingUpdate:
+    """A new UMA-16 bearing to the enemy from the base (topic `link/bearing`), delivered only while the link is up."""
+
+    t: float  # when the base sent it
+    az_deg: float  # compass degrees from the array
+    first_heard_t: float  # when the base first heard the enemy (the 500 m assumption starts there)

@@ -32,6 +32,9 @@ DISTURBANCE = "disturbance"
 CONDITIONS = "conditions"  # ConditionsMsg: degradation levers for the simulator (never read onboard)
 LIDAR = "lidar"  # nadir multi-beam lidar
 DECISION = "decision"  # (t, text): onboard decisions (re-localization, landing, timeout, ...)
+CAMERA_GIMBAL = "camera/gimbal"  # GimbalFrame: front camera on the 2-axis gimbal (enemy-drone tracker)
+GIMBAL_CMD = "camera/gimbal/cmd"  # GimbalCmd: onboard -> gimbal pan / tilt
+UPLINK_BEARING = "link/bearing"  # BearingUpdate: base -> drone over the radio link (only while it is up)
 
 
 class Bus:

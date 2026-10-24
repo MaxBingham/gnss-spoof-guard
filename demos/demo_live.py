@@ -676,6 +676,8 @@ def _events(args) -> list[tuple[float, str]]:
 def _make_demo(args, reuse: LiveDemo | None = None) -> LiveDemo:
     cfg = default_config()
     cfg.trn.enabled = args.trn == "on"
+    if args.thermal_hz is not None:  # live-demo speed lever: fewer thermal frames (render + localizer ~230 ms each)
+        cfg.thermal.camera_hz = args.thermal_hz
     return LiveDemo(args.seed, args.localizer, args.conditions, parse_schedule(args.cond_at) if args.cond_at else None,
                     reuse=reuse.fs if reuse is not None else None, mission=args.mission,
                     night=args.night, cruise_agl=args.cruise_agl, cfg=cfg)
@@ -991,6 +993,8 @@ def main() -> None:
     ap.add_argument("--quit-after", type=float, default=0.0, help=argparse.SUPPRESS)  # wall s, viewer smoke test
     ap.add_argument("--night", action="store_true", help="night flight: dark scene, thermal camera panel, key N "
                     "switches GNSS completely off / on")
+    ap.add_argument("--thermal-hz", type=float, default=None, help="night: thermal camera rate (default 5 Hz; "
+                    "2.5 roughly doubles the sim speed on a slow machine, see DEMO_NIGHT.md)")
     ap.add_argument("--cruise-agl", type=float, default=None, help="re-plan the route at this height above the "
                     "onboard DTM (needs night-nav's FlightSystem; missions built with --agl already have it)")
     add_cli_args(ap)

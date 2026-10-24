@@ -11,6 +11,7 @@ Rows (onboard configuration, everything else equal):
             simulator's truth raster; the onboard prior still predicts the full contrast). night-research: ASTER
             night scenes over Berkeley show only ~1-3 K road contrast on mild nights vs the 5-10 K hot-day model.
   thermal_rw  thermal with cfg.ekf.acc_bias_rw = 0.04 (night-nav's candidate fix against overconfident runaways)
+  thermal_2hz5  thermal with the camera at 2.5 Hz instead of 5 (the live demo's speed lever)
 
 Scoring (harness, truth): ARRIVAL error = horizontal |truth - B| when the drone decides it is above B (first
 ABOVE_B / WAIT_FOR_FIX decision, else the start of DESCEND). Success = arrival error <= 5 m. The landing itself is
@@ -44,6 +45,7 @@ ROWS = {
     "straight": {"night": True, "night_route": False},
     "low_contrast": {"night": True, "contrast": 0.4},
     "thermal_rw": {"night": True, "acc_bias_rw": 0.04},
+    "thermal_2hz5": {"night": True, "camera_hz": 2.5},
 }
 
 
@@ -93,6 +95,8 @@ def fly(job: dict) -> dict:
             kw["night"] = True
         else:
             notes.append("FlightSystem has no night mode on this branch: day localizer off")
+    if "camera_hz" in row:  # live-demo speed lever (demo_live.py --thermal-hz)
+        cfg.thermal.camera_hz = row["camera_hz"]
     if "acc_bias_rw" in row:  # night-nav's candidate fix (bce976d): let the bias states track the tilt drift
         cfg.ekf.acc_bias_rw = row["acc_bias_rw"]
     if "thermal_method" in row:

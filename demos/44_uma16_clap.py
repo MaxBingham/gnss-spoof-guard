@@ -50,11 +50,13 @@ def main():
     ap.add_argument("--out", type=Path, default=None, help="bearing.json path (default $SFHACK_DATA/acoustic/)")
     ap.add_argument("--truth-az", type=float, default=None, help="true compass bearing of the clapper")
     ap.add_argument("--memory", type=float, default=None, help="claps older than this (s) are forgotten")
-    ap.add_argument("--threshold", type=float, default=None, help="onset ratio over the noise floor (default 8)")
+    ap.add_argument("--threshold", type=float, default=None, help="onset ratio over the noise floor (default 8; mics down 3)")
     ap.add_argument("--min-rms", type=float, default=None,
-                    help="absolute onset level, 1-3.5 kHz band RMS (default 1.5e-3; mics down 1.2e-3)")
+                    help="absolute onset level, 1-3.5 kHz band RMS (default 1.5e-3; mics down 1.5e-4)")
     ap.add_argument("--max-s", type=float, default=None, help="stop after this many seconds of audio")
     ap.add_argument("--no-record", action="store_true", help="live: do not save the raw 16-ch audio")
+    ap.add_argument("--max-el", type=float, default=32.0,
+                    help="ignore sounds from higher than this (deg): typing at the laptop arrives at 35-50, claps 10-30")
     ap.add_argument("--udp", type=str, default=None,
                     help="host[:port] of the sim (demos/50_base_3d.py, port 5005): send every new bearing")
     ap.add_argument("--calibrate", action="store_true",
@@ -88,14 +90,14 @@ def main():
     ccfg = ClapConfig(fs=src.fs)
     if args.memory is not None:
         ccfg.memory_s = args.memory
+    if not mount.mics_up:
+        # Mics into the cardboard: claps from a few metres arrive only 3-4x over the room (band RMS ~2e-4), and
+        # typing at the laptop is as loud, so level cannot separate them; --max-el (elevation) does.
+        ccfg.threshold_ratio, ccfg.min_rms, ccfg.min_peak = 3.0, 1.5e-4, 0.2
     if args.threshold is not None:
         ccfg.threshold_ratio = args.threshold
     if args.min_rms is not None:
         ccfg.min_rms = args.min_rms
-    elif not mount.mics_up:
-        # mics into the cardboard: real claps measured 1.7e-3..1e-2, typing / voices 3e-4..1.4e-3
-        ccfg.min_rms = 1.2e-3
-        ccfg.min_peak = 0.2
     det = ClapBearing(ccfg, mount, array_enu)
     udp = None
     if args.udp:
@@ -114,6 +116,11 @@ def main():
                 break
             t = src.t()
             clap = det.process(x, t)
+            if clap is not None and clap.el_deg > args.max_el:
+                det.claps.remove(clap)
+                print(f"ignored t={clap.t:6.2f}s  compass {clap.compass_az_deg:5.1f} deg  el {clap.el_deg:4.1f} "
+                      f"(above --max-el {args.max_el:.0f}: keyboard / laptop, not a person)")
+                clap = None
             if clap is not None:
                 b = det.bearing(t)
                 b.save(out)

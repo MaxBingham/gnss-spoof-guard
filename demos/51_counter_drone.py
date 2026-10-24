@@ -21,10 +21,11 @@ they persist 1 s (then the bearing jumps there).
 Our drone knows only what the array sends (bearing + sigma, about 5 Hz), not the range:
   WAIT -> TAKEOFF (sound heard for 1.5 s) -> INTERCEPT: fly out along the audio ray at 15 m/s, leading the
   bearing rate, the gimbal camera looking along the ray. At ~100 mph. -> STRIKE: the camera confirmed the
-  intruder (3 hits in 2 s); fly straight at it on the camera estimate -> STRUCK inside 8 m, then home.
-  LOST (no hit for 3 s): back onto the audio ray at the range the camera measured.
+  intruder (3 hits in 2 s). From here the run-in is the camera only: fly straight at the latest image
+  estimate, and a silent array does not abort it. STRUCK inside 8 m, then home.
+  LOST (no camera hit for 3 s): back onto the audio ray at the range the camera measured.
   Short dropouts: keep flying the last bearing + rate (extrapolated up to 3 s).
-  No sound for 15 s, or 1500 m out (never further) -> RETURN -> DESCEND -> LANDED.
+  No sound for 15 s while still searching, or 1500 m out (never further) -> RETURN -> DESCEND -> LANDED.
 
 Camera (a simulated detector, not a neural net): 20 x 15 deg zoom on a gimbal, 5 frames/s. A frame detects the
 intruder when it is inside the field of view, a ray from the camera reaches it (terrain, trees and buildings
@@ -32,7 +33,9 @@ occlude), and then with probability 0 at 3 px rising to 0.9 at 8 px of apparent 
 ~280 m). Range from the apparent size (+-5 %), direction from the pixel (+-0.3 deg).
 
 Keys: LEFT / RIGHT move a manual sound bearing by 5 deg and count as hearing it (no array needed), S silences the
-manual sound, C overview / chase camera, V hides the camera picture, 1 / 2 / 4 sim speed, BACKSPACE resets.
+manual sound, C overview / chase camera (during the intercept this lets go of the automatic close-up), V hides
+the camera picture, 1 / 2 / 4 sim speed, BACKSPACE resets. On camera lock the view frames both drones until
+a few seconds after the hit.
 """
 from __future__ import annotations
 
@@ -58,6 +61,7 @@ PAD, az_to_dir, add_line, add_sphere, add_label = base.PAD, base.az_to_dir, base
 HUNT_AGL = 55.0            # our drone while searching (the intruder flies higher: the camera looks a little up)
 HUNT_SPEED = 45.0          # ~100 mph: a fast quad can do this; the run-in uses the same speed
 STRIKE_M = 8.0             # camera-guided run-in counts as a strike inside this (m)
+INTERCEPT_HOLD_S = 6.0     # keep the close-up this long after the hit
 APPROACH = 15.0            # intruder closes on the base along the sound line (m/s)
 R_MIN = 50.0               # it never comes closer than this
 STANDOFF = 40.0
@@ -66,7 +70,8 @@ LEAD_S = 4.0               # aim where the bearing will be in this many seconds
 FOV_H, FOV_V = 20.0, 15.0
 CAM_W, CAM_H = 640, 480
 PIC_W, PIC_H = 1280, 960     # the camera picture in the viewer corner (render size)
-PIC_FRAC = 0.45            # ... drawn this fraction of the window width
+PIC_FRAC = 0.34            # ... drawn this fraction of the window width
+BANNER_FRAC = 0.5          # the state banner on top: this fraction of the window width
 FRAME_DT = 0.2
 SPAN = 1.2                 # intruder size for the pixel count (m)
 PX_MIN, PX_FULL, P_MAX = 3.0, 8.0, 0.9
@@ -407,6 +412,7 @@ class Hunter(base.Mission):
         self.est: np.ndarray | None = None
         self.r_est: float | None = None   # target range from the base, known once the camera has confirmed it
         self.struck = False
+        self.t_struck: float | None = None
         self.t_launch: float | None = None
         self.t_found: float | None = None
 
@@ -470,14 +476,13 @@ class Hunter(base.Mission):
             self._move_xy(az_to_dir(az) * r_goal, HUNT_SPEED, dt)
             self._terrain(dt, self.agl)
         elif s == "STRIKE":
-            if audio.silent_for(t) > GIVE_UP_S:   # the sound stopped: the demo is over
-                self._go("RETURN", t)
-                return
+            # The camera has the intruder: steer on the image estimate only. Sound does not abort this.
             if t - self.t_hit > LOST_S:
                 self._go("LOST", t)
                 return
             if float(np.linalg.norm(pos - self.est)) < STRIKE_M:
                 self.struck = True
+                self.t_struck = t
                 self._go("RETURN", t)
                 return
             self._move_xy(self.est[:2], HUNT_SPEED, dt)
@@ -653,6 +658,7 @@ class Demo:
         self.cam = Camera(self.m, self.d, self.rng)
         self.next_frame = 0.0
         self.trail: list[np.ndarray] = []
+        self.intruder_trail: list[np.ndarray] = []
         self.track_err: list[float] = []
         self.max_out = 0.0
 
@@ -694,6 +700,9 @@ class Demo:
         self.max_out = max(self.max_out, float(np.linalg.norm(d.qpos[0:2])))
         if not self.trail or np.linalg.norm(d.qpos[0:3] - self.trail[-1]) > 4:
             self.trail = (self.trail + [d.qpos[0:3].copy()])[-500:]
+        ip = self.intruder.pos
+        if ip is not None and (not self.intruder_trail or np.linalg.norm(ip - self.intruder_trail[-1]) > 4):
+            self.intruder_trail = (self.intruder_trail + [ip.copy()])[-500:]
 
     # -- drawing ----------------------------------------------------------------------------------------
     def draw(self, scn, eye) -> None:
@@ -721,12 +730,14 @@ class Demo:
                     add_sphere(scn, [*xy, float(g(*xy)) + 2.0], 1.2,
                                [1.0, 0.5, 0.1, 0.8 * k] if ok else [0.6, 0.6, 0.6, 0.6 * k])
         if it.pos is not None:
-            draw_quad(scn, it.pos, it.yaw, t)
-            pin(scn, it.pos, eye, [0.9, 0.1, 0.1, 0.9], f"INTRUDER  {it.range_from_base():.0f} m (unknown to X2)", g)
+            quad_marker(scn, it.pos, it.yaw, t, eye, RED_BODY, RED_ROTOR, f"INTRUDER  {it.range_from_base():.0f} m")
         p = self.d.qpos[0:3].copy()
-        pin(scn, p, eye, [1.0, 0.75, 0.0, 0.85], "X2", g)
+        quad_marker(scn, p, quat_yaw(self.d.qpos[3:7]), t, eye, GREEN_BODY, GREEN_ROTOR, "X2", min_dist=25.0)
+        self._draw_intercept(scn, p, it, h, t)
         for p0, p1 in zip(self.trail[:-1], self.trail[1:]):
             add_line(scn, p0, p1, 0.25, [0.2, 0.9, 1.0, 0.8])
+        for p0, p1 in zip(self.intruder_trail[:-1], self.intruder_trail[1:]):
+            add_line(scn, p0, p1, 0.2, [0.9, 0.15, 0.12, 0.75])
         if h.state not in ("WAIT", "LANDED"):
             locked = h.state == "STRIKE"
             c = self.cam.pos()
@@ -738,6 +749,53 @@ class Demo:
                 add_line(scn, c, c + L * (fwd + sx * th * right + sy * tv * up), 0.15, col)
             if locked and h.est is not None:
                 add_sphere(scn, h.est, 3.0, [0.2, 1.0, 0.3, 0.4])
+
+    def showing_intercept(self) -> bool:
+        """Camera lock, and a few seconds after the hit, while the close-up is worth keeping."""
+        h, t = self.hunter, self.d.time
+        return h.state == "STRIKE" or (h.t_struck is not None and t - h.t_struck < INTERCEPT_HOLD_S)
+
+    def _draw_intercept(self, scn, p, it, h, t) -> None:
+        """The run-in: X2 trail is cyan, intruder trail is red, and while locked a line joins them."""
+        if it.pos is None or not self.showing_intercept():
+            return
+        gap = float(np.linalg.norm(it.pos - p))
+        col = [0.25, 1.0, 0.35, 0.95] if h.struck else [1.0, 0.25, 0.15, 0.95]
+        add_line(scn, p, it.pos, float(np.clip(0.004 * gap, 0.35, 2.5)), col)
+        mid = 0.5 * (np.asarray(p, float) + it.pos)
+        add_label(scn, mid + [0, 0, max(6.0, 0.04 * gap)], "HIT" if h.struck else f"gap {gap:.0f} m", col)
+        if h.est is not None and not h.struck:
+            add_line(scn, p, h.est, 0.2, [0.3, 1.0, 0.45, 0.55])
+            add_sphere(scn, h.est, STRIKE_M, [0.2, 1.0, 0.35, 0.12])
+
+    def banner(self) -> str:
+        """The big state line on top of the viewer."""
+        h = self.hunter
+        if h.struck:
+            return "TARGET HIT"
+        return {"WAIT": "STANDBY", "TAKEOFF": "LAUNCH", "INTERCEPT": "INTERCEPT", "STRIKE": "STRIKE",
+                "LOST": "INTERCEPT", "RETURN": "RETURN TO BASE", "DESCEND": "RETURN TO BASE",
+                "LANDED": "STANDBY"}.get(h.state, h.state)
+
+    def banner_color(self) -> tuple[int, int, int]:
+        h = self.hunter
+        if h.struck:
+            return (30, 170, 60)
+        return {"WAIT": (90, 90, 90), "TAKEOFF": (30, 130, 200), "INTERCEPT": (220, 140, 0), "STRIKE": (210, 25, 20),
+                "LOST": (220, 140, 0), "LANDED": (90, 90, 90)}.get(h.state, (30, 130, 200))
+
+    def hud_short(self) -> str:
+        """One small line under the picture: bearing, ranges."""
+        a, it = self.audio, self.intruder
+        p = self.d.qpos[0:3]
+        parts = ["no sound" if a.az is None else f"bearing {a.az:5.1f} deg" + ("" if a.hearing(self.d.time) else
+                                                                               " (silent)")]
+        if it.pos is not None:
+            parts.append(f"intruder {it.range_from_base():.0f} m")
+        parts.append(f"X2 {np.linalg.norm(p[:2]):.0f} m")
+        if it.pos is not None and self.hunter.state not in ("WAIT", "LANDED"):
+            parts.append(f"gap {np.linalg.norm(p - it.pos):.0f} m")
+        return "   |   ".join(parts)
 
     def hud(self) -> str:
         a, h, it, r = self.audio, self.hunter, self.intruder, self.cam.last
@@ -771,29 +829,38 @@ def _geom(scn, gtype, size, pos, mat, rgba) -> None:
                             np.asarray(rgba, float))
 
 
-def draw_quad(scn, p, yaw: float, t: float) -> None:
-    """The intruder: body, two crossed arms, four rotor discs (1.2 m motor to motor)."""
+RED_BODY, RED_ROTOR = (0.55, 0.05, 0.05, 1.0), (0.85, 0.1, 0.1, 0.6)
+GREEN_BODY, GREEN_ROTOR = (0.05, 0.5, 0.12, 1.0), (0.15, 0.9, 0.3, 0.6)
+
+
+def draw_quad(scn, p, yaw: float, t: float, scale: float = 1.0, body=RED_BODY, rotor=RED_ROTOR) -> None:
+    """A quadcopter: body, two crossed arms, four rotor discs (1.2 m motor to motor at scale 1)."""
     def rz(a):
         return np.array([[math.cos(a), -math.sin(a), 0], [math.sin(a), math.cos(a), 0], [0, 0, 1]])
-    _geom(scn, mujoco.mjtGeom.mjGEOM_BOX, [0.16, 0.12, 0.06], p, rz(yaw), [0.55, 0.05, 0.05, 1])
+    s = scale
+    _geom(scn, mujoco.mjtGeom.mjGEOM_BOX, [0.16 * s, 0.12 * s, 0.06 * s], p, rz(yaw), body)
     for k in range(4):
         a = yaw + math.pi / 4 + k * math.pi / 2
         u = np.array([math.cos(a), math.sin(a), 0.0])
-        _geom(scn, mujoco.mjtGeom.mjGEOM_BOX, [0.3, 0.025, 0.02], p + 0.3 * u, rz(a), [0.15, 0.15, 0.15, 1])
-        _geom(scn, mujoco.mjtGeom.mjGEOM_CYLINDER, [0.17, 0.008, 0], p + 0.6 * u + [0, 0, 0.05], np.eye(3),
-              [0.8, 0.1, 0.1, 0.55])
+        _geom(scn, mujoco.mjtGeom.mjGEOM_BOX, [0.3 * s, 0.025 * s, 0.02 * s], p + 0.3 * s * u, rz(a),
+              [0.15, 0.15, 0.15, 1])
+        _geom(scn, mujoco.mjtGeom.mjGEOM_CYLINDER, [0.17 * s, 0.008 * s, 0], p + s * (0.6 * u + [0, 0, 0.05]),
+              np.eye(3), rotor)
 
 
-def pin(scn, p, eye, rgba, text, ground) -> None:
-    """A ball on a stem above a far object, sized with the viewer's distance (same look as the X2 pin)."""
+def quad_marker(scn, p, yaw: float, t: float, eye, body, rotor, text: str, min_dist: float = 0.0) -> None:
+    """A quadcopter icon on the drone, scaled with the viewer's distance so it stays visible far out."""
     dist = float(np.linalg.norm(eye - p))
-    if dist <= 40:
+    if dist <= min_dist:
         return
-    r = min(0.016 * dist, 16.0)
-    top = p + [0, 0, 1.0 + 3 * r]
-    add_line(scn, p + [0, 0, 0.3], top, 0.05 * r, rgba)
-    add_sphere(scn, top, r, rgba)
-    add_label(scn, top + [0, 0, 1.4 * r], text)
+    s = float(np.clip(0.035 * dist, 1.0, 50.0))
+    draw_quad(scn, p, yaw, t, s, body, rotor)
+    add_label(scn, p + [0, 0, 0.8 * s + 1.0], text)
+
+
+def quat_yaw(q) -> float:
+    w, x, y, z = (float(v) for v in q)
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
 
 
 # ---------------------------------------------------------------------------------------------- camera view
@@ -845,12 +912,48 @@ class CameraView:
         return img
 
 
+def intercept_camera(a, b) -> tuple[np.ndarray, float, float, float]:
+    """Frame the segment from `a` (our drone) to `b` (the intruder) from the side.
+
+    Returns (lookat, distance, azimuth_deg, elevation_deg) for a free MuJoCo camera. Distance shrinks with
+    the gap so the hit ends as a close-up, and the azimuth stays square to the closing line.
+    """
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    gap = float(np.linalg.norm(b - a))
+    heading = math.atan2(float(b[1] - a[1]), float(b[0] - a[0]))
+    return (0.5 * (a + b), float(np.clip(1.6 * gap + 18.0, 22.0, 900.0)),
+            math.degrees(heading + math.pi / 2.0) % 360.0, -18.0)
+
+
+def apply_intercept_camera(cam, a, b) -> None:
+    mid, dist, az, el = intercept_camera(a, b)
+    cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    cam.lookat[:] = mid
+    cam.distance, cam.azimuth, cam.elevation = dist, az, el
+
+
+def banner_image(text: str, color: tuple[int, int, int], w: int, h: int) -> np.ndarray:
+    """The state banner: white bold text centred on a coloured bar (RGB)."""
+    import cv2  # noqa: PLC0415
+    img = np.empty((h, w, 3), np.uint8)
+    img[:] = color
+    font, thick = cv2.FONT_HERSHEY_DUPLEX, max(2, h // 25)
+    scale = 1.0
+    (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
+    scale = min(0.92 * w / max(tw, 1), 0.62 * h / max(th, 1))
+    (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
+    cv2.putText(img, text, ((w - tw) // 2, (h + th) // 2), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
+    cv2.rectangle(img, (0, 0), (w - 1, h - 1), (255, 255, 255), max(1, h // 40))
+    return img
+
+
 # -------------------------------------------------------------------------------------------------- run
 def run_viewer(m, d, info, args) -> None:
     demo, udp = Demo(m, d, info, args), UdpTrack(args.udp_port)
     feed = Feed(load_replay(args.replay), "replay") if args.replay else None
     keys: list[int] = []
     speed, chase, show_cam = 1, False, not args.no_camera_view
+    cam_hold, framed = False, False   # C during the close-up keeps the manual view; framed = we took the camera
     manual_az, manual_on, manual_next = 0.0, False, 0.0
     view = None
     if show_cam:
@@ -878,11 +981,15 @@ def run_viewer(m, d, info, args) -> None:
                 elif k in (ord("1"), ord("2"), ord("4")):
                     speed = int(chr(k))
                 elif k == ord("C"):
+                    cam_hold = demo.showing_intercept()
                     chase = not chase
                     base.set_chase(viewer.cam, m) if chase else base.set_overview(viewer.cam, info)
+                    framed = False
                 elif k == ord("V"):
                     show_cam = not show_cam
                 elif k == 259:
+                    cam_hold, framed, chase = False, False, False
+                    base.set_overview(viewer.cam, info)
                     with viewer.lock():
                         demo.reset()
                         if feed is not None:
@@ -898,21 +1005,37 @@ def run_viewer(m, d, info, args) -> None:
                         manual_next = d.time + MSG_DT
                         demo.hear(manual_az + demo.rng.normal(0, 2.0), 5.0)
                     demo.step()
+                want = demo.showing_intercept()
+                target = demo.intruder.pos if demo.intruder.pos is not None else demo.hunter.est
+                if want and not cam_hold and target is not None:
+                    apply_intercept_camera(viewer.cam, d.qpos[0:3], target)
+                    framed = True
+                elif not want:
+                    if framed:
+                        base.set_chase(viewer.cam, m) if chase else base.set_overview(viewer.cam, info)
+                    framed, cam_hold = False, False
                 demo.draw(viewer.user_scn, base.cam_pos(viewer.cam))
-                hud = demo.hud()
+                banner, small = demo.banner(), demo.hud_short()
             # set_texts / set_images take the viewer's lock themselves: never inside `with viewer.lock()`
-            viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_TOPLEFT,
-                              "UMA-16 counter-drone", hud))
-            if view is not None and time.time() >= next_pic:
+            viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, small, ""))
+            if time.time() >= next_pic:
                 next_pic = time.time() + 0.1
-                img = view.render(demo) if show_cam else np.zeros((1, 1, 3), np.uint8)
                 vp = viewer.viewport
-                dw = min(int(vp.width * PIC_FRAC), img.shape[1])
-                dh = dw * img.shape[0] // max(img.shape[1], 1)
-                if show_cam and dw != img.shape[1]:
-                    img = view.cv2.resize(img, (dw, dh), interpolation=view.cv2.INTER_AREA)
-                rect = mujoco.MjrRect(vp.left + vp.width - dw - 12, vp.bottom + 12, dw, dh)
-                viewer.set_images([(rect, img)] if show_cam else [])
+                bw = int(vp.width * BANNER_FRAC)
+                bh = max(bw // 7, 1)
+                top = mujoco.MjrRect(vp.left + (vp.width - bw) // 2, vp.bottom + vp.height - bh - 12, bw, bh)
+                gw, gh = bw * 3 // 5, max(bh * 2 // 5, 1)
+                gnss = mujoco.MjrRect(vp.left + (vp.width - gw) // 2, top.bottom - gh - 8, gw, gh)
+                images = [(top, banner_image(banner, demo.banner_color(), bw, bh)),
+                          (gnss, banner_image("GNSS NOT AVAILABLE", (150, 20, 20), gw, gh))]
+                if view is not None and show_cam:
+                    img = view.render(demo)
+                    dw = min(int(vp.width * PIC_FRAC), img.shape[1])
+                    dh = dw * img.shape[0] // max(img.shape[1], 1)
+                    if dw != img.shape[1]:
+                        img = view.cv2.resize(img, (dw, dh), interpolation=view.cv2.INTER_AREA)
+                    images.append((mujoco.MjrRect(vp.left + vp.width - dw - 12, vp.bottom + 12, dw, dh), img))
+                viewer.set_images(images)
             log = demo.hunter.log[-1] if demo.hunter.log else ""
             if log != last_log:
                 last_log = log

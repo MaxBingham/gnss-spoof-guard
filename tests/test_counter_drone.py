@@ -26,6 +26,17 @@ def contract(az, seq, **kw):
 
 
 # ------------------------------------------------------------------------------------------------ parsing
+def test_intercept_camera_frames_the_gap_from_the_side():
+    a, b = np.array([0.0, 0.0, 50.0]), np.array([100.0, 0.0, 50.0])
+    mid, dist, az, el = cd.intercept_camera(a, b)
+    assert np.allclose(mid, [50, 0, 50])
+    assert dist == pytest.approx(1.6 * 100 + 18)
+    assert az == pytest.approx(90.0)
+    assert el == -18.0
+    # the hit is a close-up: a gap of a couple of metres stays at the minimum distance
+    assert cd.intercept_camera(a, a + [1.0, 0.0, 0.0])[1] == 22.0
+
+
 def test_parse_contract_and_legacy():
     m = cd.parse_message(contract(123.4, 7))
     assert m["detected"] and m["az"] == pytest.approx(123.4) and m["sigma"] == 5.0

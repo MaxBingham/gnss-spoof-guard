@@ -241,3 +241,32 @@ def test_night_cooling_through_the_night(curves) -> None:
     assert tab[19.85][a] > tab[21.85][a] > tab[1.85][a]
     for v in tab.values():
         assert v[a] - v[g] > 3.0
+
+
+def test_untagged_minor_roads_abroad_are_uncertain() -> None:
+    g, rgb, nir, origin, osm = _synthetic_scene()
+    road = osm["elements"][0]
+    road["tags"] = {"highway": "residential"}  # no surface tag
+    prior = classify(rgb, nir, g, osm, origin, [], untagged_paved_p=0.4)
+    assert prior.cls[100, 100] == CLS["dirt_road"] and prior.roads[100, 100] == 0 and prior.uncertain[100, 100]
+    assert prior.roads_json[0]["paved"] is None
+    truth = classify(rgb, nir, g, osm, origin, [], untagged_paved_p=0.4, truth=True)
+    assert truth.cls[100, 100] in (CLS["dirt_road"], CLS["asphalt_minor"])
+    us = classify(rgb, nir, g, osm, origin, [])  # US default: untagged residential is asphalt
+    assert us.cls[100, 100] == CLS["asphalt"] and us.roads[100, 100] == 1
+
+
+def test_underground_building_is_not_a_roof() -> None:
+    g, rgb, nir, origin, osm = _synthetic_scene()
+    lat0, lon0 = origin.to_latlon(-20, -20)
+    lat1, lon1 = origin.to_latlon(-10, -10)
+    ring = [{"lat": lat0, "lon": lon0}, {"lat": lat0, "lon": lon1}, {"lat": lat1, "lon": lon1},
+            {"lat": lat1, "lon": lon0}, {"lat": lat0, "lon": lon0}]
+    fp = [[-20.0, -20.0], [-10.0, -20.0], [-10.0, -10.0], [-20.0, -10.0]]
+    for tags, roof in (({"building": "yes"}, True), ({"building": "garages", "layer": "-1"}, False),
+                       ({"building": "underground"}, False)):
+        el = {"type": "way", "id": 7, "tags": tags, "geometry": ring}
+        lm = {"id": 0, "type": "building", "osm_id": "way/7", "footprint_enu": fp, "height": 8.0}
+        cm = classify(rgb, nir, g, {"elements": osm["elements"] + [el]}, origin, [lm])
+        r, c = g.to_px(np.array([-15.0, -15.0])).round().astype(int)[::-1]
+        assert (cm.cls[r, c] in (CLS["roof_dark"], CLS["roof_light"])) == roof, tags

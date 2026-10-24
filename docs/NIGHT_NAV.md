@@ -87,7 +87,7 @@ What the benchmark changed:
    (0.9-1.0 deg bias, constant per flight; the compass anchors yaw, so there is no yaw DRIFT). Feeding it back
    (`thermal.yaw_feedback`) is implemented, off by default. Closed loop (final config + yaw_feedback, 10 seeds):
    berkeley 10/10 (median 0.4 m), m-c804bb84 10/10 (1.0 m); mean |yaw error| 0.78 -> 0.32 deg and 0.76 -> 0.54
-   deg. ukraine-1: UKRAINE_YAW_PLACEHOLDER
+   deg. ukraine-1: 6/9 (same seeds without it: 8/9), so it stays off
 
 ## Closed-loop results
 

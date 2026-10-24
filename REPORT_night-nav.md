@@ -69,7 +69,7 @@ gyro-bias fix). Open-loop bench: grad 66-79 % fix rate, median 0.5-0.65 m; road 
   away), EKF accel-bias random walk x4 (wobble, flights stalled at waypoints), thermal fix
   covariance x4 (neutral).
 - **`yaw_feedback`** (thermal yaw corrections learn the compass bias): berkeley 10/10, hill 10/10, mean |yaw error|
-  0.78 -> 0.32 / 0.76 -> 0.54 deg; ukraine-1: UKRAINE_YAW_PLACEHOLDER. Off by default (not run with 20 seeds).
+  0.78 -> 0.32 / 0.76 -> 0.54 deg; ukraine-1: 6/9 vs 8/9 without it on the same seeds. Off by default (not run with 20 seeds).
 - **road / junction alone** are weak in these worlds: short campus / village roads, trees over roads, plazas and
   parking lots as warm as roads. Kept as options.
 - **Data versions**: night-thermal rebuilt the thermal files in place several times tonight. All my tables run on a
@@ -111,7 +111,8 @@ not shown (one seed each way, trajectories diverge chaotically). The freeze expe
    lidar height above ground as a floor for the altitude command.
 4. Rotor-drag model + drag-velocity fusion (death-v3) would let IMU + TRN degrade gracefully; needs a team
    decision (changes baseline physics).
-5. `yaw_feedback` as night default after a 20-seed run on all missions (first checks: no harm, yaw error roughly halved).
+5. `yaw_feedback`: halves the yaw error on berkeley / hill, but ukraine-1 got worse (6/9 vs 8/9); needs a look before
+   it becomes a default.
 6. Full 20-seed rows of this branch on night-thermal's final data are in night-demo's eval; mine has 2 seeds each.
 
 ## Disclosure (pre-hackathon work)

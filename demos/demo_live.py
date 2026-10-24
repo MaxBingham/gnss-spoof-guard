@@ -9,6 +9,7 @@ no truth in the control loop), with every degradation lever live.
     python demos/demo_live.py --gnss drag:2@90 --weather fog:0.5 --wind 6@270   # start with levers set
     python demos/demo_live.py --events "45:C,55:C"    # press keys at sim times
     python demos/demo_live.py --mission berkeley      # a mission from the planner (python -m sfhack.missionprep)
+    python demos/demo_live.py --mission ukraine-1 --night   # NIGHT: dark scene, thermal panel; key N = GNSS off / on
 
 What you see:
   Solid white X2 = TRUTH (the simulator), drawn 9x life size or more. Cyan ghost = where the drone THINKS it is (EKF),
@@ -16,7 +17,8 @@ What you see:
   Yellow frustum = down camera (live image bottom-left), red beams = rangefinder / lidar returns,
   orange pin = GNSS fix. A lost sensor goes dark. Fog / rain / dust and the wind arrow follow the levers.
 
-Keys:  G GNSS ok/drag/jump/jam/off   F weather intensity   T weather kind   W wind   D wind direction
+Keys:  N (night) GNSS completely off / back on
+       G GNSS ok/drag/jump/jam/off   F weather intensity   T weather kind   W wind   D wind direction
        U gusts   C camera loss   L lidar loss   V localizer on/off   P spoof scenario   X reset levers
        R restart   SPACE pause   1 / 2 / 4 sim speed   O reset camera   Z screenshot   Tab fullscreen   Q quit
 Mouse: drag to orbit, wheel to zoom, click a lever row to press its key.
@@ -28,6 +30,7 @@ the MOCK localizer when that one is selected (and labeled MOCK on screen).
 from __future__ import annotations
 
 import argparse
+import inspect
 import math
 import shutil
 import subprocess
@@ -44,6 +47,7 @@ from liveview.chase import ChaseCam
 from liveview.geoms import Geoms
 from liveview.hud import Hud, HudState
 from liveview.levers import LEVERS, LeverDeck
+from liveview.night import NightComposer, NightState
 from liveview.render import SceneRenderer
 from sfhack import bus as topics
 from sfhack.config import data_dir
@@ -113,13 +117,22 @@ class LiveDemo:
     """One flight plus everything the jury sees. Truth: display + score only."""
 
     def __init__(self, seed: int, localizer: str, conditions: Conditions,
-                 schedule: list | None = None, reuse: FlightSystem | None = None, mission: str | None = None) -> None:
+                 schedule: list | None = None, reuse: FlightSystem | None = None, mission: str | None = None,
+                 night: bool = False, cruise_agl: float | None = None) -> None:
         self.seed = seed
         self.mission = mission
         self.base_localizer = localizer if localizer != "off" else "mock"
+        extra = {}
+        fs_params = inspect.signature(FlightSystem).parameters
+        if night and "night" in fs_params:  # night-nav: thermal camera + thermal localizer, RGB vision off
+            extra["night"] = True
+        elif night:
+            localizer = "off"  # the RGB down camera sees nothing at night; no thermal stack on this branch
+        if cruise_agl is not None and "cruise_agl" in fs_params:
+            extra["cruise_agl"] = cruise_agl
         self.fs = FlightSystem(pose_source="ekf", localizer=localizer, seed=seed,
                                reuse_sim=reuse.sim if reuse is not None else None,
-                               conditions=conditions, schedule=list(schedule or []), mission=mission)
+                               conditions=conditions, schedule=list(schedule or []), mission=mission, **extra)
         self.loc_on = localizer != "off"
         self.deck = LeverDeck(self.fs)
         self.truth_trail: list[np.ndarray] = []
@@ -155,6 +168,7 @@ class LiveDemo:
         self.wind_pts = rng.uniform(-1, 1, (24, 3)) * [45, 45, 18]
         self.rain_pts = rng.uniform(-1, 1, (80, 3)) * [30, 30, 16]
         self.draw_scale = DRONE_SCALE
+        self.night = NightState(self) if night else None
 
     # ------------------------------------------------------------------ inputs (bus = what the sensors deliver)
 
@@ -185,6 +199,14 @@ class LiveDemo:
 
     def press(self, key: str) -> str:
         key = key.lower()
+        if key == "n":  # GNSS completely gone (no signal at all) / back; no automatic switch
+            off = self.c.gnss.mode != "off"
+            self.fs.update_conditions(gnss__mode="off" if off else "ok")
+            if self.night is not None:
+                self.night.gnss_off_at = self.t if off else None
+            msg = "GNSS OFF (no signal)" if off else "GNSS ON"
+            self.deck.banner = (self.t, msg)
+            return msg
         if key == "v":
             self.loc_on = not self.loc_on
             self.fs.set_localizer(self.base_localizer if self.loc_on else "off")
@@ -632,7 +654,12 @@ def _events(args) -> list[tuple[float, str]]:
 
 def _make_demo(args, reuse: LiveDemo | None = None) -> LiveDemo:
     return LiveDemo(args.seed, args.localizer, args.conditions, parse_schedule(args.cond_at) if args.cond_at else None,
-                    reuse=reuse.fs if reuse is not None else None, mission=args.mission)
+                    reuse=reuse.fs if reuse is not None else None, mission=args.mission,
+                    night=args.night, cruise_agl=args.cruise_agl)
+
+
+def _composer(demo: LiveDemo, W: int, H: int) -> "Composer | NightComposer":
+    return NightComposer(demo, W, H) if demo.night is not None else Composer(demo, W, H)
 
 
 # ---------------------------------------------------------------------------------------- viewer mode
@@ -653,7 +680,7 @@ def run_viewer(args: argparse.Namespace) -> None:
     W, H = args.size
     announce_scene_compile()
     demo = _make_demo(args)
-    comp = Composer(demo, W, H)
+    comp = _composer(demo, W, H)
     keys: deque[str] = deque()
     mouse = {"drag": None}
 
@@ -848,7 +875,7 @@ def run_record(args: argparse.Namespace) -> int:
     W, H = args.size
     fps = 30
     demo = _make_demo(args)
-    comp = Composer(demo, W, H)
+    comp = _composer(demo, W, H)
     pending = _events(args)
     video = None if args.snap_only else _VideoOut(out, W, H, fps)
     dt_frame = 1.0 / fps
@@ -919,6 +946,10 @@ def main() -> None:
     ap.add_argument("--snap-dir", default=str(data_dir() / "demo"), help="where --snap-at / Z write PNGs")
     ap.add_argument("--snap-only", action="store_true", help=argparse.SUPPRESS)  # with --record: PNGs, no video
     ap.add_argument("--quit-after", type=float, default=0.0, help=argparse.SUPPRESS)  # wall s, viewer smoke test
+    ap.add_argument("--night", action="store_true", help="night flight: dark scene, thermal camera panel, key N "
+                    "switches GNSS completely off / on")
+    ap.add_argument("--cruise-agl", type=float, default=None, help="re-plan the route at this height above the "
+                    "onboard DTM (needs night-nav's FlightSystem; missions built with --agl already have it)")
     add_cli_args(ap)
     args = ap.parse_args()
     if args.gnss is None:

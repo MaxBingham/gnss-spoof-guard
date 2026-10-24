@@ -98,6 +98,9 @@
       <label class="row" style="justify-content:flex-start;gap:8px;margin-bottom:8px;cursor:pointer">
         <input type="checkbox" id="autoFly" checked style="flex:0 0 auto;accent-color:var(--accent)">
         <span>Fly automatically after prepare <span class="muted">(upload + launch the sim)</span></span></label>
+      <label class="row" style="justify-content:flex-start;gap:8px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="night" style="flex:0 0 auto;accent-color:var(--accent)">
+        <span>Night <span class="muted">(23:00, thermal camera; key N in the sim = GNSS off / on)</span></span></label>
       <button class="primary" id="prepBtn" disabled>Prepare mission</button>
       <div style="margin-top:10px" class="bar" id="prepBar"><i></i></div>
       <div class="muted" id="prepStage" style="font-size:12px;margin-top:4px"></div>
@@ -254,9 +257,10 @@ $("prepBtn").onclick = async () => {
 
 async function flyMission(mid) {
   $("simErr").style.display = "none"; $("simCmd").style.display = "block";
-  $("simCmdTxt").textContent = `uv run python demos/demo_live.py --mission ${mid}`;
-  $("simTxt").textContent = `launching ${mid} ...`;
-  const r = await post("/api/fly", { mission_id: mid });
+  const night = $("night").checked;
+  $("simCmdTxt").textContent = `uv run python demos/demo_live.py --mission ${mid}` + (night ? " --night" : "");
+  $("simTxt").textContent = `launching ${mid}${night ? " (night)" : ""} ...`;
+  const r = await post("/api/fly", { mission_id: mid, night });
   if (!r.ok) { $("simTxt").textContent = "launch failed"; $("simErr").textContent = await r.text(); $("simErr").style.display = "block"; return false; }
   const f = await r.json();
   $("simCmdTxt").textContent = f.command;

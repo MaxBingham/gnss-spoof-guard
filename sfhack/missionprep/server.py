@@ -10,7 +10,7 @@ API (all JSON):
   GET  /api/jobs/{job}?since=N             status, progress, log lines from N, upload events, result
   GET  /api/missions                       prepared missions
   GET  /api/missions/{id}                  build report + mission.json + route/bbox in lat/lon
-  POST /api/fly {mission_id}               start the live viewer (demos/demo_live.py --mission id), one at a time
+  POST /api/fly {mission_id, night?}       start the live viewer (demos/demo_live.py --mission id [--night]), one at a time
   GET  /api/fly/status                     running / exited, exit code, viewer.log tail after a crash
   POST /api/fly/stop                       stop the viewer
 """
@@ -212,6 +212,7 @@ _viewer_lock = threading.Lock()
 
 class FlyReq(BaseModel):
     mission_id: str
+    night: bool = False  # night flight: dark scene, thermal camera, key N = GNSS off / on
 
 
 def _stop_viewer() -> int | None:
@@ -265,11 +266,13 @@ def fly(req: FlyReq) -> dict[str, Any]:
             kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             kw["start_new_session"] = True
-        proc = subprocess.Popen([sys.executable, str(VIEWER), "--mission", req.mission_id], cwd=str(REPO_ROOT),
+        argv = [sys.executable, str(VIEWER), "--mission", req.mission_id] + (["--night"] if req.night else [])
+        proc = subprocess.Popen(argv, cwd=str(REPO_ROOT),
                                 stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 env={**os.environ, "PYTHONUNBUFFERED": "1"}, **kw)
         _viewer.update(proc=proc, mission_id=req.mission_id, log=log, started=time.time(), fh=fh, stopped=False)
-    return {"pid": proc.pid, "mission_id": req.mission_id, "log": str(log), "command": FLY_COMMAND.format(id=req.mission_id)}
+    return {"pid": proc.pid, "mission_id": req.mission_id, "log": str(log), "night": req.night,
+            "command": FLY_COMMAND.format(id=req.mission_id) + (" --night" if req.night else "")}
 
 
 @app.get("/api/fly/status")

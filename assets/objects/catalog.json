@@ -1,0 +1,2624 @@
+{
+  "units": "m",
+  "frame": {
+    "up": "+z",
+    "forward": "+x",
+    "origin": "bottom_center"
+  },
+  "notes": "Each variant: whole STL + colored parts. Place by setting geom pos at the desired ground point (z = ground height) and yaw about +z.",
+  "objects": {
+    "car": [
+      {
+        "key": "car",
+        "variant": "sedan_a",
+        "files": {
+          "whole": {
+            "path": "objects/car/sedan_a/sedan_a.stl",
+            "rgba": [
+              0.92,
+              0.92,
+              0.92,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "trim",
+              "path": "objects/car/sedan_a/parts/trim.stl",
+              "rgba": [
+                0.3,
+                0.3,
+                0.32,
+                1
+              ],
+              "triangles": 1136
+            },
+            {
+              "name": "tires",
+              "path": "objects/car/sedan_a/parts/tires.stl",
+              "rgba": [
+                0.07,
+                0.07,
+                0.07,
+                1
+              ],
+              "triangles": 590
+            },
+            {
+              "name": "body",
+              "path": "objects/car/sedan_a/parts/body.stl",
+              "rgba": [
+                0.92,
+                0.92,
+                0.92,
+                1
+              ],
+              "triangles": 1148,
+              "rgba_options": {
+                "white": [
+                  0.92,
+                  0.92,
+                  0.92,
+                  1
+                ],
+                "brown": [
+                  0.4,
+                  0.26,
+                  0.15,
+                  1
+                ]
+              }
+            },
+            {
+              "name": "windows",
+              "path": "objects/car/sedan_a/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 62
+            },
+            {
+              "name": "lights_front",
+              "path": "objects/car/sedan_a/parts/lights_front.stl",
+              "rgba": [
+                0.95,
+                0.93,
+                0.8,
+                1
+              ],
+              "triangles": 12
+            },
+            {
+              "name": "lights_rear",
+              "path": "objects/car/sedan_a/parts/lights_rear.stl",
+              "rgba": [
+                0.7,
+                0.05,
+                0.05,
+                1
+              ],
+              "triangles": 6
+            }
+          ]
+        },
+        "size_m": [
+          4.7,
+          2.013,
+          1.31
+        ],
+        "scale_factor": 1.11355,
+        "triangles": 2954,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.35,
+            -1.006,
+            0.0
+          ],
+          "max": [
+            2.35,
+            1.006,
+            1.31
+          ]
+        },
+        "footprint_m": [
+          4.7,
+          2.013
+        ],
+        "height_m": 1.31,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            0.655
+          ],
+          "half_size": [
+            2.35,
+            1.006,
+            0.655
+          ]
+        },
+        "source_url": "https://poly.pizza/m/Cz6yDaUcM9",
+        "author": "Quaternius",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://static.poly.pizza/59a67a6c-490e-472e-bae6-5a4d2541f1c7.glb",
+        "title": null,
+        "source_file": "sources/polypizza/Cz6yDaUcM9.glb",
+        "procedural": false,
+        "note": "Quaternius 'Car' (low-poly sedan)",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "car",
+        "variant": "hatch_b",
+        "files": {
+          "whole": {
+            "path": "objects/car/hatch_b/hatch_b.stl",
+            "rgba": [
+              0.92,
+              0.92,
+              0.92,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "trim",
+              "path": "objects/car/hatch_b/parts/trim.stl",
+              "rgba": [
+                0.3,
+                0.3,
+                0.32,
+                1
+              ],
+              "triangles": 1518
+            },
+            {
+              "name": "tires",
+              "path": "objects/car/hatch_b/parts/tires.stl",
+              "rgba": [
+                0.07,
+                0.07,
+                0.07,
+                1
+              ],
+              "triangles": 580
+            },
+            {
+              "name": "body",
+              "path": "objects/car/hatch_b/parts/body.stl",
+              "rgba": [
+                0.92,
+                0.92,
+                0.92,
+                1
+              ],
+              "triangles": 950,
+              "rgba_options": {
+                "white": [
+                  0.92,
+                  0.92,
+                  0.92,
+                  1
+                ],
+                "brown": [
+                  0.4,
+                  0.26,
+                  0.15,
+                  1
+                ]
+              }
+            },
+            {
+              "name": "windows",
+              "path": "objects/car/hatch_b/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 62
+            },
+            {
+              "name": "lights_front",
+              "path": "objects/car/hatch_b/parts/lights_front.stl",
+              "rgba": [
+                0.95,
+                0.93,
+                0.8,
+                1
+              ],
+              "triangles": 10
+            },
+            {
+              "name": "lights_rear",
+              "path": "objects/car/hatch_b/parts/lights_rear.stl",
+              "rgba": [
+                0.7,
+                0.05,
+                0.05,
+                1
+              ],
+              "triangles": 4
+            }
+          ]
+        },
+        "size_m": [
+          4.3,
+          2.129,
+          1.488
+        ],
+        "scale_factor": 1.29924,
+        "triangles": 3124,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.15,
+            -1.064,
+            0.0
+          ],
+          "max": [
+            2.15,
+            1.064,
+            1.488
+          ]
+        },
+        "footprint_m": [
+          4.3,
+          2.129
+        ],
+        "height_m": 1.488,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            0.744
+          ],
+          "half_size": [
+            2.15,
+            1.064,
+            0.744
+          ]
+        },
+        "source_url": "https://poly.pizza/m/unqqkULtRU",
+        "author": "Quaternius",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://static.poly.pizza/d35173c8-6078-4367-8f87-b1f2599f0bb7.glb",
+        "title": null,
+        "source_file": "sources/polypizza/unqqkULtRU.glb",
+        "procedural": false,
+        "note": "Quaternius 'Car' (compact/hatchback)",
+        "size_check": {
+          "L": "ok",
+          "W": "2.13 outside 1.7-2.1",
+          "H": "ok"
+        }
+      }
+    ],
+    "suv": [
+      {
+        "key": "suv",
+        "variant": "suv_a",
+        "files": {
+          "whole": {
+            "path": "objects/suv/suv_a/suv_a.stl",
+            "rgba": [
+              0.92,
+              0.92,
+              0.92,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "trim",
+              "path": "objects/suv/suv_a/parts/trim.stl",
+              "rgba": [
+                0.3,
+                0.3,
+                0.32,
+                1
+              ],
+              "triangles": 1138
+            },
+            {
+              "name": "tires",
+              "path": "objects/suv/suv_a/parts/tires.stl",
+              "rgba": [
+                0.07,
+                0.07,
+                0.07,
+                1
+              ],
+              "triangles": 1028
+            },
+            {
+              "name": "body",
+              "path": "objects/suv/suv_a/parts/body.stl",
+              "rgba": [
+                0.92,
+                0.92,
+                0.92,
+                1
+              ],
+              "triangles": 1004
+            },
+            {
+              "name": "windows",
+              "path": "objects/suv/suv_a/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 72
+            },
+            {
+              "name": "lights_front",
+              "path": "objects/suv/suv_a/parts/lights_front.stl",
+              "rgba": [
+                0.95,
+                0.93,
+                0.8,
+                1
+              ],
+              "triangles": 10
+            },
+            {
+              "name": "lights_rear",
+              "path": "objects/suv/suv_a/parts/lights_rear.stl",
+              "rgba": [
+                0.7,
+                0.05,
+                0.05,
+                1
+              ],
+              "triangles": 42
+            }
+          ]
+        },
+        "size_m": [
+          4.7,
+          2.357,
+          1.706
+        ],
+        "scale_factor": 1.11656,
+        "triangles": 3294,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.35,
+            -1.179,
+            0.0
+          ],
+          "max": [
+            2.35,
+            1.179,
+            1.706
+          ]
+        },
+        "footprint_m": [
+          4.7,
+          2.357
+        ],
+        "height_m": 1.706,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            0.853
+          ],
+          "half_size": [
+            2.35,
+            1.179,
+            0.853
+          ]
+        },
+        "source_url": "https://poly.pizza/m/xsMtZhBkxL",
+        "author": "Quaternius",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://static.poly.pizza/e5fbf2ee-5c9e-47d5-8ab6-80cacd463baa.glb",
+        "title": null,
+        "source_file": "sources/polypizza/xsMtZhBkxL.glb",
+        "procedural": false,
+        "note": "Quaternius 'SUV'",
+        "size_check": {
+          "L": "ok",
+          "W": "2.36 outside 1.8-2.2",
+          "H": "ok"
+        }
+      }
+    ],
+    "pickup": [
+      {
+        "key": "pickup",
+        "variant": "pickup_a",
+        "files": {
+          "whole": {
+            "path": "objects/pickup/pickup_a/pickup_a.stl",
+            "rgba": [
+              0.92,
+              0.92,
+              0.92,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "body",
+              "path": "objects/pickup/pickup_a/parts/body.stl",
+              "rgba": [
+                0.92,
+                0.92,
+                0.92,
+                1
+              ],
+              "triangles": 5872
+            },
+            {
+              "name": "lights_front",
+              "path": "objects/pickup/pickup_a/parts/lights_front.stl",
+              "rgba": [
+                0.95,
+                0.93,
+                0.8,
+                1
+              ],
+              "triangles": 360
+            },
+            {
+              "name": "lights_rear",
+              "path": "objects/pickup/pickup_a/parts/lights_rear.stl",
+              "rgba": [
+                0.7,
+                0.05,
+                0.05,
+                1
+              ],
+              "triangles": 200
+            }
+          ]
+        },
+        "size_m": [
+          5.3,
+          2.366,
+          1.891
+        ],
+        "scale_factor": 1.02309,
+        "triangles": 6432,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.65,
+            -1.183,
+            0.0
+          ],
+          "max": [
+            2.65,
+            1.183,
+            1.891
+          ]
+        },
+        "footprint_m": [
+          5.3,
+          2.366
+        ],
+        "height_m": 1.891,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            0.946
+          ],
+          "half_size": [
+            2.65,
+            1.183,
+            0.946
+          ]
+        },
+        "source_url": "https://poly.pizza/m/qn4grQgHm8",
+        "author": "Quaternius",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://static.poly.pizza/4e925a01-dbb8-4aab-848b-221306b835ea.glb",
+        "title": null,
+        "source_file": "sources/polypizza/qn4grQgHm8.glb",
+        "procedural": false,
+        "note": "Quaternius 'Pickup Truck' (texture atlas, single body part)",
+        "size_check": {
+          "L": "ok",
+          "W": "2.37 outside 1.9-2.3",
+          "H": "ok"
+        }
+      }
+    ],
+    "truck": [
+      {
+        "key": "truck",
+        "variant": "box_truck_a",
+        "files": {
+          "whole": {
+            "path": "objects/truck/box_truck_a/box_truck_a.stl",
+            "rgba": [
+              0.42,
+              0.28,
+              0.16,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "cargo_box",
+              "path": "objects/truck/box_truck_a/parts/cargo_box.stl",
+              "rgba": [
+                0.42,
+                0.28,
+                0.16,
+                1
+              ],
+              "triangles": 12
+            },
+            {
+              "name": "chassis",
+              "path": "objects/truck/box_truck_a/parts/chassis.stl",
+              "rgba": [
+                0.1,
+                0.1,
+                0.1,
+                1
+              ],
+              "triangles": 12
+            },
+            {
+              "name": "cab",
+              "path": "objects/truck/box_truck_a/parts/cab.stl",
+              "rgba": [
+                0.42,
+                0.28,
+                0.16,
+                1
+              ],
+              "triangles": 16
+            },
+            {
+              "name": "windows",
+              "path": "objects/truck/box_truck_a/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 36
+            },
+            {
+              "name": "trim",
+              "path": "objects/truck/box_truck_a/parts/trim.stl",
+              "rgba": [
+                0.3,
+                0.3,
+                0.32,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "lights_front",
+              "path": "objects/truck/box_truck_a/parts/lights_front.stl",
+              "rgba": [
+                0.95,
+                0.93,
+                0.8,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "lights_rear",
+              "path": "objects/truck/box_truck_a/parts/lights_rear.stl",
+              "rgba": [
+                0.7,
+                0.05,
+                0.05,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "tires",
+              "path": "objects/truck/box_truck_a/parts/tires.stl",
+              "rgba": [
+                0.07,
+                0.07,
+                0.07,
+                1
+              ],
+              "triangles": 480
+            }
+          ]
+        },
+        "size_m": [
+          8.04,
+          2.5,
+          3.3
+        ],
+        "scale_factor": 1.0,
+        "triangles": 628,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -4.02,
+            -1.25,
+            0.0
+          ],
+          "max": [
+            4.02,
+            1.25,
+            3.3
+          ]
+        },
+        "footprint_m": [
+          8.04,
+          2.5
+        ],
+        "height_m": 3.3,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.65
+          ],
+          "half_size": [
+            4.02,
+            1.25,
+            1.65
+          ]
+        },
+        "landing_area": {
+          "center": [
+            -1.08,
+            0.0,
+            3.3
+          ],
+          "size": [
+            5.8,
+            2.5
+          ],
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "fill_ratio": 1.0,
+          "rgba": [
+            0.55,
+            0.55,
+            0.55,
+            1
+          ]
+        },
+        "source_url": "procedural (tools/normalize.py)",
+        "author": "generated",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": null,
+        "title": null,
+        "source_file": null,
+        "procedural": true,
+        "note": "procedural low-poly mesh generated by tools/normalize.py",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "truck",
+        "variant": "box_truck_b",
+        "files": {
+          "whole": {
+            "path": "objects/truck/box_truck_b/box_truck_b.stl",
+            "rgba": [
+              0.42,
+              0.28,
+              0.16,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "cargo_box",
+              "path": "objects/truck/box_truck_b/parts/cargo_box.stl",
+              "rgba": [
+                0.42,
+                0.28,
+                0.16,
+                1
+              ],
+              "triangles": 12
+            },
+            {
+              "name": "chassis",
+              "path": "objects/truck/box_truck_b/parts/chassis.stl",
+              "rgba": [
+                0.1,
+                0.1,
+                0.1,
+                1
+              ],
+              "triangles": 12
+            },
+            {
+              "name": "cab",
+              "path": "objects/truck/box_truck_b/parts/cab.stl",
+              "rgba": [
+                0.42,
+                0.28,
+                0.16,
+                1
+              ],
+              "triangles": 16
+            },
+            {
+              "name": "windows",
+              "path": "objects/truck/box_truck_b/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 36
+            },
+            {
+              "name": "trim",
+              "path": "objects/truck/box_truck_b/parts/trim.stl",
+              "rgba": [
+                0.3,
+                0.3,
+                0.32,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "lights_front",
+              "path": "objects/truck/box_truck_b/parts/lights_front.stl",
+              "rgba": [
+                0.95,
+                0.93,
+                0.8,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "lights_rear",
+              "path": "objects/truck/box_truck_b/parts/lights_rear.stl",
+              "rgba": [
+                0.7,
+                0.05,
+                0.05,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "tires",
+              "path": "objects/truck/box_truck_b/parts/tires.stl",
+              "rgba": [
+                0.07,
+                0.07,
+                0.07,
+                1
+              ],
+              "triangles": 320
+            }
+          ]
+        },
+        "size_m": [
+          7.24,
+          2.45,
+          3.1
+        ],
+        "scale_factor": 1.0,
+        "triangles": 468,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -3.62,
+            -1.225,
+            0.0
+          ],
+          "max": [
+            3.62,
+            1.225,
+            3.1
+          ]
+        },
+        "footprint_m": [
+          7.24,
+          2.45
+        ],
+        "height_m": 3.1,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.55
+          ],
+          "half_size": [
+            3.62,
+            1.225,
+            1.55
+          ]
+        },
+        "landing_area": {
+          "center": [
+            -0.98,
+            0.0,
+            3.1
+          ],
+          "size": [
+            5.2,
+            2.45
+          ],
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "fill_ratio": 1.0,
+          "rgba": [
+            0.55,
+            0.55,
+            0.55,
+            1
+          ]
+        },
+        "source_url": "procedural (tools/normalize.py)",
+        "author": "generated",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": null,
+        "title": null,
+        "source_file": null,
+        "procedural": true,
+        "note": "procedural low-poly mesh generated by tools/normalize.py",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "truck",
+        "variant": "cargo_truck_c",
+        "files": {
+          "whole": {
+            "path": "objects/truck/cargo_truck_c/cargo_truck_c.stl",
+            "rgba": [
+              0.42,
+              0.28,
+              0.16,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "trim",
+              "path": "objects/truck/cargo_truck_c/parts/trim.stl",
+              "rgba": [
+                0.3,
+                0.3,
+                0.32,
+                1
+              ],
+              "triangles": 752
+            },
+            {
+              "name": "tires",
+              "path": "objects/truck/cargo_truck_c/parts/tires.stl",
+              "rgba": [
+                0.07,
+                0.07,
+                0.07,
+                1
+              ],
+              "triangles": 1580
+            },
+            {
+              "name": "body",
+              "path": "objects/truck/cargo_truck_c/parts/body.stl",
+              "rgba": [
+                0.42,
+                0.28,
+                0.16,
+                1
+              ],
+              "triangles": 791
+            },
+            {
+              "name": "cargo_box",
+              "path": "objects/truck/cargo_truck_c/parts/cargo_box.stl",
+              "rgba": [
+                0.42,
+                0.28,
+                0.16,
+                1
+              ],
+              "triangles": 1120
+            },
+            {
+              "name": "lights_rear",
+              "path": "objects/truck/cargo_truck_c/parts/lights_rear.stl",
+              "rgba": [
+                0.7,
+                0.05,
+                0.05,
+                1
+              ],
+              "triangles": 8
+            },
+            {
+              "name": "windows",
+              "path": "objects/truck/cargo_truck_c/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 20
+            },
+            {
+              "name": "lights_front",
+              "path": "objects/truck/cargo_truck_c/parts/lights_front.stl",
+              "rgba": [
+                0.95,
+                0.93,
+                0.8,
+                1
+              ],
+              "triangles": 16
+            },
+            {
+              "name": "roof_plate",
+              "path": "objects/truck/cargo_truck_c/parts/roof_plate.stl",
+              "rgba": [
+                0.55,
+                0.55,
+                0.55,
+                1
+              ],
+              "triangles": 12
+            }
+          ]
+        },
+        "size_m": [
+          8.55,
+          2.4,
+          3.14
+        ],
+        "scale_factor": 1.27898,
+        "triangles": 4299,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -4.275,
+            -1.2,
+            0.0
+          ],
+          "max": [
+            4.275,
+            1.2,
+            3.14
+          ]
+        },
+        "footprint_m": [
+          8.55,
+          2.4
+        ],
+        "height_m": 3.14,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.57
+          ],
+          "half_size": [
+            4.275,
+            1.2,
+            1.57
+          ]
+        },
+        "landing_area": {
+          "center": [
+            -1.282,
+            0.0,
+            3.14
+          ],
+          "size": [
+            2.6,
+            2.4
+          ],
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "fill_ratio": 1.0,
+          "added_roof_plate": true,
+          "rgba": [
+            0.55,
+            0.55,
+            0.55,
+            1
+          ]
+        },
+        "source_url": "https://poly.pizza/m/Fy3WI3uXNQ",
+        "author": "J-Toastie",
+        "license": "CC-BY 3.0",
+        "license_url": "https://creativecommons.org/licenses/by/3.0/",
+        "download_url": "https://static.poly.pizza/4e798498-be05-47ac-988a-ad953cf46236.glb",
+        "title": "Cargo Truck",
+        "source_file": "sources/polypizza/Fy3WI3uXNQ.glb",
+        "procedural": false,
+        "note": "J-Toastie 'Cargo Truck' (semi-truck; flat roof plate added)",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      }
+    ],
+    "tent": [
+      {
+        "key": "tent",
+        "variant": "ridge_green_a",
+        "files": {
+          "whole": {
+            "path": "objects/tent/ridge_green_a/ridge_green_a.stl",
+            "rgba": [
+              0.35,
+              0.58,
+              0.28,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "poles",
+              "path": "objects/tent/ridge_green_a/parts/poles.stl",
+              "rgba": [
+                0.25,
+                0.2,
+                0.15,
+                1
+              ],
+              "triangles": 352
+            },
+            {
+              "name": "entrance",
+              "path": "objects/tent/ridge_green_a/parts/entrance.stl",
+              "rgba": [
+                0.1,
+                0.1,
+                0.1,
+                1
+              ],
+              "triangles": 32
+            },
+            {
+              "name": "fabric",
+              "path": "objects/tent/ridge_green_a/parts/fabric.stl",
+              "rgba": [
+                0.22,
+                0.45,
+                0.2,
+                1
+              ],
+              "triangles": 190
+            },
+            {
+              "name": "fabric_accent",
+              "path": "objects/tent/ridge_green_a/parts/fabric_accent.stl",
+              "rgba": [
+                0.35,
+                0.58,
+                0.28,
+                1
+              ],
+              "triangles": 210
+            }
+          ]
+        },
+        "size_m": [
+          3.854,
+          2.26,
+          1.6
+        ],
+        "scale_factor": 0.15497,
+        "triangles": 784,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -1.927,
+            -1.13,
+            0.0
+          ],
+          "max": [
+            1.927,
+            1.13,
+            1.6
+          ]
+        },
+        "footprint_m": [
+          3.854,
+          2.26
+        ],
+        "height_m": 1.6,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            0.8
+          ],
+          "half_size": [
+            1.927,
+            1.13,
+            0.8
+          ]
+        },
+        "source_url": "https://poly.pizza/m/5Q7qIrfDxA",
+        "author": "Quaternius",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://static.poly.pizza/fc8d560d-91b5-439c-88bf-4cbddb7eadbb.glb",
+        "title": null,
+        "source_file": "sources/polypizza/5Q7qIrfDxA.glb",
+        "procedural": false,
+        "note": "Quaternius 'Tent'",
+        "size_check": {
+          "L": "3.85 outside 2.5-3.5",
+          "W": "2.26 outside 2.5-3.5",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "tent",
+        "variant": "ridge_orange_b",
+        "files": {
+          "whole": {
+            "path": "objects/tent/ridge_orange_b/ridge_orange_b.stl",
+            "rgba": [
+              0.92,
+              0.45,
+              0.1,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "fabric",
+              "path": "objects/tent/ridge_orange_b/parts/fabric.stl",
+              "rgba": [
+                0.92,
+                0.45,
+                0.1,
+                1
+              ],
+              "triangles": 113
+            },
+            {
+              "name": "poles",
+              "path": "objects/tent/ridge_orange_b/parts/poles.stl",
+              "rgba": [
+                0.25,
+                0.2,
+                0.15,
+                1
+              ],
+              "triangles": 112
+            },
+            {
+              "name": "fabric_accent",
+              "path": "objects/tent/ridge_orange_b/parts/fabric_accent.stl",
+              "rgba": [
+                0.7,
+                0.3,
+                0.06,
+                1
+              ],
+              "triangles": 3
+            }
+          ]
+        },
+        "size_m": [
+          3.2,
+          2.328,
+          2.052
+        ],
+        "scale_factor": 3.65744,
+        "triangles": 228,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -1.6,
+            -1.164,
+            0.0
+          ],
+          "max": [
+            1.6,
+            1.164,
+            2.052
+          ]
+        },
+        "footprint_m": [
+          3.2,
+          2.328
+        ],
+        "height_m": 2.052,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.026
+          ],
+          "half_size": [
+            1.6,
+            1.164,
+            1.026
+          ]
+        },
+        "source_url": "https://kenney.nl/assets/nature-kit",
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+        "title": null,
+        "source_file": "sources/kenney_nature-kit/tent_detailedClosed.glb",
+        "procedural": false,
+        "note": "Kenney Nature Kit tent_detailedClosed",
+        "size_check": {
+          "L": "ok",
+          "W": "2.33 outside 2.5-3.5",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "tent",
+        "variant": "dome_c",
+        "files": {
+          "whole": {
+            "path": "objects/tent/dome_c/dome_c.stl",
+            "rgba": [
+              0.92,
+              0.45,
+              0.1,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "fabric",
+              "path": "objects/tent/dome_c/parts/fabric.stl",
+              "rgba": [
+                0.92,
+                0.45,
+                0.1,
+                1
+              ],
+              "triangles": 670
+            },
+            {
+              "name": "fabric_accent",
+              "path": "objects/tent/dome_c/parts/fabric_accent.stl",
+              "rgba": [
+                0.7,
+                0.3,
+                0.06,
+                1
+              ],
+              "triangles": 174
+            },
+            {
+              "name": "entrance",
+              "path": "objects/tent/dome_c/parts/entrance.stl",
+              "rgba": [
+                0.1,
+                0.1,
+                0.1,
+                1
+              ],
+              "triangles": 14
+            },
+            {
+              "name": "poles",
+              "path": "objects/tent/dome_c/parts/poles.stl",
+              "rgba": [
+                0.1,
+                0.1,
+                0.1,
+                1
+              ],
+              "triangles": 1104
+            }
+          ]
+        },
+        "size_m": [
+          3.3,
+          2.8,
+          1.625
+        ],
+        "scale_factor": 1.0,
+        "triangles": 1962,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -1.65,
+            -1.4,
+            0.0
+          ],
+          "max": [
+            1.65,
+            1.4,
+            1.625
+          ]
+        },
+        "footprint_m": [
+          3.3,
+          2.8
+        ],
+        "height_m": 1.625,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            0.813
+          ],
+          "half_size": [
+            1.65,
+            1.4,
+            0.813
+          ]
+        },
+        "source_url": "procedural (tools/normalize.py)",
+        "author": "generated",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": null,
+        "title": null,
+        "source_file": null,
+        "procedural": true,
+        "note": "procedural low-poly mesh generated by tools/normalize.py",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      }
+    ],
+    "hut": [
+      {
+        "key": "hut",
+        "variant": "cabin_a",
+        "files": {
+          "whole": {
+            "path": "objects/hut/cabin_a/cabin_a.stl",
+            "rgba": [
+              0.52,
+              0.36,
+              0.22,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "walls",
+              "path": "objects/hut/cabin_a/parts/walls.stl",
+              "rgba": [
+                0.52,
+                0.36,
+                0.22,
+                1
+              ],
+              "triangles": 16
+            },
+            {
+              "name": "roof",
+              "path": "objects/hut/cabin_a/parts/roof.stl",
+              "rgba": [
+                0.38,
+                0.38,
+                0.4,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "door",
+              "path": "objects/hut/cabin_a/parts/door.stl",
+              "rgba": [
+                0.64,
+                0.48,
+                0.32,
+                1
+              ],
+              "triangles": 12
+            },
+            {
+              "name": "windows",
+              "path": "objects/hut/cabin_a/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "base",
+              "path": "objects/hut/cabin_a/parts/base.stl",
+              "rgba": [
+                0.5,
+                0.5,
+                0.5,
+                1
+              ],
+              "triangles": 12
+            }
+          ]
+        },
+        "size_m": [
+          4.8,
+          4.0,
+          3.2
+        ],
+        "scale_factor": 1.0,
+        "triangles": 88,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.4,
+            -2.0,
+            0.0
+          ],
+          "max": [
+            2.4,
+            2.0,
+            3.2
+          ]
+        },
+        "footprint_m": [
+          4.8,
+          4.0
+        ],
+        "height_m": 3.2,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.6
+          ],
+          "half_size": [
+            2.4,
+            2.0,
+            1.6
+          ]
+        },
+        "source_url": "procedural (tools/normalize.py)",
+        "author": "generated",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": null,
+        "title": null,
+        "source_file": null,
+        "procedural": true,
+        "note": "procedural low-poly mesh generated by tools/normalize.py",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "hut",
+        "variant": "shed_d",
+        "files": {
+          "whole": {
+            "path": "objects/hut/shed_d/shed_d.stl",
+            "rgba": [
+              0.52,
+              0.36,
+              0.22,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "walls",
+              "path": "objects/hut/shed_d/parts/walls.stl",
+              "rgba": [
+                0.52,
+                0.36,
+                0.22,
+                1
+              ],
+              "triangles": 16
+            },
+            {
+              "name": "roof",
+              "path": "objects/hut/shed_d/parts/roof.stl",
+              "rgba": [
+                0.38,
+                0.38,
+                0.4,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "door",
+              "path": "objects/hut/shed_d/parts/door.stl",
+              "rgba": [
+                0.64,
+                0.48,
+                0.32,
+                1
+              ],
+              "triangles": 12
+            },
+            {
+              "name": "windows",
+              "path": "objects/hut/shed_d/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 24
+            },
+            {
+              "name": "base",
+              "path": "objects/hut/shed_d/parts/base.stl",
+              "rgba": [
+                0.5,
+                0.5,
+                0.5,
+                1
+              ],
+              "triangles": 12
+            }
+          ]
+        },
+        "size_m": [
+          3.9,
+          3.5,
+          2.95
+        ],
+        "scale_factor": 1.0,
+        "triangles": 88,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -1.95,
+            -1.75,
+            0.0
+          ],
+          "max": [
+            1.95,
+            1.75,
+            2.95
+          ]
+        },
+        "footprint_m": [
+          3.9,
+          3.5
+        ],
+        "height_m": 2.95,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.475
+          ],
+          "half_size": [
+            1.95,
+            1.75,
+            1.475
+          ]
+        },
+        "source_url": "procedural (tools/normalize.py)",
+        "author": "generated",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": null,
+        "title": null,
+        "source_file": null,
+        "procedural": true,
+        "note": "procedural low-poly mesh generated by tools/normalize.py",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "hut",
+        "variant": "cabin_shed_b",
+        "files": {
+          "whole": {
+            "path": "objects/hut/cabin_shed_b/cabin_shed_b.stl",
+            "rgba": [
+              0.52,
+              0.36,
+              0.22,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "walls",
+              "path": "objects/hut/cabin_shed_b/parts/walls.stl",
+              "rgba": [
+                0.52,
+                0.36,
+                0.22,
+                1
+              ],
+              "triangles": 1340
+            },
+            {
+              "name": "trim",
+              "path": "objects/hut/cabin_shed_b/parts/trim.stl",
+              "rgba": [
+                0.64,
+                0.48,
+                0.32,
+                1
+              ],
+              "triangles": 1065
+            },
+            {
+              "name": "roof",
+              "path": "objects/hut/cabin_shed_b/parts/roof.stl",
+              "rgba": [
+                0.38,
+                0.38,
+                0.4,
+                1
+              ],
+              "triangles": 242
+            },
+            {
+              "name": "stone",
+              "path": "objects/hut/cabin_shed_b/parts/stone.stl",
+              "rgba": [
+                0.5,
+                0.5,
+                0.5,
+                1
+              ],
+              "triangles": 92
+            },
+            {
+              "name": "windows",
+              "path": "objects/hut/cabin_shed_b/parts/windows.stl",
+              "rgba": [
+                0.12,
+                0.16,
+                0.22,
+                1
+              ],
+              "triangles": 6
+            }
+          ]
+        },
+        "size_m": [
+          4.239,
+          3.004,
+          3.4
+        ],
+        "scale_factor": 9.70261,
+        "triangles": 2745,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.119,
+            -1.502,
+            0.0
+          ],
+          "max": [
+            2.119,
+            1.502,
+            3.4
+          ]
+        },
+        "footprint_m": [
+          4.239,
+          3.004
+        ],
+        "height_m": 3.4,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.7
+          ],
+          "half_size": [
+            2.119,
+            1.502,
+            1.7
+          ]
+        },
+        "source_url": "https://poly.pizza/m/HTx7PZt6Zm",
+        "author": "CreativeTrio",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://static.poly.pizza/9f69cf1b-e9f0-495a-9f68-0dab4bffd6d2.glb",
+        "title": null,
+        "source_file": "sources/polypizza/HTx7PZt6Zm.glb",
+        "procedural": false,
+        "note": "CreativeTrio 'Cabin Shed' (single texture; parts split by texture color)",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "hut",
+        "variant": "log_cabin_e",
+        "files": {
+          "whole": {
+            "path": "objects/hut/log_cabin_e/log_cabin_e.stl",
+            "rgba": [
+              0.64,
+              0.48,
+              0.32,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "walls",
+              "path": "objects/hut/log_cabin_e/parts/walls.stl",
+              "rgba": [
+                0.52,
+                0.36,
+                0.22,
+                1
+              ],
+              "triangles": 880
+            },
+            {
+              "name": "trim",
+              "path": "objects/hut/log_cabin_e/parts/trim.stl",
+              "rgba": [
+                0.64,
+                0.48,
+                0.32,
+                1
+              ],
+              "triangles": 904
+            },
+            {
+              "name": "roof",
+              "path": "objects/hut/log_cabin_e/parts/roof.stl",
+              "rgba": [
+                0.38,
+                0.38,
+                0.4,
+                1
+              ],
+              "triangles": 856
+            }
+          ]
+        },
+        "size_m": [
+          3.667,
+          2.908,
+          3.5
+        ],
+        "scale_factor": 3.77374,
+        "triangles": 2640,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -1.834,
+            -1.454,
+            0.0
+          ],
+          "max": [
+            1.834,
+            1.454,
+            3.5
+          ]
+        },
+        "footprint_m": [
+          3.667,
+          2.908
+        ],
+        "height_m": 3.5,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.75
+          ],
+          "half_size": [
+            1.834,
+            1.454,
+            1.75
+          ]
+        },
+        "source_url": "https://poly.pizza/m/et0OmFeZVkb",
+        "author": "Jarlan Perez",
+        "license": "CC-BY 3.0",
+        "license_url": "https://creativecommons.org/licenses/by/3.0/",
+        "download_url": "https://static.poly.pizza/0647436a-ac3f-4e34-abdd-01f57e43cc2f.glb",
+        "title": "Log Cabin",
+        "source_file": "sources/polypizza/et0OmFeZVkb.glb",
+        "procedural": false,
+        "note": "Jarlan Perez 'Log Cabin' (roof split by face normal)",
+        "size_check": {
+          "L": "ok",
+          "W": "2.91 outside 3.0-5.0",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "hut",
+        "variant": "hut_c",
+        "files": {
+          "whole": {
+            "path": "objects/hut/hut_c/hut_c.stl",
+            "rgba": [
+              0.52,
+              0.36,
+              0.22,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "walls",
+              "path": "objects/hut/hut_c/parts/walls.stl",
+              "rgba": [
+                0.52,
+                0.36,
+                0.22,
+                1
+              ],
+              "triangles": 612
+            },
+            {
+              "name": "base",
+              "path": "objects/hut/hut_c/parts/base.stl",
+              "rgba": [
+                0.5,
+                0.5,
+                0.5,
+                1
+              ],
+              "triangles": 20
+            }
+          ]
+        },
+        "size_m": [
+          4.907,
+          3.638,
+          3.2
+        ],
+        "scale_factor": 4.18549,
+        "triangles": 632,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.454,
+            -1.819,
+            0.0
+          ],
+          "max": [
+            2.454,
+            1.819,
+            3.2
+          ]
+        },
+        "footprint_m": [
+          4.907,
+          3.638
+        ],
+        "height_m": 3.2,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            1.6
+          ],
+          "half_size": [
+            2.454,
+            1.819,
+            1.6
+          ]
+        },
+        "source_url": "https://poly.pizza/m/4MJWbyd6vw",
+        "author": "Quaternius",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://static.poly.pizza/36d65045-d2ff-4689-a34d-a4acbe1873cb.glb",
+        "title": null,
+        "source_file": "sources/polypizza/4MJWbyd6vw.glb",
+        "procedural": false,
+        "note": "Quaternius 'Hut'",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      }
+    ],
+    "tree": [
+      {
+        "key": "tree",
+        "variant": "oak_a",
+        "files": {
+          "whole": {
+            "path": "objects/tree/oak_a/oak_a.stl",
+            "rgba": [
+              0.22,
+              0.48,
+              0.18,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "crown",
+              "path": "objects/tree/oak_a/parts/crown.stl",
+              "rgba": [
+                0.22,
+                0.48,
+                0.18,
+                1
+              ],
+              "triangles": 64
+            },
+            {
+              "name": "trunk",
+              "path": "objects/tree/oak_a/parts/trunk.stl",
+              "rgba": [
+                0.36,
+                0.25,
+                0.16,
+                1
+              ],
+              "triangles": 132
+            }
+          ]
+        },
+        "size_m": [
+          5.429,
+          4.701,
+          9.0
+        ],
+        "scale_factor": 7.33951,
+        "triangles": 196,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.714,
+            -2.351,
+            0.0
+          ],
+          "max": [
+            2.714,
+            2.351,
+            9.0
+          ]
+        },
+        "footprint_m": [
+          5.429,
+          4.701
+        ],
+        "height_m": 9.0,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            4.5
+          ],
+          "half_size": [
+            2.714,
+            2.351,
+            4.5
+          ]
+        },
+        "collision_boxes_detailed": {
+          "trunk": {
+            "center": [
+              -0.0,
+              0.109,
+              1.836
+            ],
+            "half_size": [
+              1.372,
+              1.403,
+              1.836
+            ]
+          },
+          "crown": {
+            "center": [
+              0.0,
+              0.0,
+              6.336
+            ],
+            "half_size": [
+              2.714,
+              2.351,
+              2.664
+            ]
+          }
+        },
+        "crown_diameter_m": 5.429,
+        "source_url": "https://kenney.nl/assets/nature-kit",
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+        "title": null,
+        "source_file": "sources/kenney_nature-kit/tree_oak.glb",
+        "procedural": false,
+        "note": "Kenney Nature Kit tree_oak",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "tree",
+        "variant": "deciduous_b",
+        "files": {
+          "whole": {
+            "path": "objects/tree/deciduous_b/deciduous_b.stl",
+            "rgba": [
+              0.22,
+              0.48,
+              0.18,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "crown",
+              "path": "objects/tree/deciduous_b/parts/crown.stl",
+              "rgba": [
+                0.22,
+                0.48,
+                0.18,
+                1
+              ],
+              "triangles": 280
+            },
+            {
+              "name": "trunk",
+              "path": "objects/tree/deciduous_b/parts/trunk.stl",
+              "rgba": [
+                0.36,
+                0.25,
+                0.16,
+                1
+              ],
+              "triangles": 122
+            }
+          ]
+        },
+        "size_m": [
+          6.358,
+          5.716,
+          10.0
+        ],
+        "scale_factor": 7.50516,
+        "triangles": 402,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -3.179,
+            -2.858,
+            0.0
+          ],
+          "max": [
+            3.179,
+            2.858,
+            10.0
+          ]
+        },
+        "footprint_m": [
+          6.358,
+          5.716
+        ],
+        "height_m": 10.0,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            5.0
+          ],
+          "half_size": [
+            3.179,
+            2.858,
+            5.0
+          ]
+        },
+        "collision_boxes_detailed": {
+          "trunk": {
+            "center": [
+              -0.105,
+              0.215,
+              3.292
+            ],
+            "half_size": [
+              2.46,
+              2.127,
+              3.292
+            ]
+          },
+          "crown": {
+            "center": [
+              0.0,
+              0.0,
+              6.675
+            ],
+            "half_size": [
+              3.179,
+              2.858,
+              3.325
+            ]
+          }
+        },
+        "crown_diameter_m": 6.358,
+        "source_url": "https://kenney.nl/assets/nature-kit",
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+        "title": null,
+        "source_file": "sources/kenney_nature-kit/tree_detailed.glb",
+        "procedural": false,
+        "note": "Kenney Nature Kit tree_detailed",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "tree",
+        "variant": "deciduous_c",
+        "files": {
+          "whole": {
+            "path": "objects/tree/deciduous_c/deciduous_c.stl",
+            "rgba": [
+              0.22,
+              0.48,
+              0.18,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "trunk",
+              "path": "objects/tree/deciduous_c/parts/trunk.stl",
+              "rgba": [
+                0.36,
+                0.25,
+                0.16,
+                1
+              ],
+              "triangles": 74
+            },
+            {
+              "name": "crown",
+              "path": "objects/tree/deciduous_c/parts/crown.stl",
+              "rgba": [
+                0.22,
+                0.48,
+                0.18,
+                1
+              ],
+              "triangles": 40
+            }
+          ]
+        },
+        "size_m": [
+          4.863,
+          4.211,
+          11.0
+        ],
+        "scale_factor": 6.44071,
+        "triangles": 114,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.431,
+            -2.106,
+            0.0
+          ],
+          "max": [
+            2.431,
+            2.106,
+            11.0
+          ]
+        },
+        "footprint_m": [
+          4.863,
+          4.211
+        ],
+        "height_m": 11.0,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            5.5
+          ],
+          "half_size": [
+            2.431,
+            2.106,
+            5.5
+          ]
+        },
+        "collision_boxes_detailed": {
+          "trunk": {
+            "center": [
+              0.072,
+              0.006,
+              2.578
+            ],
+            "half_size": [
+              0.859,
+              0.875,
+              2.578
+            ]
+          },
+          "crown": {
+            "center": [
+              0.0,
+              0.0,
+              8.078
+            ],
+            "half_size": [
+              2.431,
+              2.106,
+              2.922
+            ]
+          }
+        },
+        "crown_diameter_m": 4.863,
+        "source_url": "https://kenney.nl/assets/nature-kit",
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+        "title": null,
+        "source_file": "sources/kenney_nature-kit/tree_default.glb",
+        "procedural": false,
+        "note": "Kenney Nature Kit tree_default",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "tree",
+        "variant": "conifer_d",
+        "files": {
+          "whole": {
+            "path": "objects/tree/conifer_d/conifer_d.stl",
+            "rgba": [
+              0.12,
+              0.34,
+              0.16,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "trunk",
+              "path": "objects/tree/conifer_d/parts/trunk.stl",
+              "rgba": [
+                0.36,
+                0.25,
+                0.16,
+                1
+              ],
+              "triangles": 66
+            },
+            {
+              "name": "crown",
+              "path": "objects/tree/conifer_d/parts/crown.stl",
+              "rgba": [
+                0.12,
+                0.34,
+                0.16,
+                1
+              ],
+              "triangles": 68
+            }
+          ]
+        },
+        "size_m": [
+          3.075,
+          3.03,
+          12.0
+        ],
+        "scale_factor": 7.84516,
+        "triangles": 134,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -1.537,
+            -1.515,
+            0.0
+          ],
+          "max": [
+            1.537,
+            1.515,
+            12.0
+          ]
+        },
+        "footprint_m": [
+          3.075,
+          3.03
+        ],
+        "height_m": 12.0,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            6.0
+          ],
+          "half_size": [
+            1.537,
+            1.515,
+            6.0
+          ]
+        },
+        "collision_boxes_detailed": {
+          "trunk": {
+            "center": [
+              0.005,
+              0.261,
+              2.465
+            ],
+            "half_size": [
+              0.776,
+              0.697,
+              2.465
+            ]
+          },
+          "crown": {
+            "center": [
+              0.0,
+              0.0,
+              8.465
+            ],
+            "half_size": [
+              1.537,
+              1.515,
+              3.535
+            ]
+          }
+        },
+        "crown_diameter_m": 3.075,
+        "source_url": "https://kenney.nl/assets/nature-kit",
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+        "title": null,
+        "source_file": "sources/kenney_nature-kit/tree_pineTallA_detailed.glb",
+        "procedural": false,
+        "note": "Kenney Nature Kit tree_pineTallA_detailed",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      },
+      {
+        "key": "tree",
+        "variant": "conifer_e",
+        "files": {
+          "whole": {
+            "path": "objects/tree/conifer_e/conifer_e.stl",
+            "rgba": [
+              0.12,
+              0.34,
+              0.16,
+              1
+            ]
+          },
+          "parts": [
+            {
+              "name": "crown",
+              "path": "objects/tree/conifer_e/parts/crown.stl",
+              "rgba": [
+                0.12,
+                0.34,
+                0.16,
+                1
+              ],
+              "triangles": 190
+            },
+            {
+              "name": "trunk",
+              "path": "objects/tree/conifer_e/parts/trunk.stl",
+              "rgba": [
+                0.36,
+                0.25,
+                0.16,
+                1
+              ],
+              "triangles": 16
+            }
+          ]
+        },
+        "size_m": [
+          4.427,
+          3.834,
+          10.0
+        ],
+        "scale_factor": 7.98178,
+        "triangles": 206,
+        "decimated": false,
+        "origin": "bottom_center",
+        "forward_axis": "+x",
+        "up_axis": "+z",
+        "bounds_m": {
+          "min": [
+            -2.214,
+            -1.917,
+            0.0
+          ],
+          "max": [
+            2.214,
+            1.917,
+            10.0
+          ]
+        },
+        "footprint_m": [
+          4.427,
+          3.834
+        ],
+        "height_m": 10.0,
+        "collision_box": {
+          "center": [
+            0.0,
+            0.0,
+            5.0
+          ],
+          "half_size": [
+            2.214,
+            1.917,
+            5.0
+          ]
+        },
+        "collision_boxes_detailed": {
+          "trunk": {
+            "center": [
+              0.0,
+              0.0,
+              0.798
+            ],
+            "half_size": [
+              0.98,
+              0.848,
+              0.798
+            ]
+          },
+          "crown": {
+            "center": [
+              0.0,
+              0.0,
+              5.56
+            ],
+            "half_size": [
+              2.214,
+              1.917,
+              4.44
+            ]
+          }
+        },
+        "crown_diameter_m": 4.427,
+        "source_url": "https://kenney.nl/assets/nature-kit",
+        "author": "Kenney (kenney.nl)",
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "download_url": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+        "title": null,
+        "source_file": "sources/kenney_nature-kit/tree_pineRoundC.glb",
+        "procedural": false,
+        "note": "Kenney Nature Kit tree_pineRoundC",
+        "size_check": {
+          "L": "ok",
+          "W": "ok",
+          "H": "ok"
+        }
+      }
+    ]
+  }
+}

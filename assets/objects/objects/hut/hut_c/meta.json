@@ -1,0 +1,93 @@
+{
+  "key": "hut",
+  "variant": "hut_c",
+  "files": {
+    "whole": {
+      "path": "objects/hut/hut_c/hut_c.stl",
+      "rgba": [
+        0.52,
+        0.36,
+        0.22,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "walls",
+        "path": "objects/hut/hut_c/parts/walls.stl",
+        "rgba": [
+          0.52,
+          0.36,
+          0.22,
+          1
+        ],
+        "triangles": 612
+      },
+      {
+        "name": "base",
+        "path": "objects/hut/hut_c/parts/base.stl",
+        "rgba": [
+          0.5,
+          0.5,
+          0.5,
+          1
+        ],
+        "triangles": 20
+      }
+    ]
+  },
+  "size_m": [
+    4.907,
+    3.638,
+    3.2
+  ],
+  "scale_factor": 4.18549,
+  "triangles": 632,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -2.454,
+      -1.819,
+      0.0
+    ],
+    "max": [
+      2.454,
+      1.819,
+      3.2
+    ]
+  },
+  "footprint_m": [
+    4.907,
+    3.638
+  ],
+  "height_m": 3.2,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      1.6
+    ],
+    "half_size": [
+      2.454,
+      1.819,
+      1.6
+    ]
+  },
+  "source_url": "https://poly.pizza/m/4MJWbyd6vw",
+  "author": "Quaternius",
+  "license": "CC0 1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "download_url": "https://static.poly.pizza/36d65045-d2ff-4689-a34d-a4acbe1873cb.glb",
+  "title": null,
+  "source_file": "sources/polypizza/4MJWbyd6vw.glb",
+  "procedural": false,
+  "note": "Quaternius 'Hut'",
+  "size_check": {
+    "L": "ok",
+    "W": "ok",
+    "H": "ok"
+  }
+}

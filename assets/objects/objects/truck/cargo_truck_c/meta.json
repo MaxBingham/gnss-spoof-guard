@@ -1,0 +1,183 @@
+{
+  "key": "truck",
+  "variant": "cargo_truck_c",
+  "files": {
+    "whole": {
+      "path": "objects/truck/cargo_truck_c/cargo_truck_c.stl",
+      "rgba": [
+        0.42,
+        0.28,
+        0.16,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "trim",
+        "path": "objects/truck/cargo_truck_c/parts/trim.stl",
+        "rgba": [
+          0.3,
+          0.3,
+          0.32,
+          1
+        ],
+        "triangles": 752
+      },
+      {
+        "name": "tires",
+        "path": "objects/truck/cargo_truck_c/parts/tires.stl",
+        "rgba": [
+          0.07,
+          0.07,
+          0.07,
+          1
+        ],
+        "triangles": 1580
+      },
+      {
+        "name": "body",
+        "path": "objects/truck/cargo_truck_c/parts/body.stl",
+        "rgba": [
+          0.42,
+          0.28,
+          0.16,
+          1
+        ],
+        "triangles": 791
+      },
+      {
+        "name": "cargo_box",
+        "path": "objects/truck/cargo_truck_c/parts/cargo_box.stl",
+        "rgba": [
+          0.42,
+          0.28,
+          0.16,
+          1
+        ],
+        "triangles": 1120
+      },
+      {
+        "name": "lights_rear",
+        "path": "objects/truck/cargo_truck_c/parts/lights_rear.stl",
+        "rgba": [
+          0.7,
+          0.05,
+          0.05,
+          1
+        ],
+        "triangles": 8
+      },
+      {
+        "name": "windows",
+        "path": "objects/truck/cargo_truck_c/parts/windows.stl",
+        "rgba": [
+          0.12,
+          0.16,
+          0.22,
+          1
+        ],
+        "triangles": 20
+      },
+      {
+        "name": "lights_front",
+        "path": "objects/truck/cargo_truck_c/parts/lights_front.stl",
+        "rgba": [
+          0.95,
+          0.93,
+          0.8,
+          1
+        ],
+        "triangles": 16
+      },
+      {
+        "name": "roof_plate",
+        "path": "objects/truck/cargo_truck_c/parts/roof_plate.stl",
+        "rgba": [
+          0.55,
+          0.55,
+          0.55,
+          1
+        ],
+        "triangles": 12
+      }
+    ]
+  },
+  "size_m": [
+    8.55,
+    2.4,
+    3.14
+  ],
+  "scale_factor": 1.27898,
+  "triangles": 4299,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -4.275,
+      -1.2,
+      0.0
+    ],
+    "max": [
+      4.275,
+      1.2,
+      3.14
+    ]
+  },
+  "footprint_m": [
+    8.55,
+    2.4
+  ],
+  "height_m": 3.14,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      1.57
+    ],
+    "half_size": [
+      4.275,
+      1.2,
+      1.57
+    ]
+  },
+  "landing_area": {
+    "center": [
+      -1.282,
+      0.0,
+      3.14
+    ],
+    "size": [
+      2.6,
+      2.4
+    ],
+    "normal": [
+      0,
+      0,
+      1
+    ],
+    "fill_ratio": 1.0,
+    "added_roof_plate": true,
+    "rgba": [
+      0.55,
+      0.55,
+      0.55,
+      1
+    ]
+  },
+  "source_url": "https://poly.pizza/m/Fy3WI3uXNQ",
+  "author": "J-Toastie",
+  "license": "CC-BY 3.0",
+  "license_url": "https://creativecommons.org/licenses/by/3.0/",
+  "download_url": "https://static.poly.pizza/4e798498-be05-47ac-988a-ad953cf46236.glb",
+  "title": "Cargo Truck",
+  "source_file": "sources/polypizza/Fy3WI3uXNQ.glb",
+  "procedural": false,
+  "note": "J-Toastie 'Cargo Truck' (semi-truck; flat roof plate added)",
+  "size_check": {
+    "L": "ok",
+    "W": "ok",
+    "H": "ok"
+  }
+}

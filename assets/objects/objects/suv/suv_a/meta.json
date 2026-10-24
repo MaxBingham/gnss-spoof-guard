@@ -1,0 +1,137 @@
+{
+  "key": "suv",
+  "variant": "suv_a",
+  "files": {
+    "whole": {
+      "path": "objects/suv/suv_a/suv_a.stl",
+      "rgba": [
+        0.92,
+        0.92,
+        0.92,
+        1
+      ]
+    },
+    "parts": [
+      {
+        "name": "trim",
+        "path": "objects/suv/suv_a/parts/trim.stl",
+        "rgba": [
+          0.3,
+          0.3,
+          0.32,
+          1
+        ],
+        "triangles": 1138
+      },
+      {
+        "name": "tires",
+        "path": "objects/suv/suv_a/parts/tires.stl",
+        "rgba": [
+          0.07,
+          0.07,
+          0.07,
+          1
+        ],
+        "triangles": 1028
+      },
+      {
+        "name": "body",
+        "path": "objects/suv/suv_a/parts/body.stl",
+        "rgba": [
+          0.92,
+          0.92,
+          0.92,
+          1
+        ],
+        "triangles": 1004
+      },
+      {
+        "name": "windows",
+        "path": "objects/suv/suv_a/parts/windows.stl",
+        "rgba": [
+          0.12,
+          0.16,
+          0.22,
+          1
+        ],
+        "triangles": 72
+      },
+      {
+        "name": "lights_front",
+        "path": "objects/suv/suv_a/parts/lights_front.stl",
+        "rgba": [
+          0.95,
+          0.93,
+          0.8,
+          1
+        ],
+        "triangles": 10
+      },
+      {
+        "name": "lights_rear",
+        "path": "objects/suv/suv_a/parts/lights_rear.stl",
+        "rgba": [
+          0.7,
+          0.05,
+          0.05,
+          1
+        ],
+        "triangles": 42
+      }
+    ]
+  },
+  "size_m": [
+    4.7,
+    2.357,
+    1.706
+  ],
+  "scale_factor": 1.11656,
+  "triangles": 3294,
+  "decimated": false,
+  "origin": "bottom_center",
+  "forward_axis": "+x",
+  "up_axis": "+z",
+  "bounds_m": {
+    "min": [
+      -2.35,
+      -1.179,
+      0.0
+    ],
+    "max": [
+      2.35,
+      1.179,
+      1.706
+    ]
+  },
+  "footprint_m": [
+    4.7,
+    2.357
+  ],
+  "height_m": 1.706,
+  "collision_box": {
+    "center": [
+      0.0,
+      0.0,
+      0.853
+    ],
+    "half_size": [
+      2.35,
+      1.179,
+      0.853
+    ]
+  },
+  "source_url": "https://poly.pizza/m/xsMtZhBkxL",
+  "author": "Quaternius",
+  "license": "CC0 1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "download_url": "https://static.poly.pizza/e5fbf2ee-5c9e-47d5-8ab6-80cacd463baa.glb",
+  "title": null,
+  "source_file": "sources/polypizza/xsMtZhBkxL.glb",
+  "procedural": false,
+  "note": "Quaternius 'SUV'",
+  "size_check": {
+    "L": "ok",
+    "W": "2.36 outside 1.8-2.2",
+    "H": "ok"
+  }
+}

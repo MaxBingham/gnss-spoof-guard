@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 
 from ..geo import GeoOrigin
-from ..missionprep.geometry import Grid, polygon_mask
+from ..missionprep.geometry import Grid
 from ..missionprep.osm import _geom, element_rings
 from .materials import CLS
 
@@ -166,8 +166,26 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
     bldg_id = np.full(shape, -1, np.int32)
     roads_json: list[dict[str, Any]] = []
 
-    def to_px16(pts: np.ndarray) -> np.ndarray:
-        return np.round((grid.to_px(pts) + 0.5) * 16).astype(np.int32)
+    def window(pts: np.ndarray, pad_m: float) -> tuple[tuple[slice, slice], np.ndarray] | None:
+        """Sub-window of the grid holding pts (+ pad) and the points in its 1/16 px coordinates (drawing
+        each feature on a full 8 Mpx raster made the Sentinel-2 mission slow)."""
+        uv = grid.to_px(pts)
+        pad = pad_m / grid.res + 2
+        c0, r0 = np.floor(uv.min(axis=0) - pad).astype(int)
+        c1, r1 = np.ceil(uv.max(axis=0) + pad).astype(int) + 1
+        c0, r0, c1, r1 = max(c0, 0), max(r0, 0), min(c1, grid.cols), min(r1, grid.rows)
+        if c1 <= c0 or r1 <= r0:
+            return None
+        return (slice(r0, r1), slice(c0, c1)), np.round((uv - [c0, r0] + 0.5) * 16).astype(np.int32)
+
+    def poly_mask(pts: np.ndarray) -> tuple[tuple[slice, slice], np.ndarray] | None:
+        w = window(pts, 0.0)
+        if w is None:
+            return None
+        sl, p16 = w
+        m = np.zeros((sl[0].stop - sl[0].start, sl[1].stop - sl[1].start), np.uint8)
+        cv2.fillPoly(m, [p16], 1, lineType=cv2.LINE_8, shift=4)
+        return sl, m > 0
 
     elements = (osm or {}).get("elements", [])
     # 2. areas
@@ -193,17 +211,21 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
             pts = np.array([origin.to_enu(a, b) for a, b in ring])
             if len(pts) < 3:
                 continue
-            m = polygon_mask(grid, [pts]) > 0
+            pm = poly_mask(pts)
+            if pm is None:
+                continue
+            sl, m = pm
+            c, v = cls[sl], veg[sl]
             if target == "wood":
-                cls[m & veg] = CLS["tree"]
+                c[m & v] = CLS["tree"]
             elif target == "meadow":
-                cls[m & veg & (cls == CLS["tree"])] = CLS["grass"]
+                c[m & v & (c == CLS["tree"])] = CLS["grass"]
             elif target == "parking":
-                sel = m & ~veg
-                cls[sel] = CLS["parking"]
-                road_kind[sel] = ROAD_KIND["parking"]
+                sel = m & ~v
+                c[sel] = CLS["parking"]
+                road_kind[sl][sel] = ROAD_KIND["parking"]
             else:
-                cls[m] = CLS[target]
+                c[m] = CLS[target]
     # 3. highways, wide first so narrow paths on top keep their own id
     ways = []
     for el in elements:
@@ -229,54 +251,63 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
         if unsure:
             n_unc += 1
             if truth:  # per way, the same answer for every build
-                mat = "asphalt_minor" if np.random.default_rng(int(el["id"]) % 2**32).uniform() < untagged_paved_p                     else "dirt_road"
+                paved = np.random.default_rng(int(el["id"]) % 2**32).uniform() < untagged_paved_p
+                mat = "asphalt_minor" if paved else "dirt_road"
             else:
                 mat = "dirt_road"
         roads_json.append({"id": sid, "osm_id": f"way/{el['id']}", "highway": tags["highway"],
                            "surface": tags.get("surface"), "material": mat, "kind": kind, "width_m": width,
                            "paved": None if unsure and not truth else mat in PAVED,
                            "pts_enu": np.round(pts, 2).tolist()})
-        m = np.zeros(shape, np.uint8)
+        w = window(pts, width)
+        if w is None:
+            continue
+        sl, p16 = w
+        m = np.zeros((sl[0].stop - sl[0].start, sl[1].stop - sl[1].start), np.uint8)
         area = tags.get("area") == "yes" and len(pts) >= 4 and np.allclose(pts[0], pts[-1])
         if area:
-            cv2.fillPoly(m, [to_px16(pts)], 1, lineType=cv2.LINE_8, shift=4)
+            cv2.fillPoly(m, [p16], 1, lineType=cv2.LINE_8, shift=4)
         else:
             th = max(1, int(round(width / grid.res)))
-            cv2.polylines(m, [to_px16(pts)], False, 1, thickness=th, lineType=cv2.LINE_8, shift=4)
-        sel = (m > 0) & ~veg_for_roads
+            cv2.polylines(m, [p16], False, 1, thickness=th, lineType=cv2.LINE_8, shift=4)
+        sel = (m > 0) & ~veg_for_roads[sl]
         if unsure and not truth:
-            uncertain[sel] = True
-        cls[sel] = CLS[mat]
-        seg_id[sel] = sid
-        road_kind[sel] = ROAD_KIND[kind]
-        roads[sel] = 1 if mat in PAVED else 0
+            uncertain[sl][sel] = True
+        cls[sl][sel] = CLS[mat]
+        seg_id[sl][sel] = sid
+        road_kind[sl][sel] = ROAD_KIND[kind]
+        roads[sl][sel] = 1 if mat in PAVED else 0
     # 4. trees from the landmark list (crown discs)
     for lm in landmarks:
         if lm["type"] != "tree":
             continue
-        c = to_px16(np.asarray([lm["centroid_enu"]], float))[0]
-        r = int(round(float(lm.get("radius", 3.0)) / grid.res * 16))
-        tm = np.zeros(shape, np.uint8)
-        cv2.circle(tm, (int(c[0]), int(c[1])), r, 1, -1, lineType=cv2.LINE_8, shift=4)
-        sel = tm > 0
-        cls[sel] = CLS["tree"]
+        rad = float(lm.get("radius", 3.0))
+        w = window(np.asarray([lm["centroid_enu"]], float), rad)
+        if w is None:
+            continue
+        sl, p16 = w
+        tm = np.zeros((sl[0].stop - sl[0].start, sl[1].stop - sl[1].start), np.uint8)
+        cv2.circle(tm, (int(p16[0, 0]), int(p16[0, 1])), int(round(rad / grid.res * 16)), 1, -1,
+                   lineType=cv2.LINE_8, shift=4)
+        cls[sl][tm > 0] = CLS["tree"]
     # 5. roofs
     V = rgb.astype(np.float32).mean(axis=2)
     for lm in landmarks:
         if lm["type"] not in ("building", "tower", "fountain") or not lm.get("footprint_enu"):
             continue
-        m = polygon_mask(grid, [np.asarray(lm["footprint_enu"], float)]) > 0
-        if not m.any():
+        pm = poly_mask(np.asarray(lm["footprint_enu"], float))
+        if pm is None or not pm[1].any():
             continue
+        sl, m = pm
         if lm["type"] == "fountain":
-            cls[m] = CLS["water"]
+            cls[sl][m] = CLS["water"]
             continue
-        bright = float(np.median(V[m]))
-        cls[m] = CLS["roof_light"] if bright > 150.0 else CLS["roof_dark"]
-        bldg_id[m] = lm["id"]
-        roads[m] = 0
-        road_kind[m] = 0
-        seg_id[m] = -1
+        bright = float(np.median(V[sl][m]))
+        cls[sl][m] = CLS["roof_light"] if bright > 150.0 else CLS["roof_dark"]
+        bldg_id[sl][m] = lm["id"]
+        roads[sl][m] = 0
+        road_kind[sl][m] = 0
+        seg_id[sl][m] = -1
     hidden = cls == CLS["tree"]
     roads[hidden] = 0
     seg_id[hidden] = -1

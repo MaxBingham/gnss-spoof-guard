@@ -22,6 +22,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import shutil
 import time
 import zlib
@@ -130,6 +131,13 @@ def load_osm(manifest: dict[str, Any], mdir: Path, log: Any) -> dict[str, Any] |
     return None
 
 
+def truth_dtm(mdir: Path, g1: Grid) -> np.ndarray:
+    with np.load(mdir / "world" / "terrain.npz") as z:
+        t = np.asarray(z["z"], np.float32)
+        tg = Grid(float(z["min_x"]), float(z["max_y"]), float(z["res_m"]), *t.shape)
+    return resample(t, tg, g1)
+
+
 def truth_dsm(mdir: Path, g1: Grid, landmarks: list[dict[str, Any]]) -> np.ndarray:
     with np.load(mdir / "world" / "terrain.npz") as z:
         t = np.asarray(z["z"], np.float32)
@@ -203,6 +211,14 @@ def temperature_map(cls: np.ndarray, exposure: np.ndarray, svf: np.ndarray, tabl
     return out
 
 
+def shading(dsm1: np.ndarray, lat: float, doy: int, shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+    """Sun exposure and sky view factor on a 2 m block-max copy of the 1 m DSM (obstacles kept), upsampled to
+    `shape`. Both are smooth daily / hemispheric integrals; 2 m is 8x faster than 1 m (ukraine-1: 2 Mcells)."""
+    R, C = dsm1.shape[0] // 2 * 2, dsm1.shape[1] // 2 * 2
+    d2 = dsm1[:R, :C].reshape(R // 2, 2, C // 2, 2).max(axis=(1, 3))
+    return _up2(sun_exposure(d2, 2.0, lat, doy), shape), _up2(sky_view(d2, 2.0), shape)
+
+
 def _up2(a: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     return cv2.resize(a.astype(np.float32), (shape[1], shape[0]), interpolation=cv2.INTER_LINEAR)
 
@@ -216,9 +232,18 @@ def _rect(cx: float, cy: float, length: float, width: float, yaw: float) -> np.n
     return pts @ np.array([[c, s], [-s, c]]) + [cx, cy]
 
 
-def _fill(img: np.ndarray, grid: Grid, poly: np.ndarray, value: float) -> None:
-    pts = np.round((grid.to_px(poly) + 0.5) * 16).astype(np.int32)
-    cv2.fillPoly(img, [pts], float(value), lineType=cv2.LINE_AA, shift=4)
+def _coverage(grid: Grid, poly: np.ndarray) -> tuple[np.ndarray, slice, slice] | None:
+    """Anti-aliased coverage (0..1) of a small polygon on the sub-window of the grid that holds it."""
+    uv = grid.to_px(poly)
+    c0, r0 = np.floor(uv.min(axis=0)).astype(int) - 1
+    c1, r1 = np.ceil(uv.max(axis=0)).astype(int) + 2
+    c0, r0, c1, r1 = max(c0, 0), max(r0, 0), min(c1, grid.cols), min(r1, grid.rows)
+    if c1 <= c0 or r1 <= r0:
+        return None
+    m = np.zeros((r1 - r0, c1 - c0), np.float32)
+    pts = np.round((uv - [c0, r0] + 0.5) * 16).astype(np.int32)
+    cv2.fillPoly(m, [pts], 1.0, lineType=cv2.LINE_AA, shift=4)
+    return m, slice(r0, r1), slice(c0, c1)
 
 
 def place_cars(cm: ClassMap, grid: Grid, rng: np.random.Generator, t_air: float) -> tuple[list[dict[str, Any]], np.ndarray, np.ndarray]:
@@ -239,18 +264,19 @@ def place_cars(cm: ClassMap, grid: Grid, rng: np.random.Generator, t_air: float)
             return  # under a tree / on a roof / off the pavement
         body = t_air - 2.0 + rng.normal(0, 0.7)
         hot = rng.uniform() < 0.15
-        poly = _rect(x, y, 4.4, 1.8, yaw)
-        m = np.zeros(grid.shape, np.float32)
-        _fill(m, grid, poly, 1.0)
-        sel = m > 0
-        temp[sel] = body * m[sel] + temp[sel] * (1 - m[sel])
-        cover[sel] = np.maximum(cover[sel], m[sel])
+        cov = _coverage(grid, _rect(x, y, 4.4, 1.8, yaw))
+        if cov is None:
+            return
+        m, rs, cs = cov
+        t, cv_ = temp[rs, cs], cover[rs, cs]
+        t[:] = body * m + t * (1 - m)
+        np.maximum(cv_, m, out=cv_)
         if hot:
-            hood = _rect(x + 1.5 * math.cos(yaw), y + 1.5 * math.sin(yaw), 1.3, 1.6, yaw)
-            hm = np.zeros(grid.shape, np.float32)
-            _fill(hm, grid, hood, 1.0)
-            hs = hm > 0
-            temp[hs] = t_air + rng.uniform(6, 14)
+            hood = _coverage(grid, _rect(x + 1.5 * math.cos(yaw), y + 1.5 * math.sin(yaw), 1.3, 1.6, yaw))
+            if hood is not None:
+                hm, hr, hc = hood
+                th = temp[hr, hc]
+                th[hm > 0] = t_air + rng.uniform(6, 14)
         cars.append({"xy": [round(x, 2), round(y, 2)], "yaw": round(yaw, 3), "hot": bool(hot)})
 
     for w in cm.roads_json:
@@ -295,8 +321,19 @@ def _blobs(grid: Grid, centers: np.ndarray, radii: np.ndarray, values: np.ndarra
 # ------------------------------------------------------------------------------------------------ main
 
 
+def _save_npz(path: Path, **arrays: Any) -> None:
+    """Atomic: other processes (flights, evals) may be reading the previous version."""
+    tmp = path.with_name(path.stem + ".tmp.npz")
+    np.savez_compressed(tmp, **arrays)
+    os.replace(tmp, path)
+
+
+
 def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "summer", seed: int = 0,
-                  climate: Climate | None = None, log: Any = print) -> dict[str, Any]:
+                  climate: Climate | None = None, log: Any = print, write: bool = True,
+                  contrast: float = 1.0, inversion_K_per_100m: float = 1.4) -> dict[str, Any]:
+    """Build and write the truth + prior. `write=False`: write nothing, return the info dict plus
+    "arrays": {truth, prior, sigma, cls_truth, cls_prior, roads, air_K} (figures at other hours)."""
     t0 = time.time()
     mdir = Path(mission_dir)
     if not (mdir / "world" / "manifest.json").exists():
@@ -313,6 +350,12 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     climate = climate or SEASONS[season]
     rng = np.random.default_rng(zlib.crc32(mdir.name.encode()) * 1000 + seed)
     info: dict[str, Any] = {"mission": mdir.name, "hour": hour, "season": season, "seed": seed}
+    laps: dict[str, float] = {}
+    t_lap = [time.time()]
+
+    def _lap(name: str) -> None:
+        laps[name] = round(time.time() - t_lap[0], 1)
+        t_lap[0] = time.time()
 
     osm = load_osm(wman, mdir, log)
     info["osm_elements"] = len(osm["elements"]) if osm else 0
@@ -328,6 +371,7 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     o_lm = _read_json(mdir / "onboard" / "landmarks.json")
 
     # material classes: truth from world/, prior from onboard/ (5 % of minor OSM ways unknown onboard)
+    _lap("inputs")
     chm = canopy_height(mdir, g1, grid)
     info["canopy"] = "lidar" if chm is not None else "spectral"
     us = any(k in wman["ortho"].get("source", "") for k in ("NAIP", "USGS"))
@@ -339,13 +383,15 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
                     chm=chm, **region)
     log(f"  classes: truth {cm_t.stats['class_frac']}")
 
+    _lap("classify")
     # shading on 1 m DSMs
     lat = origin.lat
     dsm_t = truth_dsm(mdir, g1, w_lm)
     dsm_p = onboard_dsm(mdir, g1)
-    exp_t, svf_t = _up2(sun_exposure(dsm_t, 1.0, lat, climate.doy), grid.shape), _up2(sky_view(dsm_t, 1.0), grid.shape)
-    exp_p, svf_p = _up2(sun_exposure(dsm_p, 1.0, lat, climate.doy), grid.shape), _up2(sky_view(dsm_p, 1.0), grid.shape)
+    exp_t, svf_t = shading(dsm_t, lat, climate.doy, grid.shape)
+    exp_p, svf_p = shading(dsm_p, lat, climate.doy, grid.shape)
 
+    _lap("shading")
     # energy balance curves -> table at the solar hour
     h_sol, tz = solar_hour(hour, origin.lon, season)
     curves: Curves = simulate(lat, climate)
@@ -353,16 +399,22 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     t_air = curves.air_at(h_sol)
     info.update({"hour_solar": round(h_sol, 3), "utc_offset_h": tz, "air_K": round(t_air, 2)})
 
+    _lap("energy_balance")
     prior = temperature_map(cm_p.cls, exp_p, svf_p, table, curves.exposures, curves.svfs)
     truth_cls = cm_t.cls.copy()
 
     # ---- truth deviations the prior does not know
     # roof construction per building (prior guesses dark / light from the ortho only)
-    for bid in np.unique(cm_t.bldg_id[cm_t.bldg_id >= 0]):
-        m = cm_t.bldg_id == bid
-        light = cm_t.cls[m][0] == CLS["roof_light"]
+    from scipy import ndimage
+
+    # boxes[k] belongs to label k + 1 = building id k (label 0 = no building)
+    bldgs = [(k, sl) for k, sl in enumerate(ndimage.find_objects(cm_t.bldg_id + 1)) if sl is not None]
+    for bid, sl in bldgs:
+        m = cm_t.bldg_id[sl] == bid
+        light = cm_t.cls[sl][m][0] == CLS["roof_light"]
         p = [0.10, 0.65, 0.15, 0.10] if light else [0.50, 0.10, 0.35, 0.05]  # dark, light, gravel, metal
-        truth_cls[m] = ROOF_CLASSES[int(rng.choice(4, p=p))]
+        sub = truth_cls[sl]
+        sub[m] = ROOF_CLASSES[int(rng.choice(4, p=p))]
     # irrigated vs dry grass per connected patch (watering is not in any map)
     grass = (cm_t.cls == CLS["grass"]).astype(np.uint8)
     n_lab, lab = cv2.connectedComponents(grass, connectivity=8)
@@ -388,15 +440,16 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
             k = rng.choice(len(ys), size=n)
             return np.column_stack([grid.min_x + (xs[k] + 0.5) * RES, grid.max_y - (ys[k] + 0.5) * RES])
         n_wet = max(3, int(10 * area_km2))
-        wet = _blobs(grid, centers(n_wet), rng.uniform(3, 10, (n_wet, 2)), -rng.uniform(2, 4, n_wet))
+        wet = _blobs(grid, centers(n_wet), rng.uniform(3, 10, (n_wet, 2)), -rng.uniform(3, 6, n_wet))
         n_sh = max(5, int(40 * area_km2))
         shade = _blobs(grid, centers(n_sh), rng.uniform(4, 12, (n_sh, 2)), -rng.uniform(2.0, 4.5, n_sh))
         truth += np.where(paved, wet + shade, 0.0).astype(np.float32)
         info.update({"wet_patches": n_wet, "shade_patches": n_sh})
     # rooftop HVAC units (warm)
     n_hvac = 0
-    for bid in np.unique(cm_t.bldg_id[cm_t.bldg_id >= 0]):
-        rr, cc = np.nonzero(cm_t.bldg_id == bid)
+    for bid, sl in bldgs:
+        rr, cc = np.nonzero(cm_t.bldg_id[sl] == bid)
+        rr, cc = rr + sl[0].start, cc + sl[1].start
         if len(rr) * RES * RES < 300 or rng.uniform() > 0.4:
             continue
         for _ in range(int(rng.integers(1, 5))):
@@ -407,8 +460,19 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     # parked cars (on top of everything on the pavement)
     cars, car_t, car_cov = place_cars(cm_t, grid, rng, t_air)
     truth = truth * (1 - car_cov) + car_t * car_cov
+    # low-frequency field the prior lacks: cold-air pooling (hills warmer than valleys on calm clear nights)
+    # plus a smooth +-0.5 K field over ~300 m
+    dtm = _up2(truth_dtm(mdir, g1), grid.shape)
+    truth += (inversion_K_per_100m * (dtm - float(np.median(dtm))) / 100.0).astype(np.float32)
+    lf = smooth_noise((max(grid.rows // 50, 4), max(grid.cols // 50, 4)), 6.0, 0.5, rng)  # 25 m cells
+    truth += _up2(lf, grid.shape)
+    if contrast != 1.0:
+        truth = (t_air + contrast * (truth - t_air)).astype(np.float32)
+    info.update({"contrast": contrast, "inversion_K_per_100m": inversion_K_per_100m,
+                 "terrain_relief_m": round(float(np.percentile(dtm, 99) - np.percentile(dtm, 1)), 1)})
     info.update({"cars": len(cars), "cars_hot": sum(c["hot"] for c in cars), "hvac_units": n_hvac})
 
+    _lap("truth_deviations")
     # ---- prior sigma: class sigma, more at class edges (misregistration) and in ortho shadows
     sig = np.array([m.prior_sigma_K for m in MATERIALS], np.float32)[cm_p.cls]
     edge = cv2.morphologyEx(cm_p.cls, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)) > 0
@@ -416,6 +480,12 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     sig = np.sqrt(sig ** 2 + np.where(edge, 1.5 ** 2, 0) + np.where(cm_p.uncertain, 2.0 ** 2, 0)).astype(np.float32)
     sig = np.sqrt(sig ** 2 + 0.6 ** 2)  # smooth model error the truth carries
 
+    _lap("sigma")
+    info["seconds_by_stage"] = laps
+    if not write:
+        return {**info, "arrays": {"truth": truth, "prior": prior, "sigma": sig.astype(np.float32),
+                                   "cls_truth": truth_cls, "cls_prior": cm_p.cls, "roads": cm_p.roads,
+                                   "air_K": t_air, "curves": curves}}
     meta = {"format": FORMAT, "bbox": wman["bbox"], "extent_enu": {k: e[k] for k in ("min_x", "min_y", "max_x", "max_y")},
             "res_m": RES, "rows": grid.rows, "cols": grid.cols,
             "raster": "north-up, row 0 = north edge, cell centre x = min_x + (col + 0.5) * res, y = max_y - (row + 0.5) * res",
@@ -425,15 +495,17 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
             "model": "1-D surface energy balance per material x sun exposure x sky view factor (sfhack.thermal)"}
     world_meta = {**meta, "kind": "thermal truth (simulator only)", "seed": seed, "deviations": info}
     onboard_meta = {**meta, "kind": "thermal prior (onboard)", "classifier": cm_p.stats}
-    np.savez_compressed(mdir / "world" / "thermal_truth.npz", temp_K=truth.astype(np.float32),
+    _save_npz(mdir / "world" / "thermal_truth.npz", temp_K=truth.astype(np.float32),
                         wall_K=np.float32(t_air + 1.5), air_K=np.float32(t_air), cls=truth_cls,
                         cars=json.dumps(cars), meta=json.dumps(world_meta))
     pr_path = mdir / "onboard" / "thermal_prior.npz"
-    np.savez_compressed(pr_path, temp_K=prior.astype(np.float32), sigma_K=sig.astype(np.float32),
+    _save_npz(pr_path, temp_K=prior.astype(np.float32), sigma_K=sig.astype(np.float32),
                         cls=cm_p.cls, roads=cm_p.roads, road_kind=cm_p.road_kind,
                         roads_json=json.dumps(cm_p.roads_json), meta=json.dumps(onboard_meta))
     if (mdir / "drone").is_dir():
-        shutil.copyfile(pr_path, mdir / "drone" / "thermal_prior.npz")
+        tmp = mdir / "drone" / "thermal_prior.tmp"
+        shutil.copyfile(pr_path, tmp)
+        os.replace(tmp, mdir / "drone" / "thermal_prior.npz")
     road = cm_t.roads > 0
     veg = np.isin(truth_cls, [CLS["grass"], CLS["dry_grass"], CLS["tree"]])
     info.update({

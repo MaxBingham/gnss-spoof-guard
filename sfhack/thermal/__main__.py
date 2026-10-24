@@ -14,12 +14,13 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--hour", type=float, default=23.0, help="local clock time (default 23.0)")
     b.add_argument("--season", default="summer", choices=["summer", "spring", "autumn", "winter"])
     b.add_argument("--seed", type=int, default=0)
+    b.add_argument("--contrast", type=float, default=1.0, help="scale the truth around the air temperature")
     a = ap.parse_args(argv)
     if a.cmd == "build":
         from .model import build_thermal
 
         for m in a.mission:
-            info = build_thermal(m, hour=a.hour, season=a.season, seed=a.seed)
+            info = build_thermal(m, hour=a.hour, season=a.season, seed=a.seed, contrast=a.contrast)
             print(json.dumps(info, indent=1))
 
 

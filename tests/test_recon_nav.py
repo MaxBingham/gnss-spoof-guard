@@ -72,3 +72,82 @@ def test_flow_rejects_uniform_scene() -> None:
         img = (285.0 + rng.normal(0, 0.03, (512, 640))).astype(np.float32)
         n += flow.update(0.2 * k, img, np.eye(3), 80.0, intr) is not None
     assert n == 0
+
+
+def _project_lights(loc, lights, pos, R_wb, t, clock, rng, shimmer=0.15):
+    """Synthetic rear frame: dark image with a Gaussian spot for every light that is on (truth = `pos`)."""
+    from sfhack.sim.rear_camera_stub import RearCameraStub
+
+    cam = loc.cam
+    img = np.clip(6 + rng.normal(0, 2, (cam.height, cam.width)), 0, 255).astype(np.float32)
+    R_wc = R_wb @ loc.R_bc
+    stub = RearCameraStub.__new__(RearCameraStub)
+    stub.psf = 0.8
+    for lt in lights:
+        c = R_wc.T @ (lt.pos - pos)
+        if c[2] <= 1:
+            continue
+        u = loc.cx + loc.f * c[0] / c[2] + rng.normal(0, shimmer)
+        v = loc.cy + loc.f * c[1] / c[2] + rng.normal(0, shimmer)
+        if not (0 <= u < cam.width and 0 <= v < cam.height):
+            continue
+        if lt.facing_deg is not None:
+            off = math.degrees(math.atan2(pos[1] - lt.pos[1], pos[0] - lt.pos[0])) - lt.facing_deg
+            if abs((off + 180) % 360 - 180) > lt.beam_half_deg:
+                continue
+        if lt.code[int(math.floor((t + clock) * lt.bit_hz)) % len(lt.code)] == "1":
+            stub._spot(img, u, v, 120 * (2000 / np.linalg.norm(lt.pos - pos)) ** 2)
+    return img.astype(np.uint8)
+
+
+def test_light_localizer_ids_position_and_heading() -> None:
+    from sfhack.config import LightsConfig, RearCameraConfig
+    from sfhack.perception.light_localizer import LightLocalizer
+    from sfhack.sim.rear_camera_stub import make_codes, stub_base_lights, surveyed
+
+    codes = make_codes(12)
+    assert len(set(codes)) == 12
+    truth = stub_base_lights(np.zeros(2), lambda x, y: 0.0)
+    loc = LightLocalizer(surveyed(truth, 0.15, 0), LightsConfig(), RearCameraConfig())
+    rng = np.random.default_rng(3)
+    # 1.5 km out on a bearing 60 deg (ENU yaw 30 deg), 80 m up, tail to the base; AHRS heading 1.5 deg off
+    d = np.array([math.cos(math.radians(30)), math.sin(math.radians(30))])
+    yaw_true = math.radians(30)
+    fixes = []
+    for k in range(40):
+        t = 0.1 * k
+        pos = np.r_[d * (1500 + 8 * t), 80.0]
+        R_true = _rot(rng.normal(0, 0.01), rng.normal(0, 0.01), yaw_true)
+        R_ahrs = _rot(0.0, 0.0, math.radians(1.5)) @ R_true
+        img = _project_lights(loc, truth, pos, R_true, t, 3.3, rng)
+        fix = loc.update(t, img, R_ahrs, pos + np.array([30.0, -20.0, 0.5]), 1.0)
+        if fix is not None:
+            fixes.append((fix, pos))
+    assert len(fixes) >= 10, loc.status()
+    for fix, pos in fixes:
+        assert set(fix.ids) <= {lt.id for lt in truth}
+        assert fix.n_lights >= 2
+        err = fix.xy - pos[:2]
+        s = np.sqrt(np.linalg.eigvalsh(fix.cov).max())
+        assert np.linalg.norm(err) < max(4 * s, 3.0), (err, s, fix.kind)
+        assert abs(math.degrees(fix.yaw_corr) + 1.5) < max(4 * math.degrees(fix.yaw_std), 0.3)
+    # outward-facing fence lights: only the near half is seen, the heading is free -> cross-track ~ range x yaw std
+    cross = np.array([-d[1], d[0]])
+    assert np.mean([abs((f.xy - p[:2]) @ d) for f, p in fixes]) < 5.0
+    assert np.mean([abs((f.xy - p[:2]) @ cross) for f, p in fixes]) < 15.0
+
+
+def test_steady_light_gets_no_id() -> None:
+    from sfhack.perception.light_localizer import BaseLight, LightLocalizer
+    from sfhack.sim.rear_camera_stub import make_codes
+
+    codes = make_codes(3)
+    lights = [BaseLight(f"L{i}", np.array([-10.0 * i, 0.0, 3.0]), c, 10.0) for i, c in enumerate(codes)]
+    loc = LightLocalizer(lights)
+    steady = [BaseLight("X", np.array([-10.0, 0.0, 3.0]), "1111111111", 10.0)]
+    rng = np.random.default_rng(0)
+    pos = np.array([800.0, 0.0, 60.0])
+    for k in range(30):
+        img = _project_lights(loc, steady, pos, _rot(0, 0, 0.0), 0.1 * k, 0.0, rng)
+        loc.update(0.1 * k, img, _rot(0, 0, 0.0), pos, 1.0)
+    assert loc.tracks and all(tr.light_id is None for tr in loc.tracks)

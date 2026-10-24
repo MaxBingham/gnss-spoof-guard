@@ -53,6 +53,10 @@ class Ekf:
         self.last_decision = ""  # set when a fix is accepted by re-localization
         self.bias_handed = np.zeros(2)  # (bx, by) handed to the AHRS by the last take_tilt_correction
         self.vel_var_growth = 0.0  # accumulated horizontal velocity-variance growth (TRN particle random walk)
+        self.n_vel_accepted = 0  # velocity measurements (optical flow)
+        self.n_vel_rejected = 0
+        self.vel_consecutive_rejects = 0
+        self.vel_nis_log: list[tuple[float, float, bool]] = []
 
     def predict(self, acc_world: np.ndarray, dt: float, t: float) -> None:
         self.t = t
@@ -162,6 +166,28 @@ class Ekf:
         self.n_fix_accepted += 1
         self.last_fix_t = fix.t
         fix.accepted = True
+        return True
+
+    def update_velocity(self, vel_xy: np.ndarray, cov: np.ndarray) -> bool:
+        """Horizontal ground velocity (recon-nav: optical flow), chi-square gated (2 dof). It makes the accel-bias
+        states (AHRS tilt error x g) observable without position fixes. Returns False if gated out."""
+        H = np.zeros((2, N_STATES))
+        H[:, 3:5] = np.eye(2)
+        y = np.asarray(vel_xy, float) - self.x[3:5]
+        S = self.P[3:5, 3:5] + cov
+        d2 = float(y @ np.linalg.solve(S, y))
+        R = np.asarray(cov, float)
+        if d2 > self.cfg.gate_chi2:
+            self.vel_consecutive_rejects += 1
+            if self.vel_consecutive_rejects <= MAX_CONSECUTIVE_REJECTS:
+                self.vel_nis_log.append((self.t, d2, False))
+                self.n_vel_rejected += 1
+                return False
+            R = R * (d2 / self.cfg.gate_chi2)  # the flow keeps disagreeing: the INS velocity drifted (re-acquire)
+        self.vel_nis_log.append((self.t, d2, True))
+        self.vel_consecutive_rejects = 0
+        self._update(H, np.asarray(vel_xy, float), R)
+        self.n_vel_accepted += 1
         return True
 
     def update_gnss(self, t: float, pos_xy: np.ndarray, cov: np.ndarray) -> None:

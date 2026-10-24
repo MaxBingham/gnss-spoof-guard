@@ -25,25 +25,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-
-@dataclass
-class FlowConfig:
-    grid_px: int = 128  # rectified grid size (cells per side)
-    grid_half_frac: float = 0.24  # grid half size = this x height (inscribed in the 50 x 40 deg footprint at any yaw)
-    min_agl: float = 8.0  # m above the surface: below this the footprint is small (use the rangefinder there)
-    max_agl: float = 300.0
-    min_std_K: float = 0.08  # rectified grid std below this = uniform, no measurement
-    min_response: float = 0.5  # NCC peak below this = no reliable shift
-    search_px: int = 24  # max shift per frame pair (cells): 7 m at 80 m AGL, 36 m/s at 5 Hz
-    dog_lo: float = 1.0  # band-pass (grid cells) before matching
-    dog_hi: float = 8.0
-    max_dt: float = 0.5  # s, frame pairs further apart are not used (dropped frames)
-    fpn_tau_s: float = 20.0  # running-mean time constant of the fixed-pattern estimate
-    fpn_warmup_frames: int = 10  # frames before the fixed-pattern subtraction starts
-    sigma_shift_px: float = 0.25  # 1-sigma shift error at a strong peak (grid cells) ...
-    response_ref: float = 0.9  # ... grows as response_ref / response below this
-    height_rel_std: float = 0.02  # relative height error (baro + DSM): scales the velocity
-    sigma_floor: float = 0.08  # m/s
+from ..config import FlowConfig
 
 
 @dataclass

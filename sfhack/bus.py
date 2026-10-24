@@ -19,6 +19,7 @@ MAG = "mag"
 GNSS = "gnss"
 CAMERA_DOWN = "camera/down"
 CAMERA_FRONT = "camera/front"
+CAMERA_REAR = "camera/rear"  # CameraFrame (gray uint8): rear NIR camera, base lights (recon)
 THERMAL = "camera/thermal"  # ThermalFrame: downward LWIR camera, apparent temperature in K
 CAMERA_THERMAL = THERMAL
 FIX = "fix"

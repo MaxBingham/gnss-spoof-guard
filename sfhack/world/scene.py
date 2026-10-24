@@ -73,8 +73,12 @@ def roof_image(ortho: np.ndarray, extent: dict[str, float], box: dict[str, Any],
 
 class PackageWorld:
     def __init__(self, pkg_dir: Path | str, texture_file: str | None = None,
-                 render_trees: bool = True, roof_textures: bool = True) -> None:
+                 render_trees: bool = True, roof_textures: bool = True,
+                 target_scene: Path | str | None = None) -> None:
+        """`target_scene`: another target_scene.json than world/target_scene.json (recon seeds:
+        world/recon/seed_<k>/target_scene.json)."""
         self.roof_textures = roof_textures
+        self.target_scene_path = Path(target_scene) if target_scene is not None else None
         self.dir = Path(pkg_dir).resolve()
         self.manifest: dict[str, Any] = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8"))
         self.landmarks: list[dict[str, Any]] = json.loads((self.dir / "landmarks.json").read_text(encoding="utf-8"))
@@ -283,19 +287,93 @@ class PackageWorld:
                 world.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r, 0, 0],
                                pos=[x, y, z0 + trunk_h], rgba=crown, contype=0, conaffinity=0, group=1)
         self._add_target_scene(spec)
+        self._add_base(spec)
 
     def _add_target_scene(self, spec: mujoco.MjSpec) -> None:
         """Objects the object placer put into world/target_scene.json (TRUTH: the drone has no map of them).
-        Each: {"mesh": STL path (absolute or relative to world/), "pos": [x, y, z], "yaw_deg", "scale", "rgba"}."""
-        p = self.dir / "target_scene.json"
+        Each: {"mesh": STL path (absolute or relative to world/), "pos": [x, y, z], "yaw_deg", "scale", "rgba"}, or
+        recon objects (sfhack/sim/recon_world.py) with "parts": primitives in the object frame -> geoms target<k>_<j>
+        (thermal/camera.py gives each part its own temp_K)."""
+        p = self.target_scene_path or self.dir / "target_scene.json"
         if not p.exists():
             return
+        geom_type = {"box": mujoco.mjtGeom.mjGEOM_BOX, "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
+                     "sphere": mujoco.mjtGeom.mjGEOM_SPHERE}
         for k, ob in enumerate(json.loads(p.read_text(encoding="utf-8")).get("objects", [])):
-            mesh = Path(ob["mesh"]) if Path(ob["mesh"]).is_absolute() else self.dir / ob["mesh"]
-            spec.add_mesh(name=f"target{k}", file=str(mesh), scale=[float(ob.get("scale", 1.0))] * 3)
             x, y = ob["pos"][:2]
             z = float(ob["pos"][2]) if len(ob["pos"]) > 2 else self.ground_z(x, y)
             yaw = math.radians(float(ob.get("yaw_deg", 0.0)))
+            quat = [math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]
+            if "parts" in ob:
+                c, s = math.cos(yaw), math.sin(yaw)
+                for j, part in enumerate(ob["parts"]):
+                    lx, ly, lz = part["pos"]
+                    spec.worldbody.add_geom(name=f"target{k}_{j}", type=geom_type[part["type"]],
+                                            size=(list(part["size"]) + [0.0, 0.0])[:3],
+                                            pos=[x + c * lx - s * ly, y + s * lx + c * ly, z + lz], quat=quat,
+                                            rgba=part.get("rgba", [0.3, 0.33, 0.22, 1]), contype=0, conaffinity=0)
+                continue
+            mesh = Path(ob["mesh"]) if Path(ob["mesh"]).is_absolute() else self.dir / ob["mesh"]
+            spec.add_mesh(name=f"target{k}", file=str(mesh), scale=[float(ob.get("scale", 1.0))] * 3)
             spec.worldbody.add_geom(name=f"target{k}", type=mujoco.mjtGeom.mjGEOM_MESH, meshname=f"target{k}",
-                                    pos=[x, y, z], quat=[math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)],
-                                    rgba=ob.get("rgba", [0.85, 0.85, 0.85, 1]))
+                                    pos=[x, y, z], quat=quat, rgba=ob.get("rgba", [0.85, 0.85, 0.85, 1]))
+
+    def _add_base(self, spec: mujoco.MjSpec) -> None:
+        """The recon base (world/base.json, base_lights.json, stray_lights.json from sfhack/sim/recon_world.py):
+        fence, light poles, emissive light geoms (blinked by sim/base_lights.py), a visible landing pad, the UMA-16
+        mast, stray lights. All visual only (contype 0) in geom group 2: the rear NIR camera (sim/rear_camera.py)
+        draws the light spots itself and leaves group 2 out of its background render."""
+        bp, lp = self.dir / "base.json", self.dir / "base_lights.json"
+        if not (bp.exists() and lp.exists()):
+            return
+        base = json.loads(bp.read_text(encoding="utf-8"))
+        lights = json.loads(lp.read_text(encoding="utf-8"))["lights"]
+        world = spec.worldbody
+        vis: dict[str, Any] = {"contype": 0, "conaffinity": 0, "group": 2}
+        glow = spec.add_material(name="base_light", emission=1.0, specular=0.0, shininess=0.0)
+        fence = base.get("fence", {})
+        half, fh = float(fence.get("half_m", base.get("fence_half_m", 75.0))), float(fence.get("height_m", 2.2))
+        cx, cy = base["center_enu"][:2]
+        corners = [(cx + half, cy + half), (cx - half, cy + half), (cx - half, cy - half), (cx + half, cy - half)]
+        for (x0, y0), (x1, y1) in zip(corners, corners[1:] + corners[:1]):
+            L = math.hypot(x1 - x0, y1 - y0)
+            n = max(1, int(round(L / 10.0)))
+            ang = math.atan2(y1 - y0, x1 - x0)
+            for i in range(n):  # 10 m panels, each at its local ground height
+                xm, ym = x0 + (x1 - x0) * (i + 0.5) / n, y0 + (y1 - y0) * (i + 0.5) / n
+                world.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[L / n / 2, 0.03, fh / 2 + 0.3],
+                               pos=[xm, ym, self.ground_z(xm, ym) + fh / 2 - 0.3],
+                               quat=[math.cos(ang / 2), 0, 0, math.sin(ang / 2)], rgba=[0.45, 0.47, 0.45, 0.55], **vis)
+        for lt in lights:
+            x, y, z = lt["enu"]
+            zg = self.ground_z(x, y)
+            world.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[0.07, max(z - zg, 0.5) / 2, 0],
+                           pos=[x, y, (z + zg) / 2], rgba=[0.3, 0.3, 0.3, 1], **vis)
+            # emitter + halo (a real lamp is ~0.2 m; drawn larger so it reads in the chase view)
+            world.add_geom(name=f"baselight_{lt['id']}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.45, 0, 0],
+                           pos=[x, y, z], rgba=[1.0, 0.25, 0.2, 1], material=glow.name, **vis)
+            world.add_geom(name=f"baseglow_{lt['id']}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[1.6, 0, 0],
+                           pos=[x, y, z], rgba=[1.0, 0.2, 0.15, 0.25], material=glow.name, **vis)
+        sp = self.dir / "stray_lights.json"
+        for st in (json.loads(sp.read_text(encoding="utf-8"))["lights"] if sp.exists() else []):
+            world.add_geom(name=f"straylight_{st['id']}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.35, 0, 0],
+                           pos=st["enu"], rgba=[1.0, 0.8, 0.5, 1] if st["kind"] == "lamp" else [1.0, 0.5, 0.1, 1],
+                           material=glow.name, **vis)
+        # landing pad: a visible slab just under the invisible contact pad (pad_a), with a light "H" along its axis
+        px, py, pz = base["pad_enu"]
+        ps = float(base.get("pad_size_m", 5.0)) / 2
+        pyaw = math.radians(90.0 - float(base.get("pad_yaw_deg", 0.0)))  # cw-from-north -> ENU angle
+        q = [math.cos(pyaw / 2), 0, 0, math.sin(pyaw / 2)]
+        world.add_geom(name="pad_visual", type=mujoco.mjtGeom.mjGEOM_BOX, size=[ps, ps, 0.02], pos=[px, py, pz - 0.023],
+                       quat=q, rgba=[0.18, 0.18, 0.2, 1], **vis)
+        c, s = math.cos(pyaw), math.sin(pyaw)
+        for lx, ly, hx, hy in ((0.0, 0.9, 1.4, 0.15), (0.0, -0.9, 1.4, 0.15), (0.0, 0.0, 0.15, 0.75)):
+            world.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[hx, hy, 0.002],
+                           pos=[px + c * lx - s * ly, py + s * lx + c * ly, pz - 0.001], quat=q,
+                           rgba=[0.85, 0.85, 0.8, 1], **vis)
+        ux, uy, uz = base["uma16_enu"]
+        zg = self.ground_z(ux, uy)
+        world.add_geom(name="uma16_mast", type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[0.05, (uz - zg) / 2, 0],
+                       pos=[ux, uy, (uz + zg) / 2], rgba=[0.6, 0.6, 0.6, 1], **vis)
+        world.add_geom(name="uma16_array", type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.1, 0.1, 0.012],
+                       pos=[ux, uy, uz + 0.012], rgba=[0.1, 0.35, 0.15, 1], **vis)

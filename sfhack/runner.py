@@ -27,7 +27,8 @@ from .sim.truth import TruthPoseSource, TruthProvider
 from .world.onboard_map import OnboardMap
 from .world.scene import ArenaWorld, PackageWorld
 
-ALT_TEXTURE = "ortho_alt.jpg"  # "different imagery" variant of the world ground texture
+ALT_TEXTURE = "ortho_alt.jpg"
+NAV_CONFIGS = ("imu", "flow", "lights")  # recon-nav: IMU + compass + baro; + optical flow; + flow + base lights  # "different imagery" variant of the world ground texture
 
 
 @dataclass
@@ -93,6 +94,10 @@ class FlightSystem:
         thermal_renderer: str = "auto",
         thermal_contrast: float = 1.0,
         night_route: bool = True,
+        nav: str | None = None,
+        plan: list | None = None,
+        tail_to_base: bool = False,
+        thermal_camera: bool | None = None,
     ) -> None:
         """`conditions`: initial degradation levers (default `cfg.conditions`). `schedule`: lever changes
         at sim times, [(t, {'gnss': 'drag:1.5@90', 'wind.speed': 6}), ...] (see sfhack.degradation.cli).
@@ -104,9 +109,26 @@ class FlightSystem:
         many m above the onboard DTM (cruise_at_agl). `thermal_renderer`: auto | full | stub.
         `night_route` (night-demo, night only, needs onboard/thermal_prior.npz): re-plan on the onboard map with the
         route choice of sfhack/planning/night_route.py (straight while warm road is expected in the thermal footprint,
-        else along the roads), at `cruise_agl` (default: the package's min_agl_m). Result in `self.night_route`."""
+        else along the roads), at `cruise_agl` (default: the package's min_agl_m). Result in `self.night_route`.
+        `nav` (recon-nav, mission packages): the recon navigation configs, NAV_CONFIGS: "imu" (IMU + compass + baro),
+        "flow" (+ optical flow on the downward thermal camera), "lights" (+ base-light fixes from the rear NIR camera).
+        No RGB vision, no thermal map matching, no lidar TRN. `thermal_camera`: render the downward thermal camera
+        (default: when the config uses it; recon-mission's detection wants it always). `plan`: waypoints instead of
+        the package route (e.g. planning/recon_route.out_and_back_plan); `tail_to_base`: yaw keeps the rear camera
+        on the base (TailToBaseMission)."""
         self.cfg = cfg or default_config()
         self.night = night
+        self.nav = nav
+        if nav is not None:
+            if nav not in NAV_CONFIGS:
+                raise ValueError(f"nav {nav!r} not in {NAV_CONFIGS}")
+            localizer = "off"
+            c = self.cfg
+            self.cfg = dataclasses.replace(
+                c, trn=dataclasses.replace(c.trn, enabled=False),  # recon drone: no lidar
+                ekf=dataclasses.replace(c.ekf, gnss_free_track=False),  # GNSS honest, then jammed: no spoof track
+                sim=dataclasses.replace(c.sim, down_cam_hz=1e-6),  # RGB down camera: useless at night, not rendered
+                ahrs=dataclasses.replace(c.ahrs, tilt_bias_ki=c.ahrs.tilt_bias_ki or c.thermal.night_tilt_bias_ki))
         self.night_route = None  # NightRouteResult when the night route choice re-planned the route
         if night:
             localizer = "off"
@@ -123,6 +145,7 @@ class FlightSystem:
         self.world_dir = Path(world_dir) if world_dir is not None else None
         self.map_source = map_source
         mc = self.cfg.mission
+        plan_override = plan
         spawn_z = 0.0
         self.onboard_dir: Path | None = None
 
@@ -152,9 +175,14 @@ class FlightSystem:
             yaw = math.atan2(d[1], d[0])
             route = (self.onboard_map.mission or {}).get("route")
             plan = route_plan(route, mc) if route else a_to_b_plan(start, self.goal_xy, mc)
+            if plan_override is not None:
+                plan = list(plan_override)
+                far = max(plan, key=lambda w: float(np.linalg.norm(w.pos[:2] - start)))
+                yaw = math.atan2(far.pos[1] - start[1], far.pos[0] - start[0])
+                self.goal_xy = plan[-1].pos[:2].copy()
             prior_dir = next((d for d in (onboard_dir, self.mission_dir / "onboard" if self.mission_dir else None)
                               if d is not None and (d / "thermal_prior.npz").exists()), None)
-            if night and night_route and prior_dir is not None and self.onboard_map.dsm is not None:
+            if plan_override is None and night and night_route and prior_dir is not None and self.onboard_map.dsm is not None:
                 from .planning.night_route import NightRouteParams, plan_night_route
                 from .thermal.prior import load_prior
 
@@ -163,7 +191,7 @@ class FlightSystem:
                 self.night_route = plan_night_route(self.onboard_map, load_prior(prior_dir),
                                                     NightRouteParams(cruise_agl_m=agl), mc)
                 plan = route_plan(self.night_route.route, mc)
-            elif cruise_agl is not None:
+            elif plan_override is None and cruise_agl is not None:
                 plan = cruise_at_agl(plan, self.onboard_map.ground_z, cruise_agl)
             spawn_z = world.ground_z(*start)  # harness: the true ground under A (z datum: 0 for mission worlds)
 
@@ -191,8 +219,32 @@ class FlightSystem:
                 prior = self.mission_dir / "onboard" / "thermal_prior.npz"
             thermal_loc = ThermalLocalizer(self.onboard_dir, self.cfg.thermal, onboard_map=self.onboard_map,
                                            prior_path=prior)
-        self.mission = Mission(plan, start3, yaw, mc,
-                               ground_z=self.onboard_map.ground_z if self.onboard_map is not None else None)
+        if nav is not None:
+            thermal_loc = None  # recon: the thermal camera finds things and gives flow, it does not match a map
+            if thermal_camera is None:
+                thermal_camera = nav in ("flow", "lights")
+            if thermal_camera and self.thermal_sensor is None:
+                from .sim.thermal_sensor import ThermalSensor
+                self.thermal_sensor = ThermalSensor(self.sim, self.bus, self.mission_dir, world, hz=self.cfg.thermal.camera_hz,
+                                                    seed=seed, renderer=thermal_renderer, contrast=thermal_contrast)
+        flow = light_loc = None
+        self.rear_camera = None
+        self.base_lights_truth = None
+        if nav in ("flow", "lights"):
+            from .perception.optical_flow import OpticalFlow
+            flow = OpticalFlow(self.cfg.flow)
+        if nav == "lights":
+            from .perception.light_localizer import LightLocalizer
+            from .sim.rear_camera_stub import RearCameraStub
+            self.base_lights_truth, onboard_lights = self._base_lights(start, seed)
+            self.rear_camera = RearCameraStub(self.sim, self.bus, self.base_lights_truth, self.cfg.rear_camera, seed=seed)
+            light_loc = LightLocalizer(onboard_lights, self.cfg.lights, self.cfg.rear_camera)
+        ground = self.onboard_map.ground_z if self.onboard_map is not None else None
+        if tail_to_base:
+            from .planning.recon_route import TailToBaseMission
+            self.mission: Mission = TailToBaseMission(plan, start3, yaw, mc, ground_z=ground, base_xy=start)
+        else:
+            self.mission = Mission(plan, start3, yaw, mc, ground_z=ground)
         self.autopilot = Autopilot(
             self.cfg, self.bus, self.sim.vehicle_params(), self.mission, start3, yaw,
             onboard_map=self.onboard_map,
@@ -201,6 +253,8 @@ class FlightSystem:
             pose_source=pose_source,
             seed=seed,
             thermal_localizer=thermal_loc,
+            flow=flow,
+            light_localizer=light_loc,
         )
         self.localizer_name = localizer if self.onboard_map else "off"
         self.recorder = recorder
@@ -214,6 +268,19 @@ class FlightSystem:
         self.log_sigma2: list[float] = []
         self._next_log = 0.0
         self.health_seen: list[str] = []
+
+    def _base_lights(self, a_xy: np.ndarray, seed: int) -> tuple[list, list]:
+        """(TRUE lights for the simulated camera, onboard surveyed list). recon-world's files when the mission has
+        them (world/base_lights.json = truth, onboard/base_lights.json = survey), else the stub fence at A."""
+        from .perception.light_localizer import load_base_lights
+        from .sim.rear_camera_stub import stub_base_lights, surveyed
+
+        truth_f = self.world_dir / "base_lights.json" if self.world_dir is not None else None
+        onb_f = self.onboard_dir / "base_lights.json" if self.onboard_dir is not None else None
+        if truth_f is not None and truth_f.exists() and onb_f is not None and onb_f.exists():
+            return load_base_lights(truth_f), load_base_lights(onb_f)
+        truth = stub_base_lights(np.asarray(a_xy, float), self.world.ground_z if self.world_dir is not None else (lambda x, y: 0.0))
+        return truth, surveyed(truth, self.cfg.lights.survey_std_m, seed)
 
     # ------------------------------------------------------------------ control
 
@@ -263,6 +330,8 @@ class FlightSystem:
         self.sim.step()
         if self.thermal_sensor is not None:
             self.thermal_sensor.step()
+        if self.rear_camera is not None:
+            self.rear_camera.step()
         if self.t >= self._next_log:
             self._next_log = self.t + 0.1
             est = self.autopilot.pose()

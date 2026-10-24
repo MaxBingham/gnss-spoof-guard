@@ -21,7 +21,7 @@ from .config import Config
 from .control.geometric import GeometricController
 from .control.mixer import VehicleParams
 from .control.pose_source import EkfPoseSource, PoseSource
-from .estimation.ahrs import Ahrs
+from .estimation.ahrs import Ahrs, _rot_z
 from .estimation.ekf import Ekf
 from .messages import (
     BaroMsg, CameraFrame, Decision, GnssMsg, Health, HealthState, ImuMsg, LidarMsg, MagMsg, MotorCmd, PoseEstimate,
@@ -50,6 +50,8 @@ class Autopilot:
         pose_source: str = "ekf",
         seed: int = 0,
         thermal_localizer: Any | None = None,
+        flow: Any | None = None,
+        light_localizer: Any | None = None,
     ) -> None:
         self.cfg = cfg
         self.bus = bus
@@ -90,6 +92,20 @@ class Autopilot:
         self._thermal_rejects: list[tuple[float, np.ndarray]] = []  # (t, innovation) of consecutive NIS rejections  # big-jump fixes held for confirmation (and not confirmed)
         self.mag_bias_est = 0.0  # rad, compass heading bias learned from thermal yaw corrections (yaw_feedback)
         self._lidar_t = -1.0
+        # Recon (recon-nav): optical flow on the downward thermal frames, base-light fixes from the rear NIR camera
+        self.flow = flow
+        self.flow_frames = 0
+        self.flow_meas = 0  # velocity measurements the flow returned
+        self.flow_accepted = 0  # ... fused (NIS gate)
+        self.last_flow: Any | None = None
+        self.lights = light_localizer
+        self.light_frames = 0
+        self.light_fixes = 0
+        self.light_accepted = 0
+        self.last_light_fix: Any | None = None  # LightFix
+        self.last_light_visual: VisualFix | None = None
+        self.light_log: list[tuple[float, int, str, float, float, bool, float, float]] = []  # t, n, kind, x, y, acc, yaw_corr, range
+        self._mag_bias_var = math.radians(cfg.lights.yaw_bias_init_std_deg) ** 2
         self.health = HealthMonitor(cfg.health)
         self.controller = GeometricController(vehicle, cfg.gains)
         self._sources: dict[str, PoseSource] = {"ekf": EkfPoseSource(self)}
@@ -129,6 +145,7 @@ class Autopilot:
         bus.subscribe(topics.GNSS, self.on_gnss)
         bus.subscribe(topics.LIDAR, self.on_lidar)
         bus.subscribe(topics.THERMAL, self.on_thermal)
+        bus.subscribe(topics.CAMERA_REAR, self.on_rear)
 
     # ------------------------------------------------------------------ switches
 
@@ -308,6 +325,8 @@ class Autopilot:
     def on_thermal(self, frame: ThermalFrame) -> None:
         """Night: thermal fix vs the onboard thermal prior, fused like the vision fixes (NIS gate). The GNSS-free
         track gets its own fix around its own prior first (as on_camera)."""
+        if self.flow is not None and not self.in_preflight and not self.mission.done:
+            self._flow_step(frame)
         if self.thermal is None or self.in_preflight or self.mission.done:
             return
         agl = self.lidar_agl if self.lidar_agl is not None and frame.t - self._lidar_t < 0.5 else None
@@ -349,6 +368,84 @@ class Autopilot:
         self.health.on_fix(fix)
         self.last_thermal_fix = fix
         self.bus.publish(topics.FIX, fix)
+
+    # ------------------------------------------------------------------ recon: optical flow + base lights
+
+    def height_above_surface(self) -> float | None:
+        """Camera height above the surface below: rangefinder when it reaches, else EKF height - onboard DSM."""
+        if self.range_agl is not None and self._last_imu_t is not None and self._last_imu_t - self._range_t < 0.2:
+            return self.range_agl
+        if self.onboard_map is None:
+            return None
+        return float(self.ekf.x[2] - self.onboard_map.surface_z(self.ekf.x[:2]))
+
+    def _flow_step(self, frame: ThermalFrame) -> None:
+        self.flow_frames += 1
+        m = self.flow.update(frame.t, frame.image_K, self.ahrs.R, self.height_above_surface(), frame.intrinsics)
+        if m is None:
+            return
+        self.flow_meas += 1
+        m.accepted = self.ekf.update_velocity(m.vel, m.cov)
+        if m.accepted:
+            self.flow_accepted += 1
+            self.sources_used.add("flow")
+        self.last_flow = m
+
+    def on_rear(self, frame: CameraFrame) -> None:
+        """Rear NIR camera: identified base lights -> position fix (NIS gate, like vision) + heading (compass bias)."""
+        if self.lights is None or self.in_preflight or self.mission.done:
+            return
+        self.light_frames += 1
+        prior = self.pose(report=False)
+        lf = self.lights.update(frame.t, frame.image, self.ahrs.R, prior.pos, float(np.sqrt(max(prior.cov[2, 2], 0.0))))
+        if lf is None:
+            return
+        self.light_fixes += 1
+        fix = VisualFix(frame.t, lf.xy.copy(), lf.cov.copy(), f"lights-{lf.kind}", n_inliers=lf.n_lights,
+                        frame_seq=frame.seq, quality=1.0)
+        accepted = self.ekf.update_fix(fix)
+        if accepted:
+            self.light_accepted += 1
+            self.sources_used.add("lights")
+            if self.cfg.lights.yaw_learn:
+                self._learn_heading(lf)
+        if self.ekf.last_decision:
+            self.log_decision(frame.t, self.ekf.last_decision.replace("vision fix", "light fix"))
+        self.light_log.append((frame.t, lf.n_lights, lf.kind, float(lf.xy[0]), float(lf.xy[1]), accepted,
+                               float(lf.yaw_corr), lf.range_m))
+        self.health.on_fix(fix)
+        self.last_light_fix = lf
+        self.last_light_visual = fix
+        self.bus.publish(topics.FIX, fix)
+
+    def _learn_heading(self, lf: Any) -> None:
+        """1-state KF on the compass bias. yaw_corr = true - AHRS heading = -(compass bias - mag_bias_est)."""
+        c = self.cfg.lights
+        R = (lf.yaw_std**2 + math.radians(c.yaw_ahrs_jitter_deg) ** 2) * c.yaw_corr_inflate
+        k = self._mag_bias_var / (self._mag_bias_var + R)
+        lim = math.radians(c.yaw_bias_max_deg)
+        new = float(np.clip(self.mag_bias_est - k * lf.yaw_corr, -lim, lim))
+        # the AHRS heading takes the same step now (else it follows the corrected compass over ~1 s and the next
+        # light fixes count the same error again)
+        self.ahrs.R = _rot_z(self.mag_bias_est - new) @ self.ahrs.R
+        self.mag_bias_est = new
+        self._mag_bias_var = (1.0 - k) * self._mag_bias_var + 1e-8
+
+    def recon_nav_source(self, t: float) -> tuple[str, str]:
+        """(active source, detail) for a HUD: GNSS while received, else LIGHTS (accepted light fix < 2 s old),
+        else FLOW (accepted flow velocity < 1 s old), else INS."""
+        lf, fl = self.last_light_visual, self.last_flow
+        la = t - lf.t if lf is not None and lf.accepted else None
+        fa = t - fl.t if fl is not None and fl.accepted else None
+        detail = (f"LIGHTS {'-' if la is None else '%.1fs' % la}  FLOW {'-' if fa is None else '%.1fs' % fa}  "
+                  f"compass bias {math.degrees(self.mag_bias_est):+.2f} deg")
+        if self.receiving_gnss:
+            return "GNSS", detail
+        if la is not None and la < 2.0:
+            return "LIGHTS", detail
+        if fa is not None and fa < 1.0:
+            return "FLOW", detail
+        return "INS", detail
 
     def night_nav_source(self, t: float) -> tuple[str, str]:
         """(active source, detail) for a HUD: GNSS while it is received, else the freshest accepted position

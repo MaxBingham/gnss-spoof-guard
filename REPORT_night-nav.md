@@ -64,7 +64,8 @@ IMU + TRN 10/20, 0/20, 0/20. Open-loop bench: grad 66-79 % fix rate, median 0.5-
   (seeds 5 and 9; seed 9 had arrived without the fix, so the gain is not uniform). Seed 5: a wrong forced
   re-localization before the forest, then a wrong match after it; it also descends to 26 m AGL because terrain
   following uses the wrong position - a real safety issue for terrain-following at night.
-- **Tried and rejected**: EKF accel-bias random walk x4 (wobble, flights stalled at waypoints), thermal fix
+- **Tried and rejected**: re-localization guard (`thermal.reloc_min_span_s` 3 s; ukraine seeds 5 and 9 still run
+  away), EKF accel-bias random walk x4 (wobble, flights stalled at waypoints), thermal fix
   covariance x4 (neutral), `yaw_feedback` (implemented, not evaluated; the compass bias is constant ~0.8 deg, there
   is no yaw drift).
 - **road / junction alone** are weak in these worlds: short campus / village roads, trees over roads, plazas and

@@ -194,6 +194,8 @@ explicitly; daytime flights are unchanged (0).
 Before the forest a forced re-localization (5 consecutive NIS rejections = only 1 s at 5 Hz) accepted a match
 11 m off; in the forest the error then grew 6 -> 58 m in 16 s and the first fix after the forest was a wrong
 match inside a too-small search window (claimed 2-sigma 2.9 m at 65 m true error). The drone also descended to
-26 m AGL: terrain following uses the (wrong) estimated position. Ideas: forced re-localization only after
+26 m AGL: terrain following uses the (wrong) estimated position. Tried: forced re-localization from thermal only
+after NIS rejections spanning >= 3 s with consistent innovations (`thermal.reloc_min_span_s`, opt-in): seeds 5 and
+9 still run away (seed 9 unchanged), so it stays off. Further ideas: forced re-localization only after
 rejections spread over several seconds and mutually consistent; search window at least the distance flown blind
 x the velocity uncertainty; route choice around featureless stretches (night-demo's ROADS route avoids this forest).

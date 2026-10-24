@@ -20,14 +20,15 @@ and match the live thermal image against that prediction.
   - **Trees are warmer than lawns.**
   - **Insulated roofs are cold**, not warm. Only heavy concrete roofs stay warm.
   - **Unpaved roads are unreliable.**
-- Real night thermal satellite scenes over Berkeley (ASTER, 23:13-23:18 PDT, 90 m, 4 clear nights; section 6)
-  confirm the signs:
-  - road corridors are the warm linear features;
-  - the Bay is +3.5-5.2 K warmer than land;
-  - correlating the night image with the road map recovers a 230 m geolocation error of the satellite scene,
+- Real night thermal satellite scenes (ASTER, 23:00 local, 90 m; section 6) at Berkeley, Fresno, Davis and
+  Vinnytsia confirm the physics:
+  - on hot summer nights the paved road grid is plainly visible even at 90 m;
+  - unpaved roads are not warm;
+  - water is warm;
+  - correlating each night image with the road map recovers the satellite's own 100-300 m geolocation error,
     which is our method in miniature.
-  But the contrast is small at 90 m (+0.2-0.7 K for road-dense cells). That implies only ~1-3 K pure road
-  contrast on those mild spring / autumn nights. **Test the system at reduced contrast too.**
+  On mild spring / autumn nights in Berkeley the signal is weak (+0.1-0.7 K at 90 m). **Test the system at reduced
+  contrast too.**
 - Fielded camera-to-map navigation reaches ~10-30 m (vendor claims). The only public night-thermal flight
   with a number is < 15 m RMS. Our 5 m target is feasible in simulation only because we fly low (8.7 cm/px)
   over mapped roads; it is ambitious for real life.
@@ -415,17 +416,60 @@ USGS / AWS account. I skipped them; the steps are in REPORT_night-research.md.
    elevation; on the other nights -0.04 to -0.25 K per 100 m. Cold-air drainage and inversions are a real
    "unmodelled" signal.
 
+### 6.1 Hot summer nights and Ukraine: four more sites
+
+Berkeley has no clear summer night, so I ran the same pipeline ([aster_night_sites.py](night_research/aster_night_sites.py))
+at:
+- **Fresno** and **Davis** (Central Valley: hot days, clear summer nights; Davis is a small grid town in farmland,
+  a good analog for a Ukrainian town);
+- **Vinnytsia** (central Ukraine);
+- **Drohobych / Skhidnytsia**, the ukraine-1 area: its only summer night scene (2006-06-01) reads -1..6 C, i.e.
+  thin cloud, so it is excluded.
+
+Each scene was registered on its own to the **paved**-road share. Roads come from Overture (OSM-derived):
+- paved / unpaved from the surface tag;
+- untagged track = unpaved;
+- untagged motorway..secondary = paved;
+- everything else "unknown".
+
+Summaries: [fresno](night_research/aster_night_fresno_summary.md), [davis](night_research/aster_night_davis_summary.md),
+[vinnytsia](night_research/aster_night_vinnytsia_summary.md).
+
+| Site, night (local time) | registration r: delivered -> registered (shift) | road-densest cells - road-free cells | unpaved-road cells vs road-free | town (built >= 70 %) - grass / crop |
+|---|---|---|---|---|
+| **Fresno**, 6 nights Jun-Jul 2001-05, 22:59-23:15 | -0.13..+0.00 -> **+0.29..+0.33** (80-220 m E, 40-130 m S) | **+1.0 .. +1.4 K** (paved share >= 35 % vs < 3 %) | (only 15 cells) -0.7..-1.8 K | +1.3 .. +2.2 K |
+| **Davis**, 2006-07-18 23:13 | -0.07 -> **+0.27** (260 m E, 100 m S) | **+1.9 K** (+2.3 K at 20-35 %) | **-0.5 .. -0.6 K** (cooler) | **+3.2 K** |
+| **Vinnytsia**, 2005-09-13 22:51 | +0.02 -> +0.10 (280 m E, 160 m S) | +0.5 K (+0.9 K at 20-35 %) | -0.1 .. +0.2 K | +1.2 K; river +1.9 K above town |
+| Vinnytsia, 2005-09-20 22:56 (cold, 5 C, partial) | +0.01 -> +0.11 | -0.3 .. +0.3 K (none) | -0.8 .. -0.9 K | +1.7 K |
+| Berkeley, 4 nights Apr / Oct, 23:13-23:18 | -0.13 -> +0.26 (200 m E, 110 m S) | +0.1 .. +0.7 K | - | ~0 (flats) |
+
+![Fresno summer night, registered to the road map](night_research/aster_night_fresno_2003-07-28.png)
+
+**Reading:**
+- On **hot summer nights the road grid is plainly visible even at 90 m.** Fresno's arterials and freeways stand
+  out on every night ([contact sheet](night_research/aster_night_fresno_contact.png)), and Davis's town glows
+  against the fields.
+- The correlation surface has a clean peak plus **grid side lobes** at the arterial spacing. That is periodic
+  ambiguity, the reason for the second-peak test.
+- The ASTER night geolocation error is systematic: always ~80-310 m east and 40-160 m south. The road prior finds
+  it every time.
+- **Unpaved roads are not warm.** In Davis and Vinnytsia, cells with unpaved roads (and no paved road) are equal to
+  or 0.5-0.9 K cooler than road-free cells. This supports the "paved only" rule of section 4.2.
+- A 90 m cell with 35-100 % paved road (median ~45 %) that is +1.0-1.9 K warmer implies a pure paved-road contrast
+  of roughly **+2-4 K** before the ASTER blur, more after correcting for it. This is consistent with the lower half
+  of the 5-10 K the model gives for asphalt vs grass; asphalt vs the mixed urban surroundings is naturally less.
+- The Ukrainian September nights are in between (+0.5-0.9 K).
+
 **What it means for us:**
-- **Confirmed:** roads are the warm linear features; water is warm; the road prior can register a night thermal
-  image.
-- **Caveat on magnitude.** A 90 m cell that is 40 % road should carry ~40 % of the pure road-vs-surroundings
-  contrast. The observed +0.5 K therefore implies a pure-surface contrast of only ~1-3 K on these mild nights
-  (more if the ASTER blur is taken into account). That is well below the 5-10 K the energy-balance model gives
-  after a **hot** summer day. Mild days and a damp spring could explain the gap, but I cannot prove the 5-10 K
-  for Berkeley from satellite data.
-- **Recommendation:** night-nav / night-demo should add one **contrast-scale robustness row** to the eval
-  (prior-vs-truth road contrast scaled to ~0.3-0.5x) so we know how the system degrades if real contrast is
-  2-3 K instead of 6-10 K.
+- **Confirmed on real data:**
+  - paved roads are the warm linear features at 23 h;
+  - unpaved roads are not;
+  - water is warm;
+  - a road prior registers a night thermal image, with real along-road and grid ambiguities.
+- **Magnitude:** strong on hot summer nights, weak on mild spring / autumn nights in a marine climate (Berkeley)
+  and modest in Ukrainian September. The scenario ("after a hot day") is the favourable case.
+- **Recommendation:** keep one **contrast-scale robustness row** in the eval (truth contrast ~0.4x of the
+  prior), which night-nav and night-demo have added. It represents the mild-night case.
 
 ---
 

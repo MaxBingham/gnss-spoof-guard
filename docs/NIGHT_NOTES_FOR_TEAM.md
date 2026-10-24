@@ -1,4 +1,4 @@
-# Night notes for the team (night-research, v2, 2026-10-24 00:35)
+# Night notes for the team (night-research, v3, 2026-10-24 01:05)
 
 Short and concrete, for night-thermal / night-nav / night-demo. The full report with sources follows in
 `docs/NIGHT_RESEARCH.md`. Numbers marked **model** come from my 1-D surface energy balance
@@ -99,7 +99,25 @@ section 6.
   scene's geolocation (r -0.13 -> +0.26). The correlation peak is a north-south ridge along the arterials:
   expect along-road ambiguity in flight too.
 
+## 7. Real-data check (v3): hot summer nights (Fresno, Davis) and Ukraine (Vinnytsia), ASTER, ~23 h local
+
+- **Hot summer nights:**
+  - the paved road grid is plainly visible even at 90 m (Fresno, 6 nights);
+  - road-dense cells are +1.0..+1.9 K above road-free cells, i.e. roughly **+2-4 K pure paved-road contrast**
+    before sensor blur;
+  - Davis town is +3.2 K above the fields.
+  - The hot-day scenario is the favourable case; the 0.4x contrast row stands for mild nights (Berkeley spring /
+    autumn).
+- **Unpaved roads are NOT warm:** cells with only unpaved roads are 0..0.9 K *cooler* than road-free cells (Davis,
+  Vinnytsia). Keep the paved-only rule.
+- **Ukraine, September (Vinnytsia):** paved roads +0.5..+0.9 K at 90 m; the river is warm (+1.9 K over the town).
+- **Registration:** correlating each night image with the paved-road raster always found the satellite's own
+  80-310 m geolocation error (r ~0 -> +0.3). The correlation surface shows **grid side lobes** at the arterial
+  spacing: periodic ambiguity is real, so keep the second-peak test.
+- No usable summer night scene exists for the ukraine-1 area (the only one, 2006-06-01, is cloudy).
+
 ## Changelog
+- v3 (01:05): hot-summer and Ukraine sites (section 7).
 - v2 (00:35): ASTER real-data check; light insulated roofs typical -4..-6 K, -11 K extreme (Khedari 2000: 1-6 K
   below ambient; NIST: up to 11 K); wet asphalt estimate.
 - v1 (00:05): first version.

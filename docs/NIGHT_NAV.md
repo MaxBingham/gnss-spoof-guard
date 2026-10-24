@@ -89,4 +89,71 @@ What the benchmark changed:
 
 ## Closed-loop results
 
-(filled in when the 20-seed runs finish)
+`demos/21_night_eval.py`, 60 m AGL, GNSS off at 20 % of the route, 20 seeds, mission data frozen at
+`$SFHACK_DATA/night/nav_snap` (night-thermal 3e692ed: cold-air pooling, per-camera offset / gain errors; no moving
+traffic, contrast 1.0). "Within 5 m" = horizontal truth distance to B when the drone commits to the descent.
+Runaway = > 50 m. Route lengths: berkeley 569 m, m-c804bb84 923 m (hill), ukraine-1 1870 m (straight line; it
+crosses a ~250 m forest, x = -150..+100 m, where the prior is uniform: ~30 s without any thermal information).
+
+### Final configuration (night defaults: `grad` + gyro-bias learning)
+
+FINAL_TABLE_PLACEHOLDER
+
+### Stage 1: method comparison (before the gyro-bias fix)
+
+| mission | row | within 5 m | 95 % Wilson CI | error at B median / max (m) | runaways | thermal fixes accepted / flight |
+|---|---|---|---|---|---|---|
+| berkeley | **grad** | **20/20** | 84-100 % | 0.8 / 1.5 | 0 | 313 |
+| berkeley | ncc+grad | 18/20 | 70-97 % | 0.9 / 6921 | 2 | 309 |
+| berkeley | ncc | 16/20 | 58-92 % | 1.2 / 7141 | 4 | 222 |
+| berkeley | IMU + TRN only | 10/20 | 30-70 % | 5.1 / 5944 | 2 | - |
+| m-c804bb84 | **grad** | **19/20** | 76-99 % | 1.4 / 76 | 1 | 495 |
+| m-c804bb84 | ncc+grad | 19/20 | 76-99 % | 1.2 / 73 | 1 | 538 |
+| m-c804bb84 | ncc | 15/20 | 53-89 % | 1.8 / 6388 | 5 | 431 |
+| m-c804bb84 | IMU + TRN only | 0/20 | 0-16 % | 29.9 / 6107 | 9 | - |
+| ukraine-1 | **grad** | **12/20** | 39-78 % | 2.1 / 7693 | 8 | 790 |
+| ukraine-1 | IMU + TRN only | 0/20 | 0-16 % | 6431 / 7721 | 20 | - |
+
+Plots: `docs/night_nav/night_error_<mission>.png` (error over time since GNSS off, per-seed error at B).
+
+Why the alternatives lose:
+- **ncc** accepts more wrong peaks where the prior's temperature LEVEL is wrong (roofs: mostly cold, 1/3 warm);
+  a wrong fix pulls the INS and the bias states, the next correct fix is then outside the search window -> runaway.
+  `grad` only needs the edges to be in the right place.
+- **ncc+grad** fuses consistent candidates; it gains fix rate but inherits ncc's wrong peaks when both happen to
+  agree with a drifting estimate.
+- **IMU + TRN**: see "Why it runs away" below. TRN helps over the berkeley buildings (half the seeds within 5 m),
+  not on the hill or the GLO-30 terrain of ukraine-1 (TRN fixes there were 100-900 m off and NIS-rejected).
+
+### Why it runs away, and the fix
+
+Instrumented flights (truth vs AHRS) showed the same pattern in every runaway:
+1. With GNSS the AHRS tilt error is ~0.6 deg; the GNSS absorbs the 0.1 m/s^2 gravity leak.
+2. After GNSS loss the tilt error grows ~1 deg per 10-20 s (residual roll / pitch gyro bias). In calm air the
+   simulated X2 has no airframe drag, so the accelerometer only sees thrust along body z: in closed loop the tilt
+   error is unobservable without position fixes (CLAUDE.md "Closed-loop drift").
+3. Thermal fixes at 5 Hz keep the EKF's bias states (handed to the AHRS as tilt corrections) on track - until a
+   blind stretch: the ukraine-1 forest (~30 s), or a run of ambiguous frames. The error then grows quadratically
+   (6 -> 58 m in 16 s), the true position leaves the 3-sigma search window, and later "fixes" are wrong matches
+   inside the window.
+
+Candidates tried (ukraine-1 seeds 0-8, same frozen data):
+
+| variant | within 5 m (seeds 0-8) | note |
+|---|---|---|
+| grad (stage 1) | 5/9 | |
+| EKF accel-bias random walk 0.01 -> 0.04 | 5/9 | noisy tilt corrections: two flights wobbled and never "reached" a waypoint (stuck 1185 m before B with a 2 m estimate) |
+| thermal fix covariance x4 (5 Hz fixes have correlated errors) | 6/9 | about neutral |
+| **gyro-bias learning, `ahrs.tilt_bias_ki` 0.05** | **8/9** | the tilt corrections the EKF hands to the AHRS are integrated into the roll / pitch gyro bias (PI loop); learned already during the GNSS phase, so the drift stops in blind stretches. Seeds 2, 3, 4: km runaways -> 0.6 / 0.3 / 1.2 m |
+
+`FlightSystem(night=True)` now sets `ahrs.tilt_bias_ki = cfg.thermal.night_tilt_bias_ki` (0.05) unless it is set
+explicitly; daytime flights are unchanged (0).
+
+### Remaining failure (ukraine-1 seed 5)
+
+Before the forest a forced re-localization (5 consecutive NIS rejections = only 1 s at 5 Hz) accepted a match
+11 m off; in the forest the error then grew 6 -> 58 m in 16 s and the first fix after the forest was a wrong
+match inside a too-small search window (claimed 2-sigma 2.9 m at 65 m true error). The drone also descended to
+26 m AGL: terrain following uses the (wrong) estimated position. Ideas: forced re-localization only after
+rejections spread over several seconds and mutually consistent; search window at least the distance flown blind
+x the velocity uncertainty; route choice around featureless stretches (night-demo's ROADS route avoids this forest).

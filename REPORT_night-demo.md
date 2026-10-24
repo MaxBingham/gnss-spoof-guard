@@ -1,8 +1,10 @@
 # REPORT - night-demo (Fri 2026-10-23 23:30 -> Sat 07:00)
 
 Agent night-demo: Ukraine mission, route choice, night viewer, final integration + eval. Branch `night-demo` in
-`C:\dev\night-demo` (based on origin/v5-mission-planner; merged night-thermal 146a89f and night-nav up to cd6de0e; the eval build is b5409f4 = night-nav 651b398).
-Nothing pushed. Commands to continue: `RESUME.md`. Saturday demo script: `DEMO_NIGHT.md`.
+`C:\dev\night-demo` (based on origin/v5-mission-planner). All four night branches are merged here: night-thermal,
+night-nav (up to cd6de0e), night-research (f27db80); their reports sit next to this one (REPORT_night-*.md). The
+eval build is b5409f4 (= night-nav 651b398 + night-thermal 146a89f + my code). Nothing pushed. Commands to
+continue: `RESUME.md`. Saturday demo script: `DEMO_NIGHT.md`.
 
 ## Final eval (night 23:00, 60 m AGL, GNSS completely off from 20 % of the route, 20 seeds)
 

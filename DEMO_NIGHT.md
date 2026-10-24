@@ -77,7 +77,7 @@ What to point at:
   of B in Berkeley, 20 of 20 over the hills, 20 of 20 in the Ukraine mission, typically 1-2 m. Without the thermal
   camera, the same drone gets 0 of 20 in Ukraine." (Table: REPORT_night-demo.md; simulated thermal world.)
 
-Real-data backing (night-research NIGHT_NOTES v4, branch night-research, docs/night_research/): ASTER satellite
+Real-data backing (night-research NIGHT_NOTES v4, merged here: docs/NIGHT_RESEARCH.md, docs/night_research/): ASTER satellite
 night thermal (90 m, ~23:00) shows the paved road grid on hot summer nights (Fresno, 6 nights Jun-Jul; Davis July
 23:13: town +3.2 K over the fields). No evidence that unpaved roads are warm (Davis, Vinnytsia: 0-0.9 K cooler
 than road-free cells), consistent with our paved-only road mask. Registering each night image to the road map

@@ -1,7 +1,8 @@
 # RESUME - branch night-demo (night of 2026-10-23/24)
 
 Folder `C:\dev\night-demo`, branch `night-demo` (based on origin/v5-mission-planner, merged: night-thermal,
-night-nav). Nothing pushed. Report: `REPORT_night-demo.md`. Demo script for Saturday: `DEMO_NIGHT.md`.
+night-nav, night-research: all four night branches are in here). Nothing pushed. Report: `REPORT_night-demo.md`;
+the other agents' reports: `REPORT_night-thermal.md`, `REPORT_night-nav.md`, `REPORT_night-research.md`. Demo script: `DEMO_NIGHT.md`.
 The previous RESUME (v5 mission planner) is in git: `git show 28962ad:RESUME.md`.
 
 ## Environment

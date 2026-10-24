@@ -61,14 +61,13 @@ def draw_map(m: ReconMission, size: int = 900, truth_track: np.ndarray | None = 
 
     img = np.full((size, size, 3), 24, np.uint8)
     # searched area (thermal footprints)
-    cov = m.coverage
-    ys, xs = np.nonzero(cov)
-    if len(xs):
-        cells = np.stack([m.cov_origin[0] + (xs + 0.5) * m.cov_cell, m.cov_origin[1] + (cov.shape[0] - ys - 0.5) * m.cov_cell], -1)
-        p = px(cells)
-        r = max(1, int(math.ceil(m.cov_cell * s / 2)))
-        for q in p:
-            cv2.rectangle(img, tuple(q - r), tuple(q + r), (70, 60, 30), -1)
+    cov = m.coverage  # grid row 0 = north edge, cell (0, 0) corner at (cov_origin.x, cov_origin.y + H * cell)
+    if cov.any():
+        top = m.cov_origin[1] + cov.shape[0] * m.cov_cell
+        k = m.cov_cell * s
+        A = np.float32([[k, 0, (m.cov_origin[0] - centre[0]) * s + size / 2], [0, k, size / 2 - (top - centre[1]) * s]])
+        mask = cv2.warpAffine(cov * 255, A, (size, size), flags=cv2.INTER_NEAREST) > 0
+        img[mask] = (70, 60, 30)
     # bearing cone (cone_k sigma) and line
     n = np.array([u[1], -u[0]])
     rs = np.linspace(0, far * 1.1, 30)
@@ -86,9 +85,13 @@ def draw_map(m: ReconMission, size: int = 900, truth_track: np.ndarray | None = 
         cv2.polylines(img, [px(est)], False, (255, 200, 60), 2, cv2.LINE_AA)
     for tr in m.tracks:
         q = tuple(px(tr.xy)[0])
-        if tr.confirmed_t is not None:
+        if tr.verified:
             cv2.circle(img, q, 7, (0, 0, 255), 2, cv2.LINE_AA)
             cv2.putText(img, f"#{tr.id} {tr.label}", (q[0] + 9, q[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
+        elif tr.rejected:
+            cv2.drawMarker(img, q, (0, 140, 255), cv2.MARKER_TILTED_CROSS, 9, 1, cv2.LINE_AA)
+        elif tr.confirmed_t is not None:
+            cv2.circle(img, q, 6, (0, 190, 255), 1, cv2.LINE_AA)
         elif tr.moving:
             cv2.drawMarker(img, q, (200, 0, 200), cv2.MARKER_TILTED_CROSS, 8, 1)
     for xy, kind in truth_targets or []:
@@ -100,7 +103,9 @@ def draw_map(m: ReconMission, size: int = 900, truth_track: np.ndarray | None = 
              f"bearing {m.az:03.0f} +- {m.sigma_az:.0f} deg (cone {c.cone_k:.1f} sigma)"]
     legend = "blue: est. track" + ("  green: true track / targets" if truth_track is not None else "") + \
              "  red: finds  orange: cone  gray: pattern  dark: searched"
-    for k, line in enumerate(lines + [legend]):
+    if size < 600:  # panel: title only
+        lines, legend = [title or "RECON MAP"], None
+    for k, line in enumerate(lines + ([legend] if legend else [])):
         cv2.putText(img, line, (10, 22 + 20 * k), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (230, 230, 230), 1, cv2.LINE_AA)
     # scale bar 500 m
     L = int(500 * s)

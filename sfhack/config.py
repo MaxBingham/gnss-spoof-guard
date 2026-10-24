@@ -369,7 +369,11 @@ class ReconConfig:
     moving_speed: float = 1.5  # m/s: faster tracks are traffic (logged as sightings, not orbited)
     # Observe: orbit the find, relative to it (centre = the track's position, updated by every re-detection)
     observe_s: float = 30.0
-    orbit_radius_m: float = 30.0
+    # A candidate becomes a FIND only when the orbit sees it again (other viewing angles): a warm wall or roof edge
+    # seen obliquely on one pass looked like a vehicle for 3 frames and never again (ukraine-1, seed 0)
+    verify_hits: int = 3
+    verify_timeout_s: float = 15.0  # no re-detection at all within this -> rejected early, search resumes
+    orbit_radius_m: float = 20.0  # the target stays inside the 84 x 66 m footprint at 90 m AGL
     orbit_speed: float = 6.0
     snapshot_every_s: float = 3.0
     max_snapshots: int = 8

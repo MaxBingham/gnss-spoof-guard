@@ -18,8 +18,8 @@ How (per frame, ~10 ms at 640 x 512):
               recently driven one has a 2 m^2 warm hood)
      person   area 0.12-1.5 m^2, peak >= person_min_peak_K
      rejected hot spot (HVAC unit, a parked car's hood, a moving car's engine bay), elongated / blocky warm
-              ground (rocks, roads), roof-sized (barn roof, warm wall; the top-hat already removes most), or on a
-              roof (onboard DSM > DTM + 2.5 m under it)
+              ground (rocks, roads), roof-sized (barn roof), or at a building (onboard DSM > DTM + 2.5 m within
+              5 m: roof edges and walls seen obliquely)
 4. Pixel centroid -> ray (camera -> body -> world with the AHRS attitude) -> intersect the ground plane under the
    drone: `xy_rel` = ENU offset (east, north) of the object from the drone, in metres.
 
@@ -72,7 +72,8 @@ class DetectorParams:
     vehicle_min_mean_K: float = 5.0
     person_area_m2: tuple[float, float] = (0.12, 1.5)
     person_min_peak_K: float = 4.0
-    roof_margin_m: float = 2.5  # DSM above DTM by more than this = on a roof
+    roof_margin_m: float = 2.5  # DSM above DTM by more than this = on a roof ...
+    roof_radius_m: float = 5.0  # ... anywhere within this distance of the blob
     min_agl_m: float = 15.0
     max_tilt_deg: float = 30.0
     border_px: int = 4  # blobs touching the frame border are cut: no class decision
@@ -152,9 +153,14 @@ class ThermalDetector:
             if rel is None:
                 continue
             if self.map is not None and pos_xy is not None and self.map.dsm is not None:
+                # on or right beside a building: roof edges, HVAC units and walls seen obliquely look like warm,
+                # vehicle-sized blobs; the projected point of a wall lands just outside the footprint
                 q = np.asarray(pos_xy, float)[:2] + rel
-                if self.map.surface_z(q) - self.map.ground_z(q) > p.roof_margin_m:
-                    out.rejected.append(Rejected(uv, "on a roof"))
+                r = p.roof_radius_m
+                ring = q + np.array([[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) * 0.75
+                if float(np.max(self.map.surface_heights(ring) - np.array([self.map.ground_z(x) for x in ring]))) \
+                        > p.roof_margin_m:
+                    out.rejected.append(Rejected(uv, "at a building"))
                     continue
             out.detections.append(Detection(rel, (round(length, 2), round(width, 2)), round(peak, 2), round(conf, 3),
                                             label, uv, round(area, 2), round(mean, 2), (x0, y0, bw, bh)))

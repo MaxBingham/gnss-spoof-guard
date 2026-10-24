@@ -203,8 +203,13 @@ class ReconFlight:
         else:
             true_az = true_dist = None
         landed = m.phase == "REPORT" and truth.pos[2] - fs.true_ground_z(truth.pos[0], truth.pos[1]) < 0.5
-        tt = np.array([r[1:3] for r in self.truth_track]) if self.truth_track else np.zeros((0, 2))
         est = np.array([r[1:3] for r in m.track_log]) if m.track_log else np.zeros((0, 2))
+        if self.truth_track and m.track_log:  # truth at the estimate's timestamps
+            T = np.array(self.truth_track)
+            te = np.array([r[0] for r in m.track_log])
+            tt = np.stack([np.interp(te, T[:, 0], T[:, 1]), np.interp(te, T[:, 0], T[:, 2])], -1)
+        else:
+            tt = np.zeros((0, 2))
         n = min(len(tt), len(est))
         # coverage: was a true target inside the searched (estimated) footprints? (truth position -> TRUE coverage
         # would need the true footprints; here: the true track's footprint ~ the estimated one shifted by the error)

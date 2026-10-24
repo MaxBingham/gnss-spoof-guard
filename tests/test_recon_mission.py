@@ -151,3 +151,32 @@ def test_nothing_found_returns_on_battery_or_pattern_end() -> None:
     assert rep["outcome"] == "NOTHING_FOUND" and "nothing found" in rep["summary"]
     assert rep["flight_time_s"] <= 600.0
     assert rep["searched"]["area_km2"] > 0.0 or rep["searched"]["thermal_frames"] > 0
+
+
+class _OnePassDetector(_FakeDetector):
+    """Sees the object only while not orbiting (an oblique wall: looks like a vehicle from one side only)."""
+
+    def __init__(self, objects: list[np.ndarray], mission_ref: list) -> None:
+        super().__init__(objects)
+        self.ref = mission_ref
+
+    def detect(self, img, R, agl, K, pos_xy=None, keep_anomaly=False) -> DetectResult:
+        if self.ref and self.ref[0].phase == "OBSERVE":
+            return DetectResult(gsd_m=0.13)
+        return super().detect(img, R, agl, K, pos_xy, keep_anomaly)
+
+
+def test_candidate_not_seen_from_the_orbit_is_rejected_and_search_resumes() -> None:
+    cfg = default_config()
+    az = 64.0
+    ghost = az_to_unit(az) * 400.0  # on the straight outbound leg
+    ref: list = []
+    m = ReconMission(cfg.recon, cfg.mission, {"az_deg": az, "sigma_az_deg": 7.0}, np.zeros(2), 0.0,
+                     detector=_OnePassDetector([ghost], ref), mission_id="test")
+    ref.append(m)
+    phases = _fly(m)
+    texts = [s for _, s in m.decision_log]
+    assert any(s.startswith("REJECTED") for s in texts), texts
+    i = phases.index("OBSERVE")
+    assert phases[i + 1] == "SEARCH", phases
+    assert m.report is not None and m.report["outcome"] == "NOTHING_FOUND"

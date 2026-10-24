@@ -176,7 +176,9 @@ class Track:
     sigma2_at_first: float = 0.0  # 2-sigma of the drone estimate at the first detection
     size_m: tuple[float, float] = (0.0, 0.0)
     temp_K: float = 0.0
-    confirmed_t: float | None = None
+    confirmed_t: float | None = None  # candidate: seen confirm_hits times on one pass
+    verified: bool = False  # seen again from the orbit (other viewing angles): a find
+    rejected: bool = False  # candidate not seen again from the orbit (oblique wall, glint, ...)
     moving: bool = False
     labels: dict[str, int] = field(default_factory=dict)
     snapshots: list[dict[str, Any]] = field(default_factory=list)  # {t, image (uint8), crop (uint8), ...}
@@ -359,6 +361,11 @@ class ReconMission:
                                             f"{self.time_to_home(pose):.0f} s needed to get home and land")
         elif ph == "OBSERVE":
             vel = self._orbit(t, pose, dt)
+            if self.phase == "OBSERVE" and self.elapsed(t) + self.time_to_home(pose) + self.c.reserve_s >= self.c.battery_s:
+                tr = self.observe_track
+                if tr is not None and not tr.verified and sum(1 for h in tr.hits if h[0] > (self.observe_t0 or t)) > 0:
+                    tr.verified = True  # seen again, just not as often as wanted: keep it
+                self._start_return(t, pose, f"BATTERY during the orbit: {self.battery_left(t):.0f} s left")
         elif ph == "RETURN":
             vel = self._follow_path(t, pose, dt)
             if float(np.linalg.norm(pose.pos[:2] - self.pad)) < self.c.home_radius_m:
@@ -502,19 +509,38 @@ class ReconMission:
             self.setpoint[:2] = new
         z_t = float(self.ground_z(centre)) + self.c.cruise_agl
         vz = self._move_z_only(z_t, self.c.climb_speed if z_t > self.setpoint[2] else self.c.descent_speed, dt)
-        if t - self.observe_t0 >= self.c.observe_s:
+        re_hits = sum(1 for h in tr.hits if h[0] > self.observe_t0 + 0.5)
+        if not tr.verified and re_hits >= self.c.verify_hits:
+            tr.verified = True
+            dd = tr.xy - self.pad
+            self.log(t, f"FIND: {tr.label} #{tr.id} verified from the orbit ({re_hits} re-detections) at "
+                        f"{np.linalg.norm(dd):.0f} m / {az_of(dd):.0f} deg from the base")
+        elapsed = t - self.observe_t0
+        if not tr.verified and (elapsed >= self.c.observe_s or (elapsed >= self.c.verify_timeout_s and re_hits == 0)):
+            tr.rejected, tr.confirmed_t = True, None
+            tr.snapshots = []
+            self.log(t, f"REJECTED: #{tr.id} not seen again from the orbit ({re_hits} re-detections in {elapsed:.0f} s)")
+            self._resume_search(t, pose, f"after rejecting #{tr.id}")
+        elif elapsed >= self.c.observe_s:
             n_snap = len(tr.snapshots)
             if self.c.continue_after_find and self.path_cum is not None and self.path_s < self.path_cum[-1] \
                     and self.elapsed(t) + self.time_to_home(pose) + self.c.reserve_s + 60.0 < self.c.battery_s:
-                self.phase = "SEARCH"
-                self.log(t, f"SEARCH: resumed after observing #{tr.id} ({n_snap} snapshots)")
-                assert self.path is not None
-                rest = self.path[int(np.searchsorted(self.path_cum, self.path_s, side="right")):]
-                self._set_path(t, [self.setpoint[:2], *rest], self.c.search_speed, reset=True)
+                self._resume_search(t, pose, f"after observing #{tr.id} ({n_snap} snapshots)")
             else:
                 self._start_return(t, pose, f"{tr.label} #{tr.id} observed for {self.c.observe_s:.0f} s, "
                                             f"{n_snap} snapshots")
         return np.array([v2[0], v2[1], vz[2]])
+
+    def _resume_search(self, t: float, pose: PoseEstimate, why: str) -> None:
+        """Back to the search pattern where it was left (or home if it is done)."""
+        if self.path is None or self.path_cum is None or self.path_s >= self.path_cum[-1] - 1e-6:
+            self._start_return(t, pose, f"search pattern complete ({why})")
+            return
+        rest = self.path[int(np.searchsorted(self.path_cum, self.path_s, side="right")):]
+        self._set_path(t, [self.setpoint[:2], *rest], self.c.search_speed, reset=True)
+        self.phase = "SEARCH"
+        self.observe_track = None
+        self.log(t, f"SEARCH: resumed {why}")
 
     def _update_yaw(self, pose: PoseEstimate, dt: float) -> None:
         """Tail to the base: yaw = direction base -> drone (the nose looks away, the rear camera at the lights)."""
@@ -554,7 +580,7 @@ class ReconMission:
             tr.add(frame.t, xy, d)
             hit_tracks.append((tr, d))
         for tr, d in hit_tracks:
-            if tr.confirmed_t is None:
+            if tr.confirmed_t is None and not tr.rejected:
                 recent = [h for h in tr.hits if frame.t - h[0] <= self.c.confirm_window_s]
                 if len(recent) >= self.c.confirm_hits and np.mean([h[2] for h in recent]) >= self.c.confirm_min_conf:
                     if tr.speed() > self.c.moving_speed:
@@ -564,11 +590,11 @@ class ReconMission:
                     else:
                         tr.confirmed_t = frame.t
                         dd = tr.xy - self.pad
-                        self.log(frame.t, f"FIND: {tr.label} #{tr.id} at {np.linalg.norm(dd):.0f} m / {az_of(dd):.0f} deg "
+                        self.log(frame.t, f"CANDIDATE: {tr.label} #{tr.id} at {np.linalg.norm(dd):.0f} m / {az_of(dd):.0f} deg "
                                           f"from the base, {tr.size_m[0]:.1f} x {tr.size_m[1]:.1f} m, +{tr.temp_K:.0f} K")
                         if self.phase in ("OUTBOUND", "SEARCH"):
                             self._start_observe(frame.t, pose, tr)
-            if tr.confirmed_t is not None and len(tr.snapshots) < self.c.max_snapshots and (
+            if tr.confirmed_t is not None and not tr.rejected and len(tr.snapshots) < self.c.max_snapshots and (
                     frame.t - max((s["t"] for s in tr.snapshots), default=-1e9) >= self.c.snapshot_every_s):
                 tr.snapshots.append(self._snapshot(frame, d, pose))
 
@@ -600,7 +626,8 @@ class ReconMission:
         cv2.fillConvexPoly(self.coverage, np.round(px).astype(np.int32), 1)
 
     def _finds(self) -> list[Track]:
-        return [tr for tr in self.tracks if tr.confirmed_t is not None]
+        """Verified finds: confirmed on the pass AND seen again from the orbit."""
+        return [tr for tr in self.tracks if tr.verified]
 
     # ------------------------------------------------------------------ report
 

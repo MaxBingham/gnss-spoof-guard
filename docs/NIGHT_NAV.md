@@ -106,7 +106,16 @@ crosses a ~250 m forest, x = -150..+100 m, where the prior is uniform: ~30 s wit
 
 The compass yaw error stays at its per-flight bias (mean |yaw error| 0.78 deg, no drift). Thermal processing 30-70 ms
 per frame on berkeley / hill, 130-180 ms on ukraine-1 (larger search windows), at 5 Hz.
-Rows LOW_CONTRAST_PLACEHOLDER
+Mild night (`--contrast 0.4`: the TRUE scene's contrast scaled to 0.4x around air temperature, ~2-4 K road-grass
+as in night-research's ASTER notes, while the prior keeps the full model contrast):
+
+| mission | within 5 m | 95 % Wilson CI | error at B mean / median / max (m) | thermal fixes accepted / flight |
+|---|---|---|---|---|
+| berkeley | **20/20** | 84-100 % | 0.6 / 0.6 / 1.1 | 296 |
+| m-c804bb84 | **20/20** | 84-100 % | 0.8 / 0.8 / 1.6 | 515 |
+
+Normalized gradient matching does not care about the amplitude (NETD 50 mK is far below 2 K); what matters is
+that the structure is where the prior says. (ukraine-1 at 0.4x not run: time.)
 
 ### Stage 1: method comparison (before the gyro-bias fix)
 

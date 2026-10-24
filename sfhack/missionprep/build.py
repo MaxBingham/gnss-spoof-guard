@@ -241,8 +241,11 @@ def required_z(dsm: np.ndarray, dtm: np.ndarray, g: Grid, min_agl: float = MIN_A
 
 
 def plan_route(a: np.ndarray, b: np.ndarray, a_z: float, b_z: float, dsm: np.ndarray, dtm: np.ndarray, g: Grid,
-               mc: MissionConfig, min_agl: float = MIN_AGL_M) -> tuple[list[dict[str, Any]], list[dict[str, float]]]:
-    """Waypoints A -> B on the onboard DSM: takeoff, stepped cruise legs, descend, land (ENU, z absolute)."""
+               mc: MissionConfig, min_agl: float = MIN_AGL_M, extra_cost: np.ndarray | None = None
+               ) -> tuple[list[dict[str, Any]], list[dict[str, float]]]:
+    """Waypoints A -> B on the onboard DSM: takeoff, stepped cruise legs, descend, land (ENU, z absolute).
+    `extra_cost`: optional per-metre cost added on the ROUTE_CELL_M grid (shape of `required_z`), e.g. the night
+    route's penalty for cells where the thermal camera would see no warm road (sfhack/planning/night_route.py)."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import dijkstra
 
@@ -258,9 +261,17 @@ def plan_route(a: np.ndarray, b: np.ndarray, a_z: float, b_z: float, dsm: np.nda
         cr = np.round(g4.to_px(p + s * (q - p))).astype(int)
         return float(req[np.clip(cr[:, 1], 0, R - 1), np.clip(cr[:, 0], 0, C - 1)].max())
 
+    def seg_extra(p: np.ndarray, q: np.ndarray) -> float:  # integral of extra_cost along the segment
+        L = float(np.hypot(*(q - p)))
+        s = np.linspace(0, 1, max(2, int(L / 2.0) + 1))[:, None]
+        cr = np.round(g4.to_px(p + s * (q - p))).astype(int)
+        return float(extra_cost[np.clip(cr[:, 1], 0, R - 1), np.clip(cr[:, 0], 0, C - 1)].mean()) * L
+
     ra, rb = cell(a), cell(b)
     z_ref = max(req[ra], req[rb])
     cost = 1.0 + np.maximum(req - z_ref, 0.0) / CLIMB_PENALTY_M
+    if extra_cost is not None:
+        cost = cost + extra_cost
     idx = np.arange(R * C).reshape(R, C)
     src, dst, w = [], [], []
     pairs = ((idx[:, :-1], idx[:, 1:], 1.0), (idx[:-1, :], idx[1:, :], 1.0),  # 8-connected grid
@@ -277,12 +288,17 @@ def plan_route(a: np.ndarray, b: np.ndarray, a_z: float, b_z: float, dsm: np.nda
     X, Y = g4.centers()
     pts = [a] + [np.array([X.flat[k], Y.flat[k]]) for k in path[::-1][1:-1]] + [b]
     # string pulling: skip ahead while the straight line needs no more altitude than the path it replaces
+    step_req = np.array([seg_req(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])
+    step_extra = (np.array([seg_extra(pts[k], pts[k + 1]) for k in range(len(pts) - 1)]) if extra_cost is not None
+                  else np.zeros(len(pts) - 1))
+    extra_cum = np.r_[0.0, np.cumsum(step_extra)]
     keep, i = [pts[0]], 0
     while i < len(pts) - 1:
         j = len(pts) - 1
+        along_max = np.maximum.accumulate(step_req[i:])  # along_max[j - 1 - i] = max step requirement i .. j-1
         while j > i + 1:
-            along = max(seg_req(pts[k], pts[k + 1]) for k in range(i, j))
-            if seg_req(pts[i], pts[j]) <= along + 0.5:
+            if seg_req(pts[i], pts[j]) <= along_max[j - 1 - i] + 0.5 and (
+                    extra_cost is None or seg_extra(pts[i], pts[j]) <= extra_cum[j] - extra_cum[i] + 2.0):
                 break
             j -= 1
         keep.append(pts[j])

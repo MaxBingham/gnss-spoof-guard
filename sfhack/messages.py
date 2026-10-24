@@ -106,8 +106,18 @@ class NirFrame:
     name: str  # "rear"
     image: np.ndarray  # (H, W) uint8, row 0 = top
     intrinsics: dict[str, float]  # pinhole: fx, fy, cx, cy, w, h, hfov_deg, vfov_deg (pixels / deg)
-    R_body_cam: np.ndarray  # (3, 3)
+    R_body_cam: np.ndarray  # (3, 3), includes the current gimbal tilt
     exposure_s: float = 0.004
+    tilt_deg: float = 10.0  # gimbal tilt below body -x (encoder reading; command it with CameraTiltCmd)
+
+
+@dataclass
+class CameraTiltCmd:
+    """Onboard -> rear camera gimbal (topic `camera/rear/tilt`): tilt the optical axis this many degrees below
+    body -x (one axis, pitch only; clamped to [-10, 70], slewed at 60 deg/s)."""
+
+    t: float
+    tilt_deg: float
 
 
 @dataclass

@@ -8,8 +8,8 @@ recon bearing to the map edge -> back.
     uv run python demos/41_base_view.py --headless [--out DIR]           # PNG frames + light visibility table
 
 Keys (window): SPACE pause, 1/2/4 speed, L lights on/off, C chase / overview camera, R restart, Q / ESC quit.
-The labels on the rear camera panel are TRUTH (display only): light id, green = decodable spot, gray = in view but
-behind terrain, red = in view but off this frame.
+The labels on the rear camera panel are TRUTH (display only): light id; green = a decodable light (bright when on,
+dark green = off in this frame of its code), gray = in view but behind terrain / a house, orange = stray light.
 """
 
 from __future__ import annotations
@@ -30,14 +30,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from liveview.night import apply_night_lighting  # noqa: E402
 
+from sfhack import bus as topics  # noqa: E402
 from sfhack.bus import Bus  # noqa: E402
 from sfhack.config import Config  # noqa: E402
+from sfhack.messages import CameraTiltCmd  # noqa: E402
 from sfhack.missionprep.build import mission_dir  # noqa: E402
 from sfhack.sim.base_lights import BlinkAnimator  # noqa: E402
 from sfhack.sim.mujoco_sim import MujocoSim  # noqa: E402
 from sfhack.sim.rear_camera import RearCameraSensor  # noqa: E402
 from sfhack.world.scene import PackageWorld  # noqa: E402
 
+PITCH_DEG = 6.0  # cruise nose-down pitch of the posed drone
 DETECT_DN = 25.0  # peak above which a spot counts as detectable (background + noise ~ 5-10 DN)
 
 
@@ -88,7 +91,7 @@ class Path3:
         return name, xy, float(agl), heading
 
 
-def place(sim: MujocoSim, xy: np.ndarray, z: float, yaw: float, pitch: float = math.radians(6.0)) -> None:
+def place(sim: MujocoSim, xy: np.ndarray, z: float, yaw: float, pitch: float = math.radians(PITCH_DEG)) -> None:
     """Pose the drone (nose-down cruise pitch: tilts the rear camera up, as in real flight)."""
     d = sim.data
     q_yaw = np.array([math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)])
@@ -112,11 +115,9 @@ def rear_panel(frame: np.ndarray, truth: list[dict], scale: float = 1.0) -> np.n
         u, v = int(r["u"] * scale), int(r["v"] * scale)
         if r["occluded"]:
             col = (110, 110, 110)
-        elif r["peak_dn"] >= DETECT_DN:
-            col = (80, 230, 80) if r["nav"] else (60, 170, 255)
+        elif r["peak_on_dn"] >= DETECT_DN:
+            col = ((80, 230, 80) if r["on"] else (40, 110, 40)) if r["nav"] else (60, 170, 255)
             n_ok += r["nav"]
-        elif r["nav"] and not r["on"]:
-            col = (60, 60, 220)
         else:
             continue
         cv2.circle(img, (u, v), 9, col, 1, cv2.LINE_AA)
@@ -136,7 +137,7 @@ def chase_camera(xy: np.ndarray, z: float, heading: float, mode: str, centre: np
         cam.elevation = -12.0
     else:  # overview: the base from above, drone somewhere around
         cam.lookat[:] = [centre[0], centre[1], 0.0]
-        cam.distance = 420.0
+        cam.distance = 300.0
         cam.azimuth = -60.0
         cam.elevation = -35.0
     return cam
@@ -151,6 +152,8 @@ def main() -> None:
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--out", default=None)
     ap.add_argument("--every", type=float, default=10.0, help="headless: save a frame every N s of path time")
+    ap.add_argument("--fixed-mount", action="store_true", help="do not move the rear camera gimbal")
+    ap.add_argument("--camera", choices=("chase", "overview"), default="chase", help="initial 3D camera")
     a = ap.parse_args()
 
     mdir = mission_dir(a.mission)
@@ -172,28 +175,32 @@ def main() -> None:
     anim = BlinkAnimator(sim.model, rear.lights)
     path = Path3(world, centre, bearing, a.agl, a.speed)
     opt = mujoco.MjvOption()
+    opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = False
     print(f"base at {centre.round(1)}, {len(rear.lights.lights.lights)} lights, bearing {bearing:.1f} deg; "
           f"path {path.T:.0f} s (orbit 250 m, out to the map edge and back), {a.agl:.0f} m AGL")
 
     out = Path(a.out) if a.out else Path(mdir.parent.parent / "recon" / "base_view")
     if a.headless:
         out.mkdir(parents=True, exist_ok=True)
-    t, speed, paused, mode = 0.0, 4.0, False, "chase"
+    t, speed, paused, mode = 0.0, 4.0, False, a.camera
     dt = 1.0 / cfg.camera.rear_hz
     next_save, rows, wall = 0.0, [], time.perf_counter()
     while True:
         name, xy, agl, heading = path.at(t)
         z = world.ground_z(*xy) + agl if name != "climb" else world.ground_z(*centre) + agl + 0.2
         place(sim, xy, z, heading)
+        dist = float(np.hypot(*(xy - centre)))
+        if not a.fixed_mount:  # aim the gimbal at the base centre (the drone would use its estimate)
+            dep = math.degrees(math.atan2(z - world.ground_z(*centre) - 5.0, max(dist, 1.0)))
+            sim.bus.publish(topics.CAMERA_REAR_TILT, CameraTiltCmd(t, dep + PITCH_DEG))
         sim.data.time = t
         anim.update(t)
         rear.next_t = 0.0
         rear.step()
         truth = rear.last_truth
-        dist = float(np.hypot(*(xy - centre)))
         n_view = sum(r["nav"] and r["in_view"] for r in truth)
         n_occ = sum(r["nav"] and r["in_view"] and r["occluded"] for r in truth)
-        n_det = sum(r["nav"] and r["peak_dn"] >= DETECT_DN for r in truth)
+        n_det = sum(r["nav"] and not r["occluded"] and r["peak_on_dn"] >= DETECT_DN for r in truth)
         if a.headless and t >= next_save:
             next_save += a.every
             rows.append((t, name, dist, n_view, n_occ, n_det))

@@ -22,6 +22,7 @@ CAMERA_FRONT = "camera/front"
 THERMAL = "camera/thermal"  # ThermalFrame: downward LWIR camera, apparent temperature in K
 CAMERA_THERMAL = THERMAL
 CAMERA_REAR = "camera/rear"  # NirFrame: rear narrow-FOV NIR camera (base navigation lights)
+CAMERA_REAR_TILT = "camera/rear/tilt"  # CameraTiltCmd: onboard -> rear camera gimbal tilt
 FIX = "fix"
 POSE = "pose"
 HEALTH = "health"

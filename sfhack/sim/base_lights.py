@@ -24,7 +24,7 @@ from ..world.base import BaseLight, BaseLights, az_deg
 
 ON_RGBA = np.array([1.0, 0.25, 0.2, 1.0])
 OFF_RGBA = np.array([0.18, 0.06, 0.05, 1.0])
-GLOW_RGBA = np.array([1.0, 0.2, 0.15, 0.25])
+GLOW_RGBA = np.array([1.0, 0.2, 0.15, 0.3])
 
 
 @dataclass
@@ -80,10 +80,11 @@ class TrueLights:
             horiz = float(np.hypot(d[0], d[1]))
             gain = lt.lobe(az_deg(d[0], d[1]), math.degrees(math.atan2(d[2], max(horiz, 1e-6))))
             out.append({"id": lt.id, "kind": lt.ring, "xyz": p, "I": gain * self.on_fraction(lt, t_sim, exposure_s),
-                        "nav": True})
+                        "I_on": gain if self.enabled else 0.0, "nav": True})
         for s in self.strays:
             f = 1.0 if s.mode == "steady" else float(np.clip(0.65 + 0.35 * self.rng.normal(), 0.15, 1.3))
-            out.append({"id": s.id, "kind": s.kind, "xyz": s.enu, "I": s.intensity * f, "nav": False})
+            out.append({"id": s.id, "kind": s.kind, "xyz": s.enu, "I": s.intensity * f, "I_on": s.intensity * f,
+                        "nav": False})
         return out
 
 

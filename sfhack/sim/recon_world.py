@@ -85,7 +85,7 @@ class BaseDesign:
     pad_yaw_deg: float = 0.0  # takeoff heading, cw from north
     uma16_offset: tuple[float, float] = (-12.0, 8.0)  # mast position relative to A (m E, m N)
     uma16_h: float = 6.0
-    uma16_x_axis_az_deg: float = 90.0  # array x axis points east (array frame = ENU-aligned)
+    uma16_x_axis_az_deg: float = 0.0  # array x axis points north (= AcousticConfig.x_axis_bearing_deg default)
     survey_sigma_m: float = 0.05  # RTK survey of the posts (1 sigma per axis)
     survey_yaw_sigma_deg: float = 0.2
 
@@ -107,13 +107,13 @@ def design_base(terrain: Terrain, d: BaseDesign = BaseDesign()) -> tuple[BaseLig
         az = i * 360.0 / d.n_fence_lights  # F00 = north, then clockwise
         p = a + fence_point(d.fence_half_m, az)
         z = float(terrain.ground(p)[0]) + d.fence_light_h
-        lights.append(BaseLight(f"F{i:02d}", "fence", (p[0], p[1], z), order[i], aim_az_deg=az))
+        lights.append(BaseLight(f"F{i:02d}", "fence", (p[0], p[1], z), order[i], aim_az_deg=az, phase=(3 * i) % 8))
     outer_az = _outer_azimuths(terrain, d)
     for j, az in enumerate(outer_az):
         p = a + d.outer_r_m * _unit(az)
         z = float(terrain.ground(p)[0]) + d.outer_light_h
         lights.append(BaseLight(f"O{j:02d}", "outer", (p[0], p[1], z), order[d.n_fence_lights + j], aim_az_deg=az,
-                                beam_h_deg=60.0, intensity=2.0))
+                                beam_h_deg=60.0, intensity=2.0, phase=(3 * j + 1) % 8))
     pad_z = float(terrain.ground(a)[0])
     um = a + np.asarray(d.uma16_offset)
     info = BaseInfo(center_enu=(a[0], a[1], pad_z), pad_enu=(a[0], a[1], pad_z + 0.01), pad_yaw_deg=d.pad_yaw_deg,
@@ -169,8 +169,12 @@ def stray_lights(terrain: Terrain, rng: np.random.Generator, bearing_deg: float)
     lm = json.loads((terrain.dir / "landmarks.json").read_text(encoding="utf-8"))
     houses = [x for x in lm if x["type"] == "building" and 90.0 < np.hypot(*(np.array(x["centroid_enu"]) - terrain.a)) < 450.0]
     for h in [houses[i] for i in rng.permutation(len(houses))[:6]]:
-        x, y = h["centroid_enu"]
-        z = float(h.get("base_z", terrain.ground([x, y])[0])) + min(float(h.get("height", 6.0)), 6.0) - 1.0
+        c = np.asarray(h["centroid_enu"], float)
+        ring = np.asarray(h.get("footprint_enu") or [c], float)
+        v = ring[int(np.argmin(np.hypot(*(ring - terrain.a).T)))]  # corner towards the base
+        u = (v - c) / max(float(np.hypot(*(v - c))), 1e-6)
+        x, y = v + 2.0 * u  # yard lamp on a pole 2 m outside that corner
+        z = float(terrain.ground([x, y])[0]) + 4.0
         out.append({"id": f"S{len(out):02d}", "kind": "lamp", "enu": [round(x, 2), round(y, 2), round(z, 2)],
                     "intensity": float(rng.uniform(0.3, 1.2)), "mode": "steady"})
     r = min(800.0, terrain.max_range(bearing_deg, 80.0))
@@ -183,24 +187,26 @@ def stray_lights(terrain: Terrain, rng: np.random.Generator, bearing_deg: float)
 
 # ---------------------------------------------------------------------------------------------- targets
 # Parts in the object frame (x forward, y left, z up, origin on the ground): (type, half-size, centre, dT, rgba).
-# dT = apparent temperature above the air (K). Running engines 15-30 K above air on the hood / engine deck,
-# a recently driven body a few K, the windscreen reflects the cold clear sky (below air), clothed people ~8-10 K.
+# dT = apparent temperature above the air (K). Running engines 15-30 K above air on the hood / engine deck; a
+# vehicle that has been driving / idling for a while is heat-soaked: body 6-8 K above air (engine bay, exhaust,
+# occupants), so the whole silhouette stands out (recon-mission's detector wants >= air + 6 K over the body).
+# The windscreen reflects the cold clear sky (below air); clothed people ~8-10 K.
 
 OLIVE, DARK, GLASS = [0.29, 0.33, 0.22, 1], [0.12, 0.12, 0.12, 1], [0.15, 0.2, 0.25, 1]
 VEHICLES: dict[str, list[tuple[str, list[float], list[float], float, list[float]]]] = {
-    "truck": [("box", [3.0, 1.1, 0.45], [0.0, 0.0, 0.45], 6.0, DARK),       # wheels / chassis (warm brakes)
-              ("box", [2.2, 1.2, 1.1], [-0.9, 0.0, 1.9], 1.5, OLIVE),       # canvas cargo box
-              ("box", [0.8, 1.2, 1.0], [2.3, 0.0, 1.6], 4.0, OLIVE),        # cab
+    "truck": [("box", [3.0, 1.1, 0.45], [0.0, 0.0, 0.45], 9.0, DARK),       # wheels / chassis (warm brakes)
+              ("box", [2.2, 1.2, 1.1], [-0.9, 0.0, 1.9], 6.5, OLIVE),       # canvas cargo box (troops inside)
+              ("box", [0.8, 1.2, 1.0], [2.3, 0.0, 1.6], 8.0, OLIVE),        # cab
               ("box", [0.45, 1.05, 0.4], [3.0, 0.0, 0.95], 24.0, OLIVE),    # engine / grille
               ("cylinder", [0.07, 0.5], [1.6, -1.15, 2.2], 40.0, DARK)],    # exhaust stack
-    "car": [("box", [2.25, 0.9, 0.4], [0.0, 0.0, 0.6], 3.0, OLIVE),
+    "car": [("box", [2.25, 0.9, 0.4], [0.0, 0.0, 0.6], 7.5, OLIVE),
             ("box", [0.6, 0.85, 0.06], [1.6, 0.0, 1.05], 18.0, OLIVE),      # hood
             ("box", [0.35, 0.8, 0.25], [0.75, 0.0, 1.2], -4.0, GLASS),      # windscreen
-            ("box", [0.9, 0.8, 0.25], [-0.45, 0.0, 1.25], 1.0, OLIVE)],     # cabin roof
-    "apc": [("box", [3.3, 1.55, 0.4], [0.0, 0.0, 0.4], 8.0, DARK),          # tracks / wheels
-            ("box", [3.4, 1.5, 0.75], [0.0, 0.0, 1.45], 3.0, OLIVE),        # hull
+            ("box", [0.9, 0.8, 0.25], [-0.45, 0.0, 1.25], 6.5, OLIVE)],     # cabin roof
+    "apc": [("box", [3.3, 1.55, 0.4], [0.0, 0.0, 0.4], 10.0, DARK),         # tracks / wheels
+            ("box", [3.4, 1.5, 0.75], [0.0, 0.0, 1.45], 7.0, OLIVE),        # hull
             ("box", [1.0, 1.3, 0.06], [-2.2, 0.0, 2.25], 20.0, OLIVE),      # engine deck (rear)
-            ("cylinder", [0.7, 0.3], [0.6, 0.0, 2.5], 2.0, OLIVE)],         # turret
+            ("cylinder", [0.7, 0.3], [0.6, 0.0, 2.5], 6.0, OLIVE)],         # turret
 }
 PERSON = [("cylinder", [0.25, 0.75], [0.0, 0.0, 0.75], 8.5, DARK), ("sphere", [0.13], [0.0, 0.0, 1.62], 11.0, DARK)]
 DISTRACTORS: dict[str, list[tuple[str, list[float], list[float], float, list[float]]]] = {
@@ -280,7 +286,8 @@ def _obj(kind: str, cls: str, label: str, parts: list, pos: np.ndarray, yaw: flo
          air_K: float) -> dict[str, Any]:
     gz = float(terrain.ground(pos)[0])
     ps = [{"type": t, "size": s, "pos": c, "temp_K": round(air_K + dT, 2), "rgba": rgba} for t, s, c, dT, rgba in parts]
-    return {"kind": kind, "class": cls, "label": label, "pos": [round(float(pos[0]), 2), round(float(pos[1]), 2),
+    return {"kind": kind, "role": "distractor" if kind == "distractor" else "target", "class": cls, "name": label,
+            "label": label, "pos": [round(float(pos[0]), 2), round(float(pos[1]), 2),
             round(gz, 2)], "yaw_deg": round(float(yaw), 1), "temp_K": max(p["temp_K"] for p in ps), "parts": ps}
 
 

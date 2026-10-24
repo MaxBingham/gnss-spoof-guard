@@ -63,7 +63,7 @@ def decode_code(bits: str | list[int], codes: dict[str, str]) -> str | None:
 
 @dataclass
 class BaseLight:
-    id: str  # "F00".."F11" fence ring, "O00".. outer ring, counter-clockwise from east... see `ring_order`
+    id: str  # "F00".."F11" fence ring (F00 north, clockwise), "O00".. outer ring (clockwise)
     ring: str  # "fence" | "outer"
     enu: tuple[float, float, float]  # emitter position (m, mission ENU; z absolute, datum = ground under A)
     code: str  # canonical 8-bit blink code, "1" = on
@@ -72,9 +72,11 @@ class BaseLight:
     beam_h_deg: float = 70.0  # horizontal half width (1/e^2 of the intensity)
     beam_v_deg: float = 25.0  # vertical half width (1/e^2)
     intensity: float = 1.0  # relative radiant intensity on the beam axis (1 = a 10 W 850 nm LED lamp)
+    phase: int = 0  # the code starts this many bits late on the base clock (lights are staggered: canonical codes
+    #                 all begin with 0s, so in phase every light would be dark at the same time)
 
     def is_on(self, t_base: float, bit_s: float = BIT_S) -> bool:
-        k = int(math.floor(t_base / bit_s)) % len(self.code)
+        k = (int(math.floor(t_base / bit_s)) - self.phase) % len(self.code)
         return self.code[k] == "1"
 
     def lobe(self, az_deg: float, el_deg: float) -> float:

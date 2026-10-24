@@ -55,8 +55,8 @@ def main():
                     help="absolute onset level, 1-3.5 kHz band RMS (default 1.5e-3; mics down 1.5e-4)")
     ap.add_argument("--max-s", type=float, default=None, help="stop after this many seconds of audio")
     ap.add_argument("--no-record", action="store_true", help="live: do not save the raw 16-ch audio")
-    ap.add_argument("--max-el", type=float, default=32.0,
-                    help="ignore sounds from higher than this (deg): typing at the laptop arrives at 35-50, claps 10-30")
+    ap.add_argument("--max-el", type=float, default=38.0,
+                    help="ignore sounds from higher than this (deg): typing at the laptop arrives at 40-65, claps 5-33")
     ap.add_argument("--udp", type=str, default=None,
                     help="host[:port] of the sim (demos/50_base_3d.py, port 5005): send every new bearing")
     ap.add_argument("--calibrate", action="store_true",

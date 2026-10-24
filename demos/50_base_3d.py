@@ -365,6 +365,18 @@ def draw(viewer, d, mission, pending, trail):
     add_sphere(scn, p + [0, 0, 1.2], 1.0, [1.0, 1.0, 0.1, 0.5])  # halo so the small X2 reads from far away
     for i in range(1, len(trail)):
         add_line(scn, trail[i - 1], trail[i], 0.25, [0.2, 0.9, 1.0, 0.8])
+    add_compass(scn)
+
+
+def add_compass(scn, r0: float = 70.0, r1: float = 95.0) -> None:
+    """Ticks at 0/90/180/270 deg around the mast (0 = north = the array's reference mark, white)."""
+    for az in (0, 90, 180, 270):
+        u = az_to_dir(az)
+        n = scn.ngeom
+        add_line(scn, [*(u * r0), 0.5], [*(u * r1), 0.5], 1.2 if az == 0 else 0.7,
+                 [1.0, 1.0, 1.0, 0.95] if az == 0 else [0.3, 0.3, 0.3, 0.9])
+        if scn.ngeom > n:
+            scn.geoms[n].label = f"{az} deg" + (" (N)" if az == 0 else "")
 
 
 def hud_text(d, mission, pending) -> str:
@@ -385,7 +397,7 @@ def run_viewer(m, d, args):
     chase = False
     with mujoco.viewer.launch_passive(m, d, key_callback=keys.append) as viewer:
         viewer.cam.lookat[:] = [0, 0, 0]
-        viewer.cam.distance, viewer.cam.elevation, viewer.cam.azimuth = 170, -32, -60
+        viewer.cam.distance, viewer.cam.elevation, viewer.cam.azimuth = 200, -55, 90  # looking north: 0 deg at the top
         last_print = ""
         while viewer.is_running():
             t0 = time.time()
@@ -411,7 +423,7 @@ def run_viewer(m, d, args):
                     else:
                         viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
                         viewer.cam.lookat[:] = [0, 0, 0]
-                        viewer.cam.distance = 170
+                        viewer.cam.distance, viewer.cam.elevation, viewer.cam.azimuth = 200, -55, 90
                 elif k == 259:
                     mujoco.mj_resetData(m, d)
                     mission, trail = Mission(args.range), []

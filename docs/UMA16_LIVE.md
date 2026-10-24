@@ -24,7 +24,7 @@ scripts open it at the rate it accepts (console: `@ 44100 Hz`) and run the pipel
 
 The engine tracker needs ~3 s of steady harmonics; a clap is a 10 ms burst. `demos/44_uma16_clap.py`
 (`sfhack/acoustic/clap.py`) detects claps (1-3.5 kHz onset), runs the same SRP-PHAT on each and writes
-`bearing.json` (label `clap`) after every clap: circular mean of the last 20 s, sigma from the spread.
+`bearing.json` (label `clap`) after every clap: circular median of the claps of the last 6 s (one echo or stray sound cannot pull it), sigma from the spread.
 
 ```
 python demos/44_uma16_clap.py --north 0 --truth-az <sim bearing of B>   # calibrate: 3-5 claps from the B corner

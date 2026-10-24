@@ -4,7 +4,8 @@ steady harmonics, a clap is a 10 ms broadband burst).
 A clap is an onset: the 1-3.5 kHz band RMS of a block jumps `threshold_ratio` above a slow noise tracker. The
 window around the loudest sample goes through the same SRP-PHAT as the engine path, with a clap band (above
 ~4.1 kHz the 42 mm pitch aliases) and a learned noise floor so broadband bins keep full weight. Claps within
-`memory_s` are averaged (circular mean) into one bearing; its sigma shrinks with the spread and count.
+`memory_s` are combined (circular mean, circular median from 3 on) into one bearing; its sigma shrinks with
+the spread and count.
 """
 from __future__ import annotations
 
@@ -27,10 +28,10 @@ class ClapConfig:
     fmax: float = 3500.0
     threshold_ratio: float = 8.0       # onset: band RMS over the noise tracker
     min_rms: float = 1.5e-3            # absolute floor (full scale 1.0) so a quiet room does not trigger on ticks
-    refractory_s: float = 0.45         # one clap, one fix (room echoes ring for a few hundred ms)
+    refractory_s: float = 0.8          # one clap, one fix (a wall echo 0.5 s later came in as a second clap)
     warmup_s: float = 1.0              # learn the noise floor first
     window_s: float = 0.05             # DOA window centred on the clap peak
-    memory_s: float = 20.0             # claps older than this no longer count toward the bearing
+    memory_s: float = 6.0              # claps older than this no longer count (a new spot takes over quickly)
     min_peak: float = 0.15             # SRP peak below this = no coherent wavefront (handling noise, overload)
     sigma_floor_deg: float = 5.0       # array + calibration error that averaging does not remove
 
@@ -98,8 +99,14 @@ class ClapBearing:
         recent = [k for k in self.claps if t_now - k.t <= c.memory_s]
         if not recent:
             return None
-        az, std = circ_mean_std_deg(np.array([k.compass_az_deg for k in recent]))
+        a = np.array([k.compass_az_deg for k in recent])
         n = len(recent)
+        az, std = circ_mean_std_deg(a)
+        if n >= 3:
+            # circular median (the clap closest to all others): an echo or a stray sound cannot drag the bearing
+            dev = np.abs((a[:, None] - a[None, :] + 180.0) % 360.0 - 180.0)
+            az = float(a[np.argmin(dev.sum(axis=1))])
+            std = 1.4826 * float(np.median(np.abs((a - az + 180.0) % 360.0 - 180.0)))
         # one clap: no spread to measure, assume 10 deg; more: standard error of the mean, never below the floor
         sigma = float(np.hypot(c.sigma_floor_deg, (std if n > 1 else 10.0) / np.sqrt(n)))
         el = float(np.mean([k.el_deg for k in recent]))

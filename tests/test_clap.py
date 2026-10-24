@@ -53,6 +53,21 @@ def test_noise_alone_gives_nothing():
     assert claps == [] and b is None
 
 
+def test_one_stray_clap_does_not_pull_the_bearing():
+    mount = Mounting(0.0, True)
+    det = ClapBearing(ClapConfig(fs=FS), mount)
+    x = _claps(135.0, [1.5, 2.5, 3.5], mount, duration_s=6.0) + _claps(250.0, [4.5], mount, duration_s=6.0, seed=1)
+    claps, b = _run(x, det)
+    assert len(claps) == 4
+    assert abs(angle_diff_deg(b.az_deg, 135.0)) < 3.0
+
+
+def test_echo_half_a_second_later_is_one_clap():
+    mount = Mounting(0.0, True)
+    claps, _ = _run(_claps(90.0, [2.0, 2.5], mount), ClapBearing(ClapConfig(fs=FS), mount))
+    assert len(claps) == 1
+
+
 def test_old_claps_are_forgotten():
     mount = Mounting(0.0, True)
     det = ClapBearing(ClapConfig(fs=FS, memory_s=2.0), mount)

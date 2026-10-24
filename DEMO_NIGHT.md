@@ -64,6 +64,15 @@ What to point at:
 - Result (fill from the final table): "<X>/20 flights end within 5 m of B in Berkeley, <Y>/20 in the
   Ukraine mission, GNSS off from 20 % of the route."
 
-Honest limits (if asked): simulated thermal world and camera; the contrast on mild or cloudy nights is lower
-(real ASTER night data over Berkeley: road cells only ~0.1-0.7 K warmer at 90 m; see night-research), clear
-skies on only ~1/3 of Ukrainian July nights; unpaved roads are not warm; landing at B is tomorrow's work.
+Real-data backing (night-research, branch night-research, docs/night_research/): ASTER satellite night
+thermal (90 m, ~23:00) shows the paved road grid on hot summer nights (Fresno, 6 nights Jun-Jul; Davis July
+23:13: town +3.2 K over the fields); unpaved roads are NOT warm (Davis, Vinnytsia: 0-0.9 K cooler than road-free
+cells), which backs the paved-only road mask; matching each night image to the road map recovered the
+satellite's own 80-310 m geolocation error every time. Slide figure:
+`docs/night_research/aster_night_fresno_2003-07-28.png`.
+
+Honest limits (if asked): simulated thermal world and camera; hot day = the favourable case (our scenario);
+mild nights have less contrast (ASTER over Berkeley in spring: road cells only ~0.1-0.7 K warmer at 90 m) -> the
+eval's `low_contrast` row (0.4x) stands for a mild spring / autumn night; clear skies on only ~1/3 of Ukrainian
+July nights; without thermal fixes for long stretches the IMU + TRN estimate diverges in this sim (no rotor-drag
+model); landing at B is tomorrow's work.

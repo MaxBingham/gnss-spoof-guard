@@ -2,7 +2,8 @@
 steady harmonics, a clap is a 10 ms broadband burst).
 
 A clap is an onset: the 1-3.5 kHz band RMS of a block jumps `threshold_ratio` above a slow noise tracker. The
-window around the loudest sample goes through the same SRP-PHAT as the engine path, with a clap band (above
+first `direct_s` after the onset (found to the millisecond, before echoes off the table, laptop and walls come in)
+goes through the same SRP-PHAT as the engine path, with a clap band (above
 ~4.1 kHz the 42 mm pitch aliases) and a learned noise floor so broadband bins keep full weight. Claps within
 `memory_s` are combined (circular mean, circular median from 3 on) into one bearing; its sigma shrinks with
 the spread and count.
@@ -30,7 +31,10 @@ class ClapConfig:
     min_rms: float = 1.5e-3            # absolute floor (full scale 1.0) so a quiet room does not trigger on ticks
     refractory_s: float = 0.8          # one clap, one fix (a wall echo 0.5 s later came in as a second clap)
     warmup_s: float = 1.0              # learn the noise floor first
-    window_s: float = 0.05             # DOA window centred on the clap peak
+    window_s: float = 0.05             # DOA window centred on the clap peak (direct_s = 0)
+    direct_s: float = 0.004            # > 0: DOA from only this much after the onset, before the echoes arrive
+                                       # (demos/45_clap_bench.py: 3-5 ms all within 5 deg, 6 ms+ catches echoes)
+    lead_s: float = 0.001              # direct window starts this much before the detected onset
     memory_s: float = 6.0              # claps older than this no longer count (a new spot takes over quickly)
     min_peak: float = 0.15             # SRP peak below this = no coherent wavefront (handling noise, overload)
     sigma_floor_deg: float = 5.0       # array + calibration error that averaging does not remove
@@ -56,6 +60,8 @@ class ClapBearing:
         self.n_seen = 0
         self.last_clap_t = -1e9
         self.prev = np.zeros((0, 16))
+        self.prev_band = np.zeros((0, 16))
+        self.pending: float | None = None  # onset seen, direct window runs past the block: finish on the next one
         self.quiet: list[np.ndarray] = []
         self.claps: list[Clap] = []
 
@@ -67,9 +73,14 @@ class ClapBearing:
         band, self.zi = sosfilt(self.sos, block, axis=0, zi=self.zi)
         rms = float(np.sqrt(np.mean(band ** 2)))
         self.n_seen += len(block)
-        buf = np.concatenate([self.prev, block])[-(len(block) + int(c.window_s * c.fs)):]
-        self.prev = buf
+        keep = len(block) + int(max(c.window_s, 2 * c.direct_s + 0.02) * c.fs)
+        buf = np.concatenate([self.prev, block])[-keep:]
+        bbuf = np.concatenate([self.prev_band, band])[-keep:]
+        self.prev, self.prev_band = buf, bbuf
 
+        if self.pending is not None:
+            onset_rms, self.pending = self.pending, None
+            return self._locate(buf, bbuf, t_end, onset_rms, len(block))
         warm = self.n_seen < c.warmup_s * c.fs
         if self.noise is None:
             self.noise = rms
@@ -81,18 +92,44 @@ class ClapBearing:
             if warm or self.srp.noise_psd is None:
                 self.srp.learn_noise(np.concatenate(self.quiet))
             return None
-
-        k = int(np.argmax(np.abs(buf).sum(axis=1)))
-        n = int(c.window_s * c.fs)
-        s = int(np.clip(k - n // 2, 0, max(len(buf) - n, 0)))
-        doa = self.srp.estimate(buf[s:s + n])
         self.last_clap_t = t_end
+        return self._locate(buf, bbuf, t_end, rms, None)
+
+    def _locate(self, buf, bbuf, t_end, rms, last_block) -> Clap | None:
+        c = self.cfg
+        if c.direct_s > 0:
+            s, n = self._direct_window(bbuf, last_block)
+            if s + n > len(buf):
+                self.pending = rms
+                return None
+            seg = buf[s:s + n]
+            nfft = self.srp.cfg.nfft
+            pad = (nfft - n) // 2
+            doa = self.srp.estimate(np.pad(seg, ((pad, nfft - n - pad), (0, 0))), noise_scale=n / nfft)
+            k = s + int(c.lead_s * c.fs)
+        else:
+            k = int(np.argmax(np.abs(buf).sum(axis=1)))
+            n = int(c.window_s * c.fs)
+            s = int(np.clip(k - n // 2, 0, max(len(buf) - n, 0)))
+            doa = self.srp.estimate(buf[s:s + n])
         if doa.peak < c.min_peak:
             return None
-        t_peak = t_end - (len(buf) - k) / c.fs
-        clap = Clap(t_peak, self.mount.to_compass(doa.array_az_deg), doa.array_el_deg, doa, rms)
+        clap = Clap(t_end - (len(buf) - k) / c.fs, self.mount.to_compass(doa.array_az_deg), doa.array_el_deg,
+                    doa, rms)
         self.claps.append(clap)
         return clap
+
+    def _direct_window(self, bbuf, last_block) -> tuple[int, int]:
+        """Start and length of the direct-sound window: the first 1 ms frame of the band energy that rises
+        clearly over the room, minus `lead_s`. On a deferred onset only the part before the new block counts."""
+        c = self.cfg
+        fr = max(int(c.fs / 1000), 1)
+        e = (bbuf[: len(bbuf) // fr * fr] ** 2).mean(axis=1).reshape(-1, fr).mean(axis=1)
+        search = e if last_block is None else e[: max((len(bbuf) - last_block) // fr, 1)]
+        thr = max(0.1 * float(search.max()), 10.0 * (self.noise or 0.0) ** 2)
+        i = int(np.argmax(search > thr))
+        n = int(c.direct_s * c.fs)
+        return max(i * fr - int(c.lead_s * c.fs), 0), n
 
     def bearing(self, t_now: float) -> BearingEstimate | None:
         c = self.cfg

@@ -4,7 +4,7 @@ import numpy as np
 from sfhack.acoustic.array import Mounting
 from sfhack.acoustic.clap import ClapBearing, ClapConfig
 from sfhack.acoustic.doa import angle_diff_deg
-from sfhack.acoustic.synth import plane_wave
+from sfhack.acoustic.synth import clap_scene, plane_wave
 
 FS = 44100
 
@@ -66,6 +66,25 @@ def test_echo_half_a_second_later_is_one_clap():
     mount = Mounting(0.0, True)
     claps, _ = _run(_claps(90.0, [2.0, 2.5], mount), ClapBearing(ClapConfig(fs=FS), mount))
     assert len(claps) == 1
+
+
+def test_every_single_clap_right_despite_echoes():
+    x, truth = clap_scene(seed=0, fs=FS)
+
+    def errors(cfg):
+        claps, _ = _run(x, ClapBearing(cfg, Mounting(0.0, True)))
+        assert len(claps) == len(truth)
+        return np.array([abs(angle_diff_deg(k.doa.array_az_deg, az)) for k, (_, az) in zip(claps, truth)])
+
+    assert errors(ClapConfig(fs=FS, threshold_ratio=3.0, min_rms=1.5e-4)).max() < 5.0
+    # the 50 ms window around the loudest sample locks onto an echo for some of them
+    assert (errors(ClapConfig(fs=FS, threshold_ratio=3.0, min_rms=1.5e-4, direct_s=0.0)) > 30.0).sum() >= 2
+
+
+def test_onset_at_the_end_of_a_block_waits_for_the_next():
+    mount = Mounting(0.0, True)
+    claps, _ = _run(_claps(135.0, [2.099], mount), ClapBearing(ClapConfig(fs=FS), mount))
+    assert len(claps) == 1 and abs(angle_diff_deg(claps[0].compass_az_deg, 135.0)) < 3.0
 
 
 def test_old_claps_are_forgotten():

@@ -48,6 +48,37 @@ def plane_wave(mono: np.ndarray, array_az_deg: float, array_el_deg: float, fs: i
     return np.fft.irfft(Y, n=n, axis=0)[pad:pad + len(mono)]
 
 
+def clap_scene(seed: int = 0, level: float = 0.005, fs: int = 44100, n_echoes: int = 4,
+               noise: float = 1.5e-4) -> tuple[np.ndarray, list[tuple[float, float]]]:
+    """(audio (n, 16), [(t_clap, true_array_az)]): 8 directions x 3 claps, 1.6 s apart. Each clap has a direct
+    path and `n_echoes` echoes 1.5-20 ms later (0.4-1x as loud) from random directions: laptop, walls, cardboard.
+    Default levels are the mics-down stage: the room ~5e-5 band RMS, a clap block ~5x that."""
+    rng = np.random.default_rng(seed)
+    truth = []
+    t = 1.5
+    for az in np.arange(0.0, 360.0, 45.0) + rng.uniform(-10, 10):
+        for _ in range(3):
+            truth.append((t, float(az % 360.0)))
+            t += 1.6
+    x = np.zeros((int((t + 1.0) * fs), 16))
+    n = int(0.03 * fs)
+    for t0, az in truth:
+        burst = level * rng.standard_normal(n) * np.exp(-np.arange(n) / (0.004 * fs))
+        paths = [(0.0, 1.0, az, rng.uniform(5, 30))]
+        paths += [(rng.uniform(0.0015, 0.020), rng.uniform(0.4, 1.0), rng.uniform(0, 360), rng.uniform(0, 40))
+                  for _ in range(n_echoes)]
+        seg = np.zeros((n + int(0.025 * fs), 16))
+        for d, g, a, el in paths:
+            mono = np.zeros(len(seg))
+            kd = int(d * fs)
+            mono[kd:kd + n] = g * burst
+            seg += plane_wave(mono, a, el, fs=fs)
+        k0 = int(t0 * fs)
+        x[k0:k0 + len(seg)] += seg
+    x += noise * rng.standard_normal(x.shape)
+    return x, truth
+
+
 def array_recording(array_az_deg: float, array_el_deg: float, duration_s: float = 10.0, snr_db: float = 10.0,
                     onset_s: float = 0.0, fs: int = FS, seed: int = 0, mono: np.ndarray | None = None,
                     noise: np.ndarray | None = None) -> np.ndarray:

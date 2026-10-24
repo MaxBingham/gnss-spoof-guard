@@ -30,6 +30,7 @@ import os
 import queue
 import sys
 import time
+import wave
 from datetime import datetime
 from pathlib import Path
 
@@ -134,8 +135,15 @@ class LiveSource:
         self.n_read = 0
         self.dropped = 0
         self.status_msgs = 0
-        self.rec = [] if record_path else None
+        # Written as it comes in (wave re-patches the header on every write): a kill keeps the audio so far.
+        self.rec = None
         self.record_path = record_path
+        self.n_rec = 0
+        if record_path:
+            self.rec = wave.open(str(record_path), "wb")
+            self.rec.setnchannels(N_MICS)
+            self.rec.setsampwidth(2)
+            self.rec.setframerate(self.fs)
         self.paused = False
 
         def cb(indata, frames, time_info, status):
@@ -151,7 +159,8 @@ class LiveSource:
         while len(self.buf) < self.window:
             blk = self.q.get(timeout=5.0)
             if self.rec is not None:
-                self.rec.append(blk)
+                self.rec.writeframes(np.clip(blk * 32767, -32768, 32767).astype("<i2").tobytes())
+                self.n_rec += len(blk)
             self.buf = np.concatenate([self.buf, blk])
         # Processing fell behind: drop whole windows, keep the newest (live view stays live).
         while len(self.buf) >= 3 * self.window:
@@ -167,10 +176,10 @@ class LiveSource:
     def close(self):
         self.stream.stop()
         self.stream.close()
-        if self.rec:
-            x = np.concatenate(self.rec)
-            wavfile.write(self.record_path, self.fs, np.clip(x * 32767, -32768, 32767).astype(np.int16))
-            print(f"raw audio: {self.record_path} ({len(x) / self.fs:.0f} s)")
+        if self.rec is not None:
+            self.rec.close()
+            self.rec = None
+            print(f"raw audio: {self.record_path} ({self.n_rec / self.fs:.0f} s)")
 
 
 # --------------------------------------------------------------------------------------------- view

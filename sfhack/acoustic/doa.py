@@ -81,20 +81,20 @@ class SrpPhat:
         X = self.stft(x)
         self.noise_psd = np.median((np.abs(X) ** 2).mean(axis=2), axis=0)
 
-    def bin_weights(self, X: np.ndarray) -> np.ndarray:
+    def bin_weights(self, X: np.ndarray, noise_scale: float = 1.0) -> np.ndarray:
         p = (np.abs(X) ** 2).mean(axis=(0, 2))
         w = self.band.astype(float)
         # Without a learned floor: prominence over a running median across frequency (keeps tones / harmonics).
-        floor = self.noise_psd if self.noise_psd is not None else median_filter(p, 63)
+        floor = self.noise_psd * noise_scale if self.noise_psd is not None else median_filter(p, 63)
         w *= np.clip(1.0 - 2.0 * floor / np.maximum(p, 1e-30), 0.0, 1.0)
         if w.sum() < 1e-6:          # nothing above the floor: plain PHAT over the band
             w = self.band.astype(float)
         return w
 
     # -- DOA ------------------------------------------------------------------------------------------
-    def gcc(self, X: np.ndarray) -> np.ndarray:
+    def gcc(self, X: np.ndarray, noise_scale: float = 1.0) -> np.ndarray:
         """Averaged, upsampled GCC-PHAT per pair: (n_pairs, 2 * max_lag + 1)."""
-        w = self.bin_weights(X)
+        w = self.bin_weights(X, noise_scale)
         i, j = self.pairs[:, 0], self.pairs[:, 1]
         cross = X[:, :, i] * np.conj(X[:, :, j])                     # (frames, bins, pairs)
         cross = (cross / np.maximum(np.abs(cross), 1e-30)).mean(axis=0) * w[:, None]
@@ -102,9 +102,10 @@ class SrpPhat:
         r = np.concatenate([r[-self.max_lag:], r[:self.max_lag + 1]], axis=0)  # lags -max..+max
         return r.T / max(w.sum(), 1e-12) * (self.cfg.nfft / 2)
 
-    def estimate(self, x: np.ndarray) -> DoaResult:
+    def estimate(self, x: np.ndarray, noise_scale: float = 1.0) -> DoaResult:
+        """`noise_scale` < 1 when x is a short burst zero-padded into a frame (less noise energy per bin)."""
         X = self.stft(x)
-        g = self.gcc(X)
+        g = self.gcc(X, noise_scale)
         n_pairs = len(self.pairs)
         srp = g[np.arange(n_pairs)[None, None, :], self.lag_idx].sum(axis=2) / n_pairs  # (n_el, n_az)
         k = np.unravel_index(np.argmax(srp), srp.shape)

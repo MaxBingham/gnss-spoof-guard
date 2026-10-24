@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import signal
 import socket
 import sys
 from datetime import datetime
@@ -107,6 +108,7 @@ def main():
     print(f"session: {session}\nmounting: +x -> {mount.x_axis_bearing_deg:.1f} deg, mics {'up' if mount.mics_up else 'down'}"
           f"\nquiet for {ccfg.warmup_s:.0f} s, then clap from point B")
 
+    signal.signal(signal.SIGTERM, signal.default_int_handler)   # systemctl stop: same clean exit as Ctrl-C
     errs, b = [], None
     log = open(session / "claps.jsonl", "w", encoding="utf-8")
     try:

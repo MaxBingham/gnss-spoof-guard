@@ -302,8 +302,8 @@ class TrackScenario:
                 ev.end_t = t
             return
         self._track_since = (self._track_since or t) if p.state == "TRACKING" else None
-        if (len(self.losses) < self.forced_losses and self._track_since is not None and t - self._track_since > 15.0
-                and (ev is None or t - ev.end_t > 15.0)):
+        if (len(self.losses) < self.forced_losses and self._track_since is not None and t - self._track_since > 10.0
+                and (ev is None or t - ev.end_t > 10.0)):
             turn = float(self.loss_rng.choice([-1.0, 1.0])) * self.turn_deg
             self.steer_offset += turn
             self._hide(True)

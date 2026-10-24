@@ -196,9 +196,13 @@ def search_scenes(f: Fetcher, bbox: BBox) -> list[dict[str, Any]]:
 
 
 def _scale_offset(item: dict[str, Any], asset: str) -> tuple[float, float]:
-    """DN -> BOA reflectance: the asset's STAC raster:bands scale / offset (Earth Search v1 says 1e-4 / -0.1
-    for baseline >= 04.00), else the ESA convention by processing baseline."""
+    """DN -> BOA reflectance. Earth Search `sentinel-2-l2a` items with `earthsearch:boa_offset_applied` already
+    had the -1000 removed (dark forest red DNs ~80-120 on S2C_34UFV_20250828), although their raster:bands still
+    say offset -0.1: applying it zeroed the red band. Else the asset's raster:bands scale / offset, else ESA's
+    convention by processing baseline."""
     rb = (item["assets"][asset].get("raster:bands") or [{}])[0]
+    if item["properties"].get("earthsearch:boa_offset_applied"):
+        return float(rb.get("scale", 1e-4)), 0.0
     if "scale" in rb:
         return float(rb["scale"]), float(rb.get("offset", 0.0))
     try:

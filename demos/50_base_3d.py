@@ -484,15 +484,13 @@ def draw(viewer, d, mission, pending, trail):
     scn = viewer.user_scn
     scn.ngeom = 0
     draw_markers(scn, d, mission, pending, trail, cam_pos(viewer.cam))
+
+
+def hud_text(d, mission, pending) -> str:
     p = d.qpos[0:3]
-    try:
-        info = (f"State: {mission.state}\nBearing: {('%.0f deg' % mission.bearing) if mission.bearing is not None else '-'}"
-                f"   (pending {pending:.0f})\nDistance from base: {np.linalg.norm(p[:2]):.0f} m   "
-                f"Alt: {p[2] - mission.ground(p[0], p[1]):.0f} m AGL")
-        viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_TOPLEFT,
-                          "UMA-16 -> recon drone", info))
-    except Exception:  # noqa: BLE001  (older viewer without set_texts)
-        pass
+    b = f"{mission.bearing:.0f} deg" if mission.bearing is not None else "-"
+    return (f"State: {mission.state}\nBearing: {b}   (pending {pending:.0f}, ENTER to launch)\n"
+            f"Distance from base: {np.linalg.norm(p[:2]):.0f} m   Alt: {p[2] - mission.ground(p[0], p[1]):.0f} m AGL")
 
 
 def set_overview(cam, info):
@@ -554,6 +552,13 @@ def run_viewer(m, d, info, args):
                     trail.append(d.qpos[0:3].copy())
                     trail = trail[-400:]
                 draw(viewer, d, mission, pending, trail)
+                hud = hud_text(d, mission, pending)
+            # set_texts takes the viewer's lock itself: calling it inside `with viewer.lock()` deadlocks
+            try:
+                viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                                  "UMA-16 -> recon drone", hud))
+            except AttributeError:  # older viewer without set_texts
+                pass
             if mission.log and mission.log[-1] != last_print:
                 last_print = mission.log[-1]
                 print(last_print)

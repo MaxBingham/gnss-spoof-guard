@@ -60,6 +60,9 @@ def main() -> None:
                 E.append(e)
                 S.append(s)
             E, S = np.array(E), np.array(S)
+            alive = np.isfinite(E).sum(0) >= max(1, len(runs) / 2)  # flights end at B: plot while half still fly
+            E[:, ~alive] = np.nan
+            S[:, ~alive] = np.nan
             with np.errstate(all="ignore"):
                 med = np.nanmedian(E, 0)
                 lo, hi = np.nanpercentile(E, 25, 0), np.nanpercentile(E, 75, 0)
@@ -70,14 +73,16 @@ def main() -> None:
             fe = np.array([r["final_err"] for r in runs])
             bx.scatter(np.full(len(fe), k) + np.random.default_rng(k).uniform(-0.15, 0.15, len(fe)), fe, s=16, color=col)
             bx.plot([k - 0.3, k + 0.3], [np.median(fe)] * 2, color=col, lw=2)
-        ax.set_yscale("symlog", linthresh=5)
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=0.1)
         ax.set_xlabel("seconds since GNSS off")
         ax.set_ylabel("|estimate - truth| (m); dashed: claimed 2-sigma")
-        ax.set_title(f"{mission}: position error after GNSS loss (median, 25-75 %)")
+        ax.set_title(f"{mission}: position error after GNSS loss (median, 25-75 %, while >= half still fly)")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8, frameon=False)
         bx.axhline(5.0, color="#888", lw=1, ls=":")
-        bx.set_yscale("symlog", linthresh=5)
+        bx.set_yscale("log")
+        bx.set_ylim(bottom=0.05)
         bx.set_xticks(range(len(tags)), labels, rotation=30, ha="right", fontsize=8)
         bx.set_ylabel("error at B (m)")
         bx.set_title("per seed; dotted: 5 m")

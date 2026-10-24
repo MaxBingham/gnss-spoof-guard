@@ -3,23 +3,32 @@
     uv run python demos/51_counter_drone.py                        # viewer; bearings over UDP 5005 or the keys
     uv run python demos/51_counter_drone.py --headless --walk 0:0,40:0,130:90   # scripted walk, print the result
     uv run python scripts/fake_walk.py --from 0 --to 90 --rate 1   # a fake speaker walk over UDP, no array needed
+    uv run python demos/51_counter_drone.py --headless --walk-noise 6 --outliers 0.05 --dropouts 2:20   # messy
+    uv run python demos/51_counter_drone.py --replay track.jsonl [--headless]   # a recorded listener / clap log
 
 Stage -> sim: a person walks around the array with a speaker playing drone sound. The INTRUDER (red quad) sits
-`--range` m out (default 500) and `--intruder-agl` m above the terrain on the bearing of that sound, smoothed and
-speed-limited (`--intruder-speed`, 20 m/s: at 500 m one degree of walking is 8.7 m, so walk about 1 deg/s).
+`--range` m out (default 500; `--range-from-level`: louder = closer, 150-1200 m) and `--intruder-agl` m above the
+terrain on the bearing of that sound, smoothed and speed-limited (`--intruder-speed`, 20 m/s, accelerations
+<= 4 m/s^2: at 500 m one degree of walking is 8.7 m, so walk about 1 deg/s). Silent: it hovers.
+
+Audio in (UDP 5005, the 45 listener's contract): BearingEstimate JSON + az_rate_dps, level_db, seq, detected=true;
+one {"detected": false} on loss (= silent at once); plain BearingEstimate JSON (the clap listener) and bare numbers
+too. Out-of-order seq is dropped. Single bearings > max(3 sigma, 30 deg) off the smoothed bearing are gated unless
+they persist 1 s (then the bearing jumps there).
 
 Our drone knows only what the array sends (bearing + sigma, about 5 Hz), not the range:
   WAIT -> TAKEOFF (sound heard for 1.5 s) -> INTERCEPT: fly out along the audio ray at 15 m/s, leading the
   bearing rate, the gimbal camera looking along the ray -> TRACK: the camera confirmed the intruder (3 hits in
   2 s); hold station 40 m short of it and keep it centred -> LOST (no hit for 3 s): back to the audio ray.
-  No sound and no visual for 15 s, or 1500 m out without a find -> RETURN -> DESCEND -> LANDED.
+  Short dropouts: keep flying the last bearing + rate (extrapolated up to 3 s).
+  No sound for 15 s, or 1500 m out (never further) -> RETURN -> DESCEND -> LANDED.
 
 Camera (a simulated detector, not a neural net): 20 x 15 deg zoom on a gimbal, 5 frames/s. A frame detects the
 intruder when it is inside the field of view, a ray from the camera reaches it (terrain, trees and buildings
 occlude), and then with probability 0 at 3 px rising to 0.9 at 8 px of apparent size (1.2 m span: 8 px at
 ~280 m). Range from the apparent size (+-5 %), direction from the pixel (+-0.3 deg).
 
-Keys: LEFT / RIGHT move a manual sound bearing by 5 deg and count as hearing it (no array needed), S stops the
+Keys: LEFT / RIGHT move a manual sound bearing by 5 deg and count as hearing it (no array needed), S silences the
 manual sound, C overview / chase camera, V hides the camera picture, 1 / 2 / 4 sim speed, BACKSPACE resets.
 """
 from __future__ import annotations
@@ -59,6 +68,13 @@ HEAR_S = 1.5               # launch after hearing the sound this long
 AUDIO_TIMEOUT = 3.0        # no bearing for this long = not hearing
 GIVE_UP_S = 15.0
 MSG_DT = 0.2               # manual / scripted bearings at 5 Hz
+OUTLIER_DEG = 30.0         # gate: a bearing > max(3 sigma, this) off the smoothed one is an outlier ...
+OUTLIER_PERSIST_S = 1.0    # ... unless such bearings agree with each other for this long (then jump there)
+RATE_MAX = 10.0            # deg/s, clip on the bearing rate
+EXTRAP_S = 3.0             # in a dropout, extrapolate the bearing with the rate for at most this long
+INTRUDER_ACC = 4.0         # m/s^2
+INTRUDER_K = 0.2           # 1/s, intruder velocity = K * distance to its goal + bearing-rate feed-forward
+INTRUDER_AB = (0.06, 0.0019)  # alpha-beta gains on the 5 Hz bearings (critically damped, ~3 s)
 
 
 def adiff(a: float, b: float) -> float:
@@ -69,66 +85,229 @@ def blend_deg(a: float, b: float, k: float) -> float:
     return (a + k * adiff(b, a)) % 360.0
 
 
+def circmean_deg(angles) -> float:
+    r = np.radians(np.asarray(angles, float))
+    return math.degrees(math.atan2(float(np.mean(np.sin(r))), float(np.mean(np.cos(r))))) % 360.0
+
+
+def _num(v) -> float | None:
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def parse_message(txt: str) -> dict | None:
+    """One listener message -> {"detected": True, "az", "sigma", "rate", "level_db", "confidence", "el", "seq", "t"}
+    or {"detected": False, "seq", "t"}; None if unusable. Accepts the 45 listener's contract, plain BearingEstimate
+    JSON (clap listener), clap log lines ("compass_az") and a bare number."""
+    txt = txt.strip()
+    if not txt:
+        return None
+    if not txt.startswith("{"):
+        az = _num(txt.split()[0])
+        return None if az is None else {"detected": True, "az": az % 360.0, "sigma": 5.0, "rate": None,
+                                        "level_db": None, "confidence": None, "el": None, "seq": None, "t": None}
+    try:
+        j = json.loads(txt)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(j, dict) and "msg" in j:   # a 45_uma16_track track.jsonl line: the sent message is nested
+        j = j["msg"]
+    if not isinstance(j, dict):
+        return None
+    seq = _num(j.get("seq"))
+    seq = int(seq) if seq is not None else None
+    if j.get("detected", True) in (False, "false", "False"):
+        return {"detected": False, "seq": seq, "t": _num(j.get("t"))}
+    az = _num(j.get("az_deg", j.get("compass_az")))
+    if az is None:
+        return None
+    sigma = _num(j.get("sigma_az_deg"))
+    return {"detected": True, "az": az % 360.0, "sigma": sigma if sigma is not None and sigma > 0 else 5.0,
+            "rate": _num(j.get("az_rate_dps")), "level_db": _num(j.get("level_db")),
+            "confidence": _num(j.get("confidence")), "el": _num(j.get("el_deg", j.get("el"))), "seq": seq,
+            "t": _num(j.get("t"))}
+
+
 # ------------------------------------------------------------------------------------------- what we hear
 class Audio:
-    """The array's bearings as our drone sees them: smoothed bearing (0.5 s), bearing rate, sigma."""
+    """The array's bearings as our drone sees them: smoothed bearing (0.5-1.5 s, longer for a larger sigma),
+    outlier gate, bearing rate (own differences blended with the listener's az_rate_dps), sigma, level.
+    HEARING = a bearing within AUDIO_TIMEOUT and no loss message since; else SILENT."""
 
     def __init__(self):
         self.az: float | None = None
         self.raw: float | None = None
         self.sigma, self.rate = 5.0, 0.0
-        self.t_last, self.t_first = -1e9, 0.0
-        self.history: deque[tuple[float, float]] = deque(maxlen=150)
+        self.level_db: float | None = None
+        self.confidence: float | None = None
+        self.source = "-"
+        self.t_last = -1e9          # last accepted bearing
+        self.t_msg = -1e9           # last bearing message, accepted or gated
+        self.t_first = 0.0          # start of the current hearing stretch
+        self.lost_msg = False       # the listener said detected=false
+        self.pending: list[tuple[float, float]] = []
+        self.n_msgs = self.n_gated = self.n_jumps = self.n_lost = 0
+        self.arrivals: deque[float] = deque(maxlen=100)
+        self.history: deque[tuple[float, float, bool]] = deque(maxlen=150)
 
-    def update(self, az: float, sigma: float, t: float) -> None:
-        if self.az is None or t - self.t_last > AUDIO_TIMEOUT:
-            self.az, self.rate, self.t_first = az % 360.0, 0.0, t
+    def update(self, az: float, sigma: float, t: float, rate: float | None = None, level_db: float | None = None,
+               confidence: float | None = None, source: str | None = None) -> str:
+        """One bearing -> "new" (nothing heard for GIVE_UP_S), "resume" (back after a dropout, near the extrapolated
+        bearing), "ok", "jump" (a persistent new bearing) or "gated" (outlier)."""
+        az, sigma = az % 360.0, max(float(sigma), 2.0)
+        self.n_msgs += 1
+        self.arrivals.append(t)
+        self.source = source or self.source
+        self.raw = az
+        if level_db is not None:
+            self.level_db = level_db
+        if confidence is not None:
+            self.confidence = confidence
+        thr = max(3.0 * sigma, OUTLIER_DEG)
+        resumed = not self.hearing(t)
+        msg_rate = float(np.clip(rate, -RATE_MAX, RATE_MAX)) if rate is not None else None
+        if resumed and (self.az is None or t - self.t_last > GIVE_UP_S):
+            self.az, self.sigma, self.t_first, self.lost_msg = az, sigma, t, False
+            self.rate = msg_rate if msg_rate is not None else 0.0
+            self.pending.clear()
+            status = "new"
+        elif abs(adiff(az, self.predict(t) if resumed else self.az)) > thr:
+            self.pending = [p for p in self.pending if t - p[0] <= OUTLIER_PERSIST_S + 2.0] + [(t, az)]
+            near = [p for p in self.pending if abs(adiff(p[1], az)) <= thr]
+            if len(near) >= 2 and t - near[0][0] >= OUTLIER_PERSIST_S - 0.05:
+                self.az = circmean_deg([p[1] for p in near[-5:]])
+                self.rate = msg_rate if msg_rate is not None else 0.0
+                self.pending.clear()
+                self.n_jumps += 1
+                if resumed:
+                    self.t_first, self.lost_msg = t, False
+                status = "jump"
+            else:
+                self.n_gated += 1
+                status = "gated"
+        elif resumed:
+            self.az = blend_deg(self.predict(t), az, 0.5)
+            self.t_first, self.lost_msg = t, False
+            self.pending.clear()
+            status = "resume"
         else:
+            self.pending.clear()
             dt = max(t - self.t_last, 1e-3)
-            new = blend_deg(self.az, az, 1 - math.exp(-dt / 0.5))
-            self.rate += (1 - math.exp(-dt / 2.0)) * (adiff(new, self.az) / dt - self.rate)
+            new = blend_deg(self.az, az, 1 - math.exp(-dt / float(np.clip(0.1 * sigma, 0.5, 1.5))))
+            self.rate += (1 - math.exp(-dt / 3.0)) * (adiff(new, self.az) / dt - self.rate)
+            if rate is not None:
+                self.rate += (1 - math.exp(-dt / 1.0)) * (float(np.clip(rate, -RATE_MAX, RATE_MAX)) - self.rate)
+            self.rate = float(np.clip(self.rate, -RATE_MAX, RATE_MAX))
             self.az = new
-        self.raw, self.sigma, self.t_last = az % 360.0, max(float(sigma), 2.0), t
-        self.history.append((t, self.raw))
+            self.sigma += (1 - math.exp(-dt / 1.0)) * (sigma - self.sigma)
+            status = "ok"
+        self.t_msg = t
+        if status != "gated":
+            self.t_last = t
+        self.history.append((t, az, status != "gated"))
+        return status
+
+    def lose(self, t: float, source: str | None = None) -> None:
+        """The listener's loss message: silent now, not after AUDIO_TIMEOUT."""
+        self.lost_msg = True
+        self.n_lost += 1
+        self.arrivals.append(t)
+        self.source = source or self.source
+        self.pending.clear()
 
     def hearing(self, t: float) -> bool:
-        return self.az is not None and t - self.t_last <= AUDIO_TIMEOUT
+        return self.az is not None and not self.lost_msg and t - self.t_last <= AUDIO_TIMEOUT
 
     def heard_for(self, t: float) -> float:
         return t - self.t_first if self.hearing(t) else 0.0
 
+    def silent_for(self, t: float) -> float:
+        """0 while hearing, else seconds since the last accepted bearing (inf if never heard)."""
+        if self.hearing(t):
+            return 0.0
+        return t - self.t_last if self.az is not None else math.inf
+
+    def predict(self, t: float) -> float:
+        """Smoothed bearing carried forward with the rate over a dropout (at most EXTRAP_S)."""
+        return (self.az + self.rate * float(np.clip(t - self.t_last, 0.0, EXTRAP_S))) % 360.0
+
+    def msg_hz(self, t: float, window: float = 3.0) -> float:
+        n = sum(1 for ta in self.arrivals if t - ta <= window)
+        return n / window
+
+    def status(self, t: float) -> str:
+        if self.az is None:
+            return "SILENT (nothing heard yet)"
+        if self.hearing(t):
+            return "HEARING"
+        return f"SILENT {self.silent_for(t):.0f} s" + ("  (loss msg)" if self.lost_msg else "")
+
 
 # ---------------------------------------------------------------------------------------------- intruder
 class Intruder:
-    """Sits `range_m` out on the (smoothed, 1 s) sound bearing, `agl` m up; moves at most `speed` m/s."""
+    """Flies `range_m` out on the (smoothed, 1.5 s) sound bearing, `agl` m up: velocity towards that goal,
+    at most `speed` m/s, accelerations <= INTRUDER_ACC (no teleports, no jitter); hovers while silent. After a
+    silence or a bearing jump it heads straight for the new bearing (max speed when far)."""
 
-    def __init__(self, range_m: float, agl: float, speed: float, ground):
+    def __init__(self, range_m: float, agl: float, speed: float, ground, range_from_level: bool = False):
         self.range_m, self.agl, self.speed, self.ground = range_m, agl, speed, ground
+        self.range_from_level = range_from_level
+        self.r_cur = range_m
+        self.level_ref: float | None = None
         self.az: float | None = None
+        self.rate = 0.0
         self.t_msg = 0.0
         self.pos: np.ndarray | None = None
+        self.vel = np.zeros(2)
+        self.v_max = 0.0
         self.yaw = 0.0
 
-    def hear(self, az: float, t: float) -> None:
-        if self.az is None:
-            self.az = az % 360.0
-        else:
-            self.az = blend_deg(self.az, az, 1 - math.exp(-max(t - self.t_msg, 1e-3) / 1.0))
+    def hear(self, az: float, t: float, fresh: bool = False, level_db: float | None = None) -> None:
+        dt = float(np.clip(t - self.t_msg, 1e-3, EXTRAP_S))
+        if self.az is None or fresh:
+            self.az, self.rate = az % 360.0, 0.0
+        else:   # alpha-beta filter on bearing + rate: smooth, without the lag of a plain low-pass while walking
+            pred = self.az + self.rate * dt
+            r = adiff(az, pred)
+            self.az = (pred + INTRUDER_AB[0] * r) % 360.0
+            self.rate = float(np.clip(self.rate + INTRUDER_AB[1] * r / dt, -RATE_MAX, RATE_MAX))
+        if self.range_from_level and level_db is not None:
+            if self.level_ref is None:   # the first level heard is the one at --range
+                self.level_ref = level_db
+            r = float(np.clip(self.range_m * 10 ** ((self.level_ref - level_db) / 20.0), 150.0, 1200.0))
+            self.r_cur += (1 - math.exp(-dt / 3.0)) * (r - self.r_cur)
         self.t_msg = t
         if self.pos is None:
-            xy = az_to_dir(self.az) * self.range_m
+            xy = az_to_dir(self.az) * self.r_cur
             self.pos = np.array([*xy, self.ground(*xy) + self.agl])
 
-    def update(self, t: float, dt: float) -> None:
+    def update(self, t: float, dt: float, hearing: bool = True) -> None:
         if self.pos is None:
             return
-        goal = az_to_dir(self.az) * self.range_m
-        dxy = goal - self.pos[:2]
-        n = float(np.linalg.norm(dxy))
-        if n > 1e-6:
-            self.pos[:2] += dxy / n * min(n, self.speed * dt)
-            if n > 0.5:
-                self.yaw = math.atan2(dxy[1], dxy[0])
+        v_des = np.zeros(2)
+        if hearing:
+            a = self.az + self.rate * float(np.clip(t - self.t_msg, 0.0, EXTRAP_S))
+            tangent = np.array([math.cos(math.radians(a)), -math.sin(math.radians(a))])
+            v_des = (INTRUDER_K * (az_to_dir(a) * self.r_cur - self.pos[:2])
+                     + math.radians(self.rate) * self.r_cur * tangent)
+            n = float(np.linalg.norm(v_des))
+            if n > self.speed:
+                v_des *= self.speed / n
+        dv = v_des - self.vel
+        n = float(np.linalg.norm(dv))
+        if n > INTRUDER_ACC * dt:
+            dv *= INTRUDER_ACC * dt / n
+        self.vel += dv
+        self.pos[:2] += self.vel * dt
+        sp = float(np.linalg.norm(self.vel))
+        self.v_max = max(self.v_max, sp)
+        if sp > 0.5:
+            self.yaw = math.atan2(self.vel[1], self.vel[0])
         self.pos[2] = float(self.ground(*self.pos[:2])) + self.agl + 0.6 * math.sin(0.7 * t)
 
     def range_from_base(self) -> float:
@@ -215,7 +394,7 @@ class Hunter(base.Mission):
             v = self.est - c
         elif audio.az is not None:
             r_look = float(np.linalg.norm(c[:2])) + 250.0
-            p = az_to_dir(audio.az) * r_look
+            p = az_to_dir(audio.predict(t)) * r_look
             v = np.array([*(p - c[:2]), float(self.ground(*p)) + self.agl + 20.0 - c[2]])
         else:
             return
@@ -237,69 +416,122 @@ class Hunter(base.Mission):
             if pos[2] > self.pad_z + 15.0:
                 self._go("INTERCEPT", t)
         elif s in ("INTERCEPT", "LOST"):
-            r_own = float(np.linalg.norm(pos[:2]))
+            r_sp = float(np.linalg.norm(self.sp[:2]))
             if s == "LOST" and t - self.t_hit > LOST_S + 10.0:
                 self._go("INTERCEPT", t)
-            if (audio.az is None or t - audio.t_last > GIVE_UP_S) or r_own > MAX_OUT:
+            if audio.silent_for(t) > GIVE_UP_S or r_sp >= MAX_OUT - 1.0:
                 self._go("RETURN", t)
                 return
-            az = audio.az + float(np.clip(audio.rate, -5, 5)) * LEAD_S
-            self._move_xy(az_to_dir(az) * min(r_own + 80.0, MAX_OUT + 10.0), HUNT_SPEED, dt)
+            az = audio.predict(t) + float(np.clip(audio.rate, -5, 5)) * LEAD_S   # dropouts: last bearing + rate
+            self._move_xy(az_to_dir(az) * min(r_sp + 80.0, MAX_OUT), HUNT_SPEED, dt)
             self._terrain(dt, self.agl)
         elif s == "TRACK":
+            if audio.silent_for(t) > GIVE_UP_S:   # the sound stopped: the demo is over
+                self._go("RETURN", t)
+                return
             if t - self.t_hit > LOST_S:
                 self._go("LOST", t)
                 return
             dxy = self.est[:2] - self.sp[:2]
             n = max(float(np.linalg.norm(dxy)), 1e-6)
-            self._move_xy(self.est[:2] - dxy / n * STANDOFF, TRACK_SPEED, dt)
+            goal = self.est[:2] - dxy / n * STANDOFF
+            r_goal = float(np.linalg.norm(goal))
+            if r_goal > MAX_OUT - 1.0:
+                goal *= (MAX_OUT - 1.0) / r_goal
+            self._move_xy(goal, TRACK_SPEED, dt)
             self.yaw = math.atan2(dxy[1], dxy[0])
             floor = float(self.ground(*self.sp[:2])) + 20.0
             self._move_z(max(float(self.est[2]) - 10.0, floor), dt)
-            if audio.az is None or t - audio.t_last > GIVE_UP_S:   # the sound stopped: the demo is over
-                self._go("RETURN", t)
         else:
             super().update(pos, t, dt)
 
 
 # ------------------------------------------------------------------------------------------------- input
 class UdpTrack:
-    """BearingEstimate JSON ({"az_deg", "sigma_az_deg", ...}; "detected": false = silence) or a plain number."""
+    """Listener messages over UDP (see `parse_message`), in arrival order; out-of-order `seq` dropped (a seq far
+    below the last one = the listener restarted, accepted). `push` is the socket-free entry (tests)."""
+
+    SEQ_WINDOW = 50
 
     def __init__(self, port: int):
-        self.msgs: list[tuple[float, float]] = []
+        self.msgs: list[dict] = []
         self.lock = threading.Lock()
+        self.last_seq: int | None = None
+        self.n_bad = self.n_out_of_order = 0
         if port <= 0:
             return
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(("0.0.0.0", port))
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.bind(("0.0.0.0", port))
+        except OSError as e:
+            print(f"UDP {port} unavailable ({e}): no live bearings")
+            return
         threading.Thread(target=self._run, daemon=True).start()
         print(f"listening for bearings on UDP {port}")
 
     def _run(self) -> None:
         while True:
-            txt = self.sock.recvfrom(4096)[0].decode("utf-8", "replace").strip()
-            try:
-                if txt.startswith("{"):
-                    j = json.loads(txt)
-                    if j.get("detected", True) is False:
-                        continue
-                    msg = (float(j["az_deg"]), float(j.get("sigma_az_deg", 5.0)))
-                else:
-                    msg = (float(txt.split()[0]), 5.0)
-            except (ValueError, KeyError, IndexError, json.JSONDecodeError):
-                continue
-            with self.lock:
-                self.msgs.append(msg)
+            self.push(self.sock.recvfrom(4096)[0].decode("utf-8", "replace"))
 
-    def pop_all(self) -> list[tuple[float, float]]:
+    def push(self, txt: str) -> bool:
+        msg = parse_message(txt)
+        with self.lock:
+            if msg is None:
+                self.n_bad += 1
+                return False
+            seq = msg["seq"]
+            if seq is not None and self.last_seq is not None and self.last_seq - self.SEQ_WINDOW < seq <= self.last_seq:
+                self.n_out_of_order += 1
+                return False
+            if seq is not None:
+                self.last_seq = seq
+            self.msgs.append(msg)
+        return True
+
+    def pop_all(self) -> list[dict]:
         with self.lock:
             out, self.msgs = self.msgs, []
         return out
 
 
-def parse_walk(s: str) -> np.ndarray:
-    """'0:0,40:0,130:90' -> (n, 2) of (sim time s, bearing deg), piecewise linear; silence after the last."""
+class Feed:
+    """Timed messages [(sim t, parse_message dict)] handed out as the sim clock passes them (walk, replay)."""
+
+    def __init__(self, items: list[tuple[float, dict]], source: str):
+        self.items, self.source, self.i = sorted(items, key=lambda it: it[0]), source, 0
+        self.t_end = self.items[-1][0] if self.items else 0.0
+
+    def due(self, t: float) -> list[dict]:
+        out = []
+        while self.i < len(self.items) and self.items[self.i][0] <= t:
+            out.append(self.items[self.i][1])
+            self.i += 1
+        return out
+
+    def done(self) -> bool:
+        return self.i >= len(self.items)
+
+    def reset(self) -> None:
+        self.i = 0
+
+
+def load_replay(path: str | Path, start: float = 0.0) -> list[tuple[float, dict]]:
+    """A recorded listener log (one message per line: the UDP contract, BearingEstimate JSON or a clap log line
+    with "compass_az") -> timed messages, the first at sim time `start`. Lines without "t" follow 0.2 s apart."""
+    msgs = [m for m in (parse_message(line) for line in Path(path).read_text(encoding="utf-8").splitlines()) if m]
+    t0 = next((m["t"] for m in msgs if m["t"] is not None), 0.0)
+    out, t_prev = [], t0 - MSG_DT
+    for m in msgs:
+        t_prev = m["t"] if m["t"] is not None else t_prev + MSG_DT
+        out.append((start + t_prev - t0, m))
+    return out
+
+
+def parse_walk(s: str) -> np.ndarray | None:
+    """'0:0,40:0,130:90' -> (n, 2) of (sim time s, bearing deg), piecewise linear; silence after the last.
+    '' or 'none' = silence all the time."""
+    if not s.strip() or s.strip().lower() == "none":
+        return None
     return np.array([[float(v) for v in p.split(":")] for p in s.split(",")])
 
 
@@ -307,6 +539,41 @@ def walk_bearing(walk: np.ndarray, t: float) -> float | None:
     if t < walk[0, 0] or t > walk[-1, 0]:
         return None
     return float(np.interp(t, walk[:, 0], np.unwrap(walk[:, 1], period=360.0))) % 360.0
+
+
+def walk_messages(args, rng: np.random.Generator) -> list[tuple[float, dict]]:
+    """The scripted walk as the 45 listener would send it (contract JSON through `parse_message`), 5 Hz, with
+    --walk-noise (deg), --outliers (fraction of uniformly random bearings) and --dropouts LEN:EVERY (no messages
+    for LEN s every EVERY s; with --dropout-loss-msg a detected=false at each start). One loss message at the end."""
+    walk = parse_walk(args.walk)
+    if walk is None:
+        return []
+    d_len, d_every = (float(v) for v in args.dropouts.split(":")) if args.dropouts else (0.0, 0.0)
+    out, seq, in_drop = [], 0, False
+    t0, t1 = float(walk[0, 0]), float(walk[-1, 0])
+
+    def send(t: float, j: dict) -> None:
+        nonlocal seq
+        seq += 1
+        out.append((t, parse_message(json.dumps({**j, "seq": seq, "t": round(t, 3)}))))
+
+    for t in np.arange(t0, t1 + 1e-9, MSG_DT):
+        t = float(t)
+        if d_every > 0 and t >= d_every and (t % d_every) < d_len:
+            if not in_drop and args.dropout_loss_msg:
+                send(t, {"detected": False})
+            in_drop = True
+            continue
+        in_drop = False
+        az_true = walk_bearing(walk, t)
+        rate = adiff(walk_bearing(walk, min(t + 0.1, t1)), walk_bearing(walk, max(t - 0.1, t0))) / 0.2
+        az = rng.uniform(0, 360) if rng.random() < args.outliers else az_true + rng.normal(0, args.walk_noise)
+        send(t, {"az_deg": round(az % 360.0, 2), "el_deg": 10.0, "sigma_az_deg": max(5.0, args.walk_noise),
+                 "sigma_el_deg": 15.0, "label": "drone", "confidence": 0.8, "array_enu": [0.0, 0.0, 3.0],
+                 "az_rate_dps": round(rate + rng.normal(0, 0.5), 2), "level_db": round(-30 + rng.normal(0, 1), 1),
+                 "detected": True})
+    send(t1 + MSG_DT, {"detected": False})
+    return out
 
 
 # -------------------------------------------------------------------------------------------------- world
@@ -322,21 +589,32 @@ class Demo:
         mujoco.mj_forward(self.m, self.d)
         a, g = self.args, self.info.ground
         self.audio, self.hunter = Audio(), Hunter(g)
-        self.intruder = Intruder(a.range, a.intruder_agl, a.intruder_speed, g)
+        self.intruder = Intruder(a.range, a.intruder_agl, a.intruder_speed, g, a.range_from_level)
         self.cam = Camera(self.m, self.d, self.rng)
         self.next_frame = 0.0
         self.trail: list[np.ndarray] = []
         self.track_err: list[float] = []
+        self.max_out = 0.0
 
-    def hear(self, az: float, sigma: float) -> None:
+    def handle(self, msg: dict, source: str) -> None:
+        """One parsed listener message (see `parse_message`): our drone's audio and the intruder both hear it."""
         t = self.d.time
-        self.audio.update(az, sigma, t)
-        self.intruder.hear(az, t)
+        if not msg.get("detected", True):
+            self.audio.lose(t, source)
+            return
+        st = self.audio.update(msg["az"], msg.get("sigma", 5.0), t, msg.get("rate"), msg.get("level_db"),
+                               msg.get("confidence"), source)
+        if st != "gated":
+            self.intruder.hear(msg["az"] if st in ("ok", "resume") else self.audio.az, t, st in ("new", "jump"),
+                               msg.get("level_db"))
+
+    def hear(self, az: float, sigma: float, source: str = "manual") -> None:
+        self.handle({"detected": True, "az": az % 360.0, "sigma": sigma}, source)
 
     def step(self) -> None:
         m, d, h = self.m, self.d, self.hunter
         dt = m.opt.timestep
-        self.intruder.update(d.time, dt)
+        self.intruder.update(d.time, dt, self.audio.hearing(d.time))
         h.aim(self.cam, self.audio, d.time)
         if d.time >= self.next_frame:
             self.next_frame = d.time + FRAME_DT
@@ -351,6 +629,7 @@ class Demo:
         else:
             d.ctrl[:] = self.ctrl(pos, vel, R, om, h.sp, h.v, h.yaw)
         mujoco.mj_step(m, d)
+        self.max_out = max(self.max_out, float(np.linalg.norm(d.qpos[0:2])))
         if not self.trail or np.linalg.norm(d.qpos[0:3] - self.trail[-1]) > 4:
             self.trail = (self.trail + [d.qpos[0:3].copy()])[-500:]
 
@@ -363,7 +642,7 @@ class Demo:
         add_label(scn, [0, 0, 4.6], "UMA-16")
         if a.az is not None:
             hearing = a.hearing(t)
-            length = max(it.range_m + 200.0, 700.0)
+            length = max(it.r_cur + 200.0, 700.0)
             w = float(np.clip(0.0012 * np.linalg.norm(eye), 0.05, 0.8))
             col = [1.0, 0.45, 0.1, 0.9] if hearing else [0.6, 0.6, 0.6, 0.5]
             for s, width, c in ((0.0, w, col), (-2 * a.sigma, w / 3, [1.0, 0.6, 0.2, 0.35]),
@@ -372,11 +651,12 @@ class Demo:
                 pts[0] = [0, 0, 3.3]
                 for p0, p1 in zip(pts[:-1], pts[1:]):
                     add_line(scn, p0, p1, width, c)
-            for tk, az in a.history:   # raw bearings of the last 30 s, fading, on a 150 m ring
+            for tk, az, ok in a.history:   # raw bearings of the last 30 s, fading, on a 150 m ring; gated grey
                 k = float(np.clip(1 - (t - tk) / 30.0, 0, 1))
                 if k > 0:
                     xy = az_to_dir(az) * 150.0
-                    add_sphere(scn, [*xy, float(g(*xy)) + 2.0], 1.2, [1.0, 0.5, 0.1, 0.8 * k])
+                    add_sphere(scn, [*xy, float(g(*xy)) + 2.0], 1.2,
+                               [1.0, 0.5, 0.1, 0.8 * k] if ok else [0.6, 0.6, 0.6, 0.6 * k])
         if it.pos is not None:
             draw_quad(scn, it.pos, it.yaw, t)
             pin(scn, it.pos, eye, [0.9, 0.1, 0.1, 0.9], f"INTRUDER  {it.range_from_base():.0f} m (unknown to X2)", g)
@@ -399,11 +679,15 @@ class Demo:
     def hud(self) -> str:
         a, h, it, r = self.audio, self.hunter, self.intruder, self.cam.last
         t = self.d.time
-        hear = (f"{a.az:5.1f} deg +- {a.sigma:.1f}  ({a.rate:+.1f} deg/s)" if a.hearing(t)
-                else "-" if a.az is None else f"lost {t - a.t_last:.0f} s ago (last {a.az:.0f} deg)")
         p = self.d.qpos[0:3]
-        lines = [f"State: {h.state}", f"Sound bearing: {hear}",
-                 f"X2: {np.linalg.norm(p[:2]):.0f} m from base, {p[2] - self.info.ground(p[0], p[1]):.0f} m AGL"]
+        lines = [f"State: {h.state}", f"Audio: {a.status(t)}   [{a.source}, {a.msg_hz(t):.1f} Hz]"]
+        if a.az is not None:
+            lvl = f"{a.level_db:.0f} dB" if a.level_db is not None else "-"
+            last = "" if a.hearing(t) else "  (last)"
+            lines.append(f"Bearing: {a.az:5.1f} +- {a.sigma:.1f} deg  rate {a.rate:+.1f} deg/s  level {lvl}{last}")
+            if a.n_gated or a.n_jumps:
+                lines.append(f"Gated outliers: {a.n_gated}, bearing jumps: {a.n_jumps}")
+        lines.append(f"X2: {np.linalg.norm(p[:2]):.0f} m from base, {p[2] - self.info.ground(p[0], p[1]):.0f} m AGL")
         if r and h.state not in ("WAIT", "LANDED"):
             view = "OCCLUDED" if r["occluded"] else "in view" if r["in_view"] else "not in view"
             lines.append(f"Camera: intruder {view}, {r['px']:.1f} px, {r.get('dist', 0):.0f} m")
@@ -494,6 +778,7 @@ class CameraView:
 # -------------------------------------------------------------------------------------------------- run
 def run_viewer(m, d, info, args) -> None:
     demo, udp = Demo(m, d, info, args), UdpTrack(args.udp_port)
+    feed = Feed(load_replay(args.replay), "replay") if args.replay else None
     keys: list[int] = []
     speed, chase, show_cam = 1, False, not args.no_camera_view
     manual_az, manual_on, manual_next = 0.0, False, 0.0
@@ -515,6 +800,9 @@ def run_viewer(m, d, info, args) -> None:
                     manual_az = (manual_az + (5 if k == 262 else -5)) % 360 if manual_on else manual_az
                     manual_on = True
                 elif k == ord("S"):
+                    if manual_on:
+                        with viewer.lock():
+                            demo.audio.lose(d.time, "manual")
                     manual_on = False
                 elif k in (ord("1"), ord("2"), ord("4")):
                     speed = int(chr(k))
@@ -526,10 +814,15 @@ def run_viewer(m, d, info, args) -> None:
                 elif k == 259:
                     with viewer.lock():
                         demo.reset()
+                        if feed is not None:
+                            feed.reset()
             with viewer.lock():
-                for az, sigma in udp.pop_all():
-                    demo.hear(az, sigma)
+                for msg in udp.pop_all():
+                    demo.handle(msg, "udp")
                 for _ in range(int(speed / 60 / m.opt.timestep)):
+                    if feed is not None:
+                        for msg in feed.due(d.time):
+                            demo.handle(msg, feed.source)
                     if manual_on and d.time >= manual_next:
                         manual_next = d.time + MSG_DT
                         demo.hear(manual_az + demo.rng.normal(0, 2.0), 5.0)
@@ -554,36 +847,40 @@ def run_viewer(m, d, info, args) -> None:
 
 
 def run_headless(m, d, info, args, seed: int = 0, quiet: bool = False) -> dict:
-    """Scripted walk (--walk) at 5 Hz with 2 deg noise; returns the result (time to find, tracking, landing)."""
+    """Scripted walk (--walk, 5 Hz, --walk-noise / --outliers / --dropouts) or --replay; returns the result (time
+    to find, tracking, landing, intruder top speed). Stops when landed, at --max-t, or when the input is over and
+    the drone never launched."""
     demo = Demo(m, d, info, args, seed)
-    walk = parse_walk(args.walk)
-    nxt_msg, nxt_print = 0.0, 0.0
+    feed = (Feed(load_replay(args.replay), "replay") if args.replay
+            else Feed(walk_messages(args, np.random.default_rng(seed + 1000)), "walk"))
+    nxt_print = 0.0
     while d.time < args.max_t and demo.hunter.state != "LANDED":
-        if d.time >= nxt_msg:
-            nxt_msg = d.time + MSG_DT
-            az = walk_bearing(walk, d.time)
-            if az is not None:
-                demo.hear(az + demo.rng.normal(0, 2.0), 5.0)
+        for msg in feed.due(d.time):
+            demo.handle(msg, feed.source)
         demo.step()
+        if demo.hunter.state == "WAIT" and feed.done() and d.time > feed.t_end + AUDIO_TIMEOUT + HEAR_S:
+            break
         if not quiet and d.time >= nxt_print:
             nxt_print += 10.0
             p, it, r = d.qpos[0:3], demo.intruder, demo.cam.last
             gap = f"{np.linalg.norm(p - it.pos):6.0f}" if it.pos is not None else "     -"
             print(f"t={d.time:6.1f}  {demo.hunter.state:9s}  X2 {np.linalg.norm(p[:2]):6.0f} m out  "
                   f"gap to intruder {gap} m  cam in_view={r.get('in_view')} px={r.get('px', 0):.1f}")
-    h = demo.hunter
-    res = {"found": h.t_found is not None,
+    h, a = demo.hunter, demo.audio
+    res = {"launched": h.t_launch is not None, "found": h.t_found is not None,
            "t_find_s": round(h.t_found - h.t_launch, 1) if h.t_found is not None else None,
            "track_dist_median_m": round(float(np.median(demo.track_err)), 1) if demo.track_err else None,
            "state": h.state, "t": round(d.time, 1),
-           "landing_err_m": round(float(np.linalg.norm(d.qpos[:2] - PAD)), 2)}
+           "landing_err_m": round(float(np.linalg.norm(d.qpos[:2] - PAD)), 2),
+           "max_out_m": round(demo.max_out, 1), "intruder_max_speed_mps": round(demo.intruder.v_max, 2),
+           "msgs": a.n_msgs, "gated": a.n_gated, "jumps": a.n_jumps, "loss_msgs": a.n_lost}
     if not quiet:
         print("\n".join(h.log))
         print("RESULT", json.dumps(res))
     return res
 
 
-def main() -> None:
+def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--world", choices=["farm", "simple"], default="farm")
     ap.add_argument("--range", type=float, default=500.0, help="intruder distance from the base (m)")
@@ -592,13 +889,32 @@ def main() -> None:
     ap.add_argument("--udp-port", type=int, default=5005, help="0 = off")
     ap.add_argument("--no-camera-view", action="store_true", help="no camera picture in the viewer corner")
     ap.add_argument("--headless", action="store_true")
+    ap.add_argument("--range-from-level", action="store_true",
+                    help="intruder range from level_db: the first level heard = --range, +6 dB = half, 150-1200 m")
+    ap.add_argument("--replay", default=None, metavar="TRACK.JSONL",
+                    help="replay a recorded listener log (t, az_deg / compass_az, sigma_az_deg ...) in sim time")
     ap.add_argument("--walk", default="0:0,40:0,130:90,200:90",
-                    help="headless: t:bearing points (sim s : deg), linear in between, silence after the last")
+                    help="headless: t:bearing points (sim s : deg), linear in between, silence after the last; "
+                         "'none' = silence")
+    ap.add_argument("--walk-noise", type=float, default=2.0, help="headless walk: bearing noise (deg, 1 sigma)")
+    ap.add_argument("--outliers", type=float, default=0.0, help="headless walk: fraction of random bearings")
+    ap.add_argument("--dropouts", default="", metavar="LEN:EVERY",
+                    help="headless walk: no bearings for LEN s every EVERY s (e.g. 2:20)")
+    ap.add_argument("--dropout-loss-msg", action="store_true",
+                    help="headless walk: each dropout starts with a detected=false message")
     ap.add_argument("--max-t", type=float, default=600.0)
-    args = ap.parse_args()
+    return ap
+
+
+def build(world: str):
     base.CLIMB = 4.0
+    return base.build_model(world)
+
+
+def main() -> None:
+    args = parser().parse_args()
     t0 = time.time()
-    m, info = base.build_model(args.world)
+    m, info = build(args.world)
     print(f"world {info.name}: built in {time.time() - t0:.1f}s; intruder {args.range:.0f} m out, "
           f"{args.intruder_agl:.0f} m AGL")
     d = mujoco.MjData(m)

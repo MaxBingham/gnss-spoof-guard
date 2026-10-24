@@ -360,18 +360,6 @@ class FlowConfig:
 
 
 @dataclass
-class RearCameraConfig:
-    """recon-nav: rear-facing narrow-FOV NIR camera that sees the base lights (sim/rear_camera_stub.py renders it
-    until recon-world's sim/rear_camera.py lands; the onboard light localizer uses the same mount)."""
-
-    hfov_deg: float = 20.0  # 1000 px: 0.02 deg per pixel
-    width: int = 1000
-    height: int = 750
-    pitch_down_deg: float = 6.0  # optical axis below the horizon (body -x tilted down): lights at 2-3 km sit ~2 deg low
-    hz: float = 10.0
-
-
-@dataclass
 class LightsConfig:
     """recon-nav: base-light localizer (perception/light_localizer.py): blobs -> blink-code ids -> resection."""
 
@@ -422,7 +410,6 @@ class Config:
     thermal: ThermalConfig = field(default_factory=ThermalConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
     flow: FlowConfig = field(default_factory=FlowConfig)
-    rear_camera: RearCameraConfig = field(default_factory=RearCameraConfig)
     lights: LightsConfig = field(default_factory=LightsConfig)
     # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
     conditions: Conditions = field(default_factory=Conditions)

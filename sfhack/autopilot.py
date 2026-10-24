@@ -99,6 +99,7 @@ class Autopilot:
         self.flow_accepted = 0  # ... fused (NIS gate)
         self.last_flow: Any | None = None
         self.lights = light_localizer
+        self.light_localizer = light_localizer  # (alias: recon-mission's viewer reads light_localizer.last_blobs)
         self.light_frames = 0
         self.light_fixes = 0
         self.light_accepted = 0
@@ -391,13 +392,14 @@ class Autopilot:
             self.sources_used.add("flow")
         self.last_flow = m
 
-    def on_rear(self, frame: CameraFrame) -> None:
+    def on_rear(self, frame: Any) -> None:
         """Rear NIR camera: identified base lights -> position fix (NIS gate, like vision) + heading (compass bias)."""
         if self.lights is None or self.in_preflight or self.mission.done:
             return
         self.light_frames += 1
         prior = self.pose(report=False)
-        lf = self.lights.update(frame.t, frame.image, self.ahrs.R, prior.pos, float(np.sqrt(max(prior.cov[2, 2], 0.0))))
+        lf = self.lights.update(frame.t, frame.image, self.ahrs.R, prior.pos, float(np.sqrt(max(prior.cov[2, 2], 0.0))),
+                                getattr(frame, "intrinsics", None), getattr(frame, "R_body_cam", None))
         if lf is None:
             return
         self.light_fixes += 1

@@ -234,11 +234,16 @@ class FlightSystem:
             from .perception.optical_flow import OpticalFlow
             flow = OpticalFlow(self.cfg.flow)
         if nav == "lights":
-            from .perception.light_localizer import LightLocalizer
-            from .sim.rear_camera_stub import RearCameraStub
-            self.base_lights_truth, onboard_lights = self._base_lights(start, seed)
-            self.rear_camera = RearCameraStub(self.sim, self.bus, self.base_lights_truth, self.cfg.rear_camera, seed=seed)
-            light_loc = LightLocalizer(onboard_lights, self.cfg.lights, self.cfg.rear_camera)
+            from .perception.light_localizer import LightLocalizer, load_base_lights
+            from .sim.rear_camera import RearCameraSensor
+            if self.world_dir is None or self.onboard_dir is None or not (self.world_dir / "base_lights.json").exists():
+                raise FileNotFoundError("nav='lights' needs recon-world's base (world/ + onboard/base_lights.json)")
+            onb = self.onboard_dir / "base_lights.json"
+            if not onb.exists():  # uploaded before the base was surveyed: the built package's survey
+                onb = self.mission_dir / "onboard" / "base_lights.json"
+            self.rear_camera = RearCameraSensor(self.sim, self.bus, self.world_dir, seed=seed)
+            self.base_lights_truth = self.rear_camera.lights
+            light_loc = LightLocalizer(load_base_lights(onb), self.cfg.lights, self.cfg.camera)
         ground = self.onboard_map.ground_z if self.onboard_map is not None else None
         if tail_to_base:
             from .planning.recon_route import TailToBaseMission
@@ -268,19 +273,6 @@ class FlightSystem:
         self.log_sigma2: list[float] = []
         self._next_log = 0.0
         self.health_seen: list[str] = []
-
-    def _base_lights(self, a_xy: np.ndarray, seed: int) -> tuple[list, list]:
-        """(TRUE lights for the simulated camera, onboard surveyed list). recon-world's files when the mission has
-        them (world/base_lights.json = truth, onboard/base_lights.json = survey), else the stub fence at A."""
-        from .perception.light_localizer import load_base_lights
-        from .sim.rear_camera_stub import stub_base_lights, surveyed
-
-        truth_f = self.world_dir / "base_lights.json" if self.world_dir is not None else None
-        onb_f = self.onboard_dir / "base_lights.json" if self.onboard_dir is not None else None
-        if truth_f is not None and truth_f.exists() and onb_f is not None and onb_f.exists():
-            return load_base_lights(truth_f), load_base_lights(onb_f)
-        truth = stub_base_lights(np.asarray(a_xy, float), self.world.ground_z if self.world_dir is not None else (lambda x, y: 0.0))
-        return truth, surveyed(truth, self.cfg.lights.survey_std_m, seed)
 
     # ------------------------------------------------------------------ control
 

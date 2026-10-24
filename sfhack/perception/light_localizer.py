@@ -30,7 +30,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from ..config import LightsConfig, RearCameraConfig
+from ..config import CameraConfig, LightsConfig
 
 
 @dataclass
@@ -45,12 +45,14 @@ class BaseLight:
 
 
 def load_base_lights(path: Path | str) -> list[BaseLight]:
-    """Onboard survey `onboard/base_lights.json`: {"lights": [{"id", "enu" [x, y, z], "code" "10110110" | [1, 0, ...],
-    "bit_hz", optional "ring", "facing_deg", "beam_half_deg"}]}. Tolerates "pos" / "xyz" for the position and
-    "height" (light above ground) when the z in the list is missing (then z = height)."""
+    """Onboard survey `onboard/base_lights.json` (recon-world, sfhack-base-lights/1): {"bit_s", "lights": [{"id",
+    "enu" [x, y, z], "code" "00010111", "ring", "aim_az_deg" (compass), "beam_h_deg" (half width)}]}. Also accepts
+    per-light "bit_hz", "facing_deg" (ENU yaw), "beam_half_deg", "pos" / "xyz" for the position."""
     d = json.loads(Path(path).read_text(encoding="utf-8"))
     rows = d["lights"] if isinstance(d, dict) else d
-    default_hz = float(d.get("bit_hz", 10.0)) if isinstance(d, dict) else 10.0
+    default_hz = 10.0
+    if isinstance(d, dict):
+        default_hz = 1.0 / float(d["bit_s"]) if "bit_s" in d else float(d.get("bit_hz", 10.0))
     out = []
     for r in rows:
         p = r.get("enu", r.get("pos", r.get("xyz")))
@@ -60,8 +62,11 @@ def load_base_lights(path: Path | str) -> list[BaseLight]:
         code = r["code"]
         if not isinstance(code, str):
             code = "".join("1" if int(b) else "0" for b in code)
+        facing = r.get("facing_deg")
+        if facing is None and "aim_az_deg" in r:
+            facing = 90.0 - float(r["aim_az_deg"])
         out.append(BaseLight(str(r["id"]), np.array(p, float), code, float(r.get("bit_hz", default_hz)),
-                             str(r.get("ring", "fence")), r.get("facing_deg"), float(r.get("beam_half_deg", 180.0))))
+                             str(r.get("ring", "fence")), facing, float(r.get("beam_half_deg", r.get("beam_h_deg", 180.0)))))
     return out
 
 
@@ -74,9 +79,10 @@ def rear_mount(pitch_down_deg: float) -> np.ndarray:
     return np.column_stack([x, y, z])
 
 
-def intrinsics(cam: RearCameraConfig) -> tuple[float, float, float]:
-    f = cam.width / 2.0 / math.tan(math.radians(cam.hfov_deg) / 2.0)
-    return f, cam.width / 2.0, cam.height / 2.0
+def rear_intrinsics(cam: CameraConfig) -> dict[str, float]:
+    f = cam.rear_width / 2.0 / math.tan(math.radians(cam.rear_hfov_deg) / 2.0)
+    return {"fx": f, "fy": f, "cx": cam.rear_width / 2.0, "cy": cam.rear_height / 2.0, "w": float(cam.rear_width),
+            "h": float(cam.rear_height), "hfov_deg": cam.rear_hfov_deg}
 
 
 def _skew(v: np.ndarray) -> np.ndarray:
@@ -128,18 +134,21 @@ class LightFix:
 
 
 class LightLocalizer:
-    def __init__(self, lights: list[BaseLight], cfg: LightsConfig | None = None, cam: RearCameraConfig | None = None) -> None:
+    def __init__(self, lights: list[BaseLight], cfg: LightsConfig | None = None, cam: CameraConfig | None = None) -> None:
+        """`cam`: the default mount / intrinsics (CameraConfig.rear_*); a NirFrame's own intrinsics and R_body_cam win."""
         self.lights = {lt.id: lt for lt in lights}
         self.cfg = cfg or LightsConfig()
-        self.cam = cam or RearCameraConfig()
-        self.R_bc = rear_mount(self.cam.pitch_down_deg)
-        self.f, self.cx, self.cy = intrinsics(self.cam)
+        cam = cam or CameraConfig()
+        self.R_bc = rear_mount(cam.rear_pitch_down_deg)
+        k = rear_intrinsics(cam)
+        self.f, self.cx, self.cy = k["fx"], k["cx"], k["cy"]
         self.tracks: list[LightTrack] = []
         self._next_tid = 0
         self.frames = 0
         self.n_fixes = 0
         self.last_fix: LightFix | None = None
-        self.last_blobs: list[Blob] = []
+        self.blobs: list[Blob] = []
+        self.last_blobs: list[tuple[float, float, str | None]] = []  # display: (u, v, light id or None) this frame
         self.last_ids: dict[str, tuple[float, float]] = {}  # id -> (u, v) this frame (display)
         self.n_id_conflicts = 0
         # code bits as arrays (cyclic)
@@ -294,12 +303,16 @@ class LightLocalizer:
 
     # ------------------------------------------------------------------ frame
 
-    def update(self, t: float, image: np.ndarray, R_wb: np.ndarray, prior_pos: np.ndarray, z_std: float = 1.0
-               ) -> LightFix | None:
+    def update(self, t: float, image: np.ndarray, R_wb: np.ndarray, prior_pos: np.ndarray, z_std: float = 1.0,
+               intrinsics: dict[str, float] | None = None, R_body_cam: np.ndarray | None = None) -> LightFix | None:
         cfg = self.cfg
         self.frames += 1
+        if intrinsics is not None:
+            self.f, self.cx, self.cy = float(intrinsics["fx"]), float(intrinsics["cx"]), float(intrinsics["cy"])
+        if R_body_cam is not None:
+            self.R_bc = np.asarray(R_body_cam, float)
         blobs = self.detect(image)
-        self.last_blobs = blobs
+        self.blobs = blobs
         self._associate(t, blobs, R_wb)
         for tr in self.tracks:
             self._identify(tr)
@@ -315,6 +328,8 @@ class LightLocalizer:
                     continue
             by_id[tr.light_id] = tr
         self.last_ids = {k: (tr.blob.u, tr.blob.v) for k, tr in by_id.items() if tr.blob is not None}
+        self.last_blobs = [(tr.blob.u, tr.blob.v, tr.light_id if by_id.get(tr.light_id) is tr else None)
+                           for tr in self.tracks if tr.blob is not None]
         if len(by_id) < cfg.min_lights:
             return None
         ids = sorted(by_id)

@@ -76,39 +76,37 @@ def test_flow_rejects_uniform_scene() -> None:
 
 def _project_lights(loc, lights, pos, R_wb, t, clock, rng, shimmer=0.15):
     """Synthetic rear frame: dark image with a Gaussian spot for every light that is on (truth = `pos`)."""
-    from sfhack.sim.rear_camera_stub import RearCameraStub
-
-    cam = loc.cam
-    img = np.clip(6 + rng.normal(0, 2, (cam.height, cam.width)), 0, 255).astype(np.float32)
+    W, H = int(2 * loc.cx), int(2 * loc.cy)
+    img = np.clip(6 + rng.normal(0, 2, (H, W)), 0, 255).astype(np.float32)
     R_wc = R_wb @ loc.R_bc
-    stub = RearCameraStub.__new__(RearCameraStub)
-    stub.psf = 0.8
+    yy, xx = np.mgrid[0:H, 0:W]
     for lt in lights:
         c = R_wc.T @ (lt.pos - pos)
         if c[2] <= 1:
             continue
         u = loc.cx + loc.f * c[0] / c[2] + rng.normal(0, shimmer)
         v = loc.cy + loc.f * c[1] / c[2] + rng.normal(0, shimmer)
-        if not (0 <= u < cam.width and 0 <= v < cam.height):
+        if not (0 <= u < W and 0 <= v < H):
             continue
         if lt.facing_deg is not None:
             off = math.degrees(math.atan2(pos[1] - lt.pos[1], pos[0] - lt.pos[0])) - lt.facing_deg
             if abs((off + 180) % 360 - 180) > lt.beam_half_deg:
                 continue
         if lt.code[int(math.floor((t + clock) * lt.bit_hz)) % len(lt.code)] == "1":
-            stub._spot(img, u, v, 120 * (2000 / np.linalg.norm(lt.pos - pos)) ** 2)
-    return img.astype(np.uint8)
+            amp = 120 * (2000 / np.linalg.norm(lt.pos - pos)) ** 2
+            img += amp * np.exp(-((xx + 0.5 - u) ** 2 + (yy + 0.5 - v) ** 2) / (2 * 0.9**2))
+    return np.clip(img, 0, 255).astype(np.uint8)
 
 
 def test_light_localizer_ids_position_and_heading() -> None:
-    from sfhack.config import LightsConfig, RearCameraConfig
+    from sfhack.config import CameraConfig, LightsConfig
     from sfhack.perception.light_localizer import LightLocalizer
     from sfhack.sim.rear_camera_stub import make_codes, stub_base_lights, surveyed
 
     codes = make_codes(12)
     assert len(set(codes)) == 12
     truth = stub_base_lights(np.zeros(2), lambda x, y: 0.0)
-    loc = LightLocalizer(surveyed(truth, 0.15, 0), LightsConfig(), RearCameraConfig())
+    loc = LightLocalizer(surveyed(truth, 0.15, 0), LightsConfig(), CameraConfig())
     rng = np.random.default_rng(3)
     # 1.5 km out on a bearing 60 deg (ENU yaw 30 deg), 80 m up, tail to the base; AHRS heading 1.5 deg off
     d = np.array([math.cos(math.radians(30)), math.sin(math.radians(30))])

@@ -163,6 +163,10 @@ class AhrsConfig:
     yaw_gain: float = 1.0  # 1/s, compass yaw correction
     accel_gate: float = 0.05  # m/s^2, use accel for tilt only when | |a| - g | < gate (~1 m/s^2 horizontal)
     rate_gate: float = 0.1  # rad/s, ... and only while not rotating (steady thrust direction)
+    # Night-nav: integral term of the EKF's tilt corrections (correct_tilt_world) into the roll / pitch gyro bias,
+    # 1/s. Without GNSS the residual gyro bias tilts the AHRS ~1 deg per 10-20 s, which only position fixes can
+    # see; across a 30 s blind stretch (forest) the gravity leak then grew the error by tens of m. 0 = off.
+    tilt_bias_ki: float = 0.0
 
 
 @dataclass

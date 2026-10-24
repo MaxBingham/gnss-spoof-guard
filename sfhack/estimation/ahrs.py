@@ -103,7 +103,12 @@ class Ahrs:
         self.R = _rot_z(min(1.0, gain * dt) * err) @ self.R
 
     def correct_tilt_world(self, phi_world: np.ndarray) -> None:
-        """Rotate the attitude by a small world-frame rotation (tilt error estimated by the EKF)."""
+        """Rotate the attitude by a small world-frame rotation (tilt error estimated by the EKF). With
+        `tilt_bias_ki` the same correction also feeds the roll / pitch gyro bias (PI loop: a steady drift that
+        keeps needing the same correction is a gyro bias, so it keeps being removed when the fixes stop)."""
+        if self.cfg.tilt_bias_ki > 0.0:
+            phi_body = self.R.T @ phi_world  # R <- exp(phi_w) R  ==  R exp(R^T phi_w)
+            self.gyro_bias[:2] -= self.cfg.tilt_bias_ki * phi_body[:2]
         self.R = _expm_so3(phi_world) @ self.R
 
     def rotate_accel(self, accel: np.ndarray) -> np.ndarray:

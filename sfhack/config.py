@@ -369,9 +369,11 @@ class AcousticConfig:
     learn_s: float = 10.0                # noise floor learned over the first seconds (keep the source off)
     detect_fmin: float = 50.0            # detection band (engine-like energy)
     detect_fmax: float = 2000.0
-    detect_db: float = 6.0               # band energy over the learned floor to count as a detection
+    detect_db: float = 6.0               # level over the learned floor (dB) to count as a detection:
+    detect_bands: int = 3                # level = detect_bands-th largest 1/3-octave band excess (one tone is not enough)
     engine_score_db: float = 10.0        # harmonic comb score (dB) for the "engine" label (heuristic)
-    doa_fmin: float = 300.0              # DOA band: below ~300 Hz the 126 mm aperture hardly resolves anything,
+    doa_fmin: float = 100.0              # DOA band: the beam is very wide below ~500 Hz, but a far engine has little
+                                         # else (demos/42: far engine -10 dB, 3.3 -> 2.0 deg rms vs 300 Hz);
     doa_fmax: float = 4000.0             # above ~4.1 kHz the 42 mm pitch aliases
     stable_s: float = 3.0                # source must be detected with a steady bearing this long
     stable_std_deg: float = 8.0          # max circular std of the azimuth over stable_s

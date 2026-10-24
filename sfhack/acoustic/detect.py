@@ -2,9 +2,9 @@
 
 Per window (`AcousticConfig.window_s`):
 1. levels per channel (dBFS) for the channel check;
-2. detection: energy in the detection band (50-2000 Hz, engine-like) over a noise floor learned during the first
-   `learn_s` seconds (keep the source quiet then); an engine score from the cepstrum (harmonic series of a
-   firing frequency 20-200 Hz) sets the label;
+2. detection: 1/3-octave band energies in the detection band (50-2000 Hz, engine-like) over a per-band noise
+   floor learned during the first `learn_s` seconds (keep the source quiet then); level = the
+   `detect_bands`-th largest band excess; a harmonic comb score (firing frequency 20-200 Hz) sets the label;
 3. DOA (SRP-PHAT, `doa.py`) with the learned noise floor as bin weights;
 4. tracking: when the source has been detected for `stable_s` with a steady azimuth (circular std <
    `stable_std_deg`), a BearingEstimate is emitted (compass bearing through the mounting config).
@@ -29,7 +29,7 @@ from .doa import DoaConfig, DoaResult, SrpPhat
 class WindowResult:
     t: float
     levels_dbfs: np.ndarray       # (16,) per USB channel
-    band_db: float                # detection-band energy over the floor (dB); 0 while learning
+    band_db: float                # detection level over the floor (dB, see detection_db); 0 while learning
     detected: bool
     engine_score: float           # harmonic comb (dB), see engine_score()
     learning: bool
@@ -52,7 +52,7 @@ class AcousticPipeline:
         self.full_scale = full_scale
         self.t0: float | None = None
         self._learn: list[np.ndarray] = []
-        self.floor_energy: float | None = None
+        self.floor_energy: np.ndarray | None = None  # per 1/3-octave band
         self.history: deque[tuple[float, float, float, float, float]] = deque()  # t, az, el, band_db, engine
         self.last_bearing: BearingEstimate | None = None
         self._f0_grid = np.arange(20.0, 200.0, 0.5)
@@ -61,11 +61,20 @@ class AcousticPipeline:
     def learning(self) -> bool:
         return self.floor_energy is None
 
-    def band_energy(self, x: np.ndarray) -> float:
+    def band_energy(self, x: np.ndarray) -> np.ndarray:
+        """Energy per 1/3-octave band in the detection band (mean over channels)."""
         X = np.fft.rfft(x * np.hanning(len(x))[:, None], axis=0)
+        p = (np.abs(X) ** 2).mean(axis=1)
         f = np.fft.rfftfreq(len(x), 1.0 / self.cfg.fs)
-        m = (f >= self.cfg.detect_fmin) & (f <= self.cfg.detect_fmax)
-        return float((np.abs(X[m]) ** 2).mean())
+        edges = self.cfg.detect_fmin * 2.0 ** (np.arange(0, 64) / 3.0)
+        edges = edges[edges <= self.cfg.detect_fmax * 1.0001]
+        return np.array([p[(f >= lo) & (f < hi)].mean() for lo, hi in zip(edges[:-1], edges[1:])])
+
+    def detection_db(self, e: np.ndarray) -> float:
+        """k-th largest band excess over the floor: one loud band (a tone already there, a bird) is not enough,
+        a broadband or harmonic source raises several."""
+        ex = np.sort(10 * np.log10(e / np.maximum(self.floor_energy, 1e-30)))[::-1]
+        return float(ex[min(self.cfg.detect_bands, len(ex)) - 1])
 
     def engine_score(self, x: np.ndarray) -> float:
         """Harmonic comb (dB): max over f0 in 20-200 Hz of the median over harmonics (up to detect_fmax) of the
@@ -100,10 +109,10 @@ class AcousticPipeline:
                 self.srp.learn_noise(noise)
                 n = int(c.window_s * c.fs)
                 es = [self.band_energy(noise[k:k + n]) for k in range(0, len(noise) - n + 1, n)]
-                self.floor_energy = float(np.median(es))
+                self.floor_energy = np.median(es, axis=0)
                 self._learn = []
             return WindowResult(t, levels, 0.0, False, 0.0, True, None), None
-        band_db = 10 * np.log10(e / max(self.floor_energy, 1e-30))
+        band_db = self.detection_db(e)
         detected = band_db >= c.detect_db
         doa = self.srp.estimate(x)
         eng = self.engine_score(x)

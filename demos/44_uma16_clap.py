@@ -51,18 +51,30 @@ def main():
     ap.add_argument("--truth-az", type=float, default=None, help="true compass bearing of the clapper")
     ap.add_argument("--memory", type=float, default=None, help="claps older than this (s) are forgotten")
     ap.add_argument("--threshold", type=float, default=None, help="onset ratio over the noise floor (default 8)")
+    ap.add_argument("--min-rms", type=float, default=None,
+                    help="absolute onset level, 1-3.5 kHz band RMS (default 1.5e-3; mics down into cardboard ~1e-4)")
     ap.add_argument("--max-s", type=float, default=None, help="stop after this many seconds of audio")
     ap.add_argument("--no-record", action="store_true", help="live: do not save the raw 16-ch audio")
     ap.add_argument("--udp", type=str, default=None,
                     help="host[:port] of the sim (demos/50_base_3d.py, port 5005): send every new bearing")
+    ap.add_argument("--calibrate", action="store_true",
+                    help="clap from --truth-az (cardboard N arrow = 0, default); save the mounting to mount.json")
     args = ap.parse_args()
 
     if args.list:
         live.list_devices()
         return
     acfg = AcousticConfig()
-    mount = Mounting(acfg.x_axis_bearing_deg if args.north is None else args.north,
-                     acfg.mics_up and not args.mics_down)
+    mount_file = data_dir() / "acoustic" / "mount.json"
+    if args.calibrate:
+        args.truth_az = 0.0 if args.truth_az is None else args.truth_az
+        mount = Mounting(0.0 if args.north is None else args.north, not args.mics_down)
+    elif args.north is None and mount_file.exists():
+        mount = Mounting(**json.loads(mount_file.read_text(encoding="utf-8")))
+        print(f"mounting from {mount_file}")
+    else:
+        mount = Mounting(acfg.x_axis_bearing_deg if args.north is None else args.north,
+                         acfg.mics_up and not args.mics_down)
     array_enu = tuple(float(v) for v in args.array_enu.split(",")) if args.array_enu else None
     session = data_dir() / "acoustic" / datetime.now().strftime("clap_%Y%m%d_%H%M%S")
     session.mkdir(parents=True, exist_ok=True)
@@ -78,6 +90,10 @@ def main():
         ccfg.memory_s = args.memory
     if args.threshold is not None:
         ccfg.threshold_ratio = args.threshold
+    if args.min_rms is not None:
+        ccfg.min_rms = args.min_rms
+    elif not mount.mics_up:
+        ccfg.min_rms = 1e-4  # mics into the cardboard: claps arrive ~10x weaker
     det = ClapBearing(ccfg, mount, array_enu)
     udp = None
     if args.udp:
@@ -132,6 +148,10 @@ def main():
                        rms_err_deg=round(float(np.sqrt(np.mean(np.square(errs)))), 1))
         # compass = north -/+ array az: shifting --north shifts every bearing by the same amount
         summary["suggested_north"] = round((mount.x_axis_bearing_deg - mean_err) % 360.0, 1)
+        if args.calibrate:
+            mount_file.write_text(json.dumps({"x_axis_bearing_deg": summary["suggested_north"],
+                                              "mics_up": mount.mics_up}, indent=2), encoding="utf-8")
+            print(f"saved {mount_file}: north {summary['suggested_north']}, mics {'up' if mount.mics_up else 'down'}")
     (session / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
 

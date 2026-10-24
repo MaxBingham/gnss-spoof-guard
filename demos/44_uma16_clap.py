@@ -52,7 +52,7 @@ def main():
     ap.add_argument("--memory", type=float, default=None, help="claps older than this (s) are forgotten")
     ap.add_argument("--threshold", type=float, default=None, help="onset ratio over the noise floor (default 8)")
     ap.add_argument("--min-rms", type=float, default=None,
-                    help="absolute onset level, 1-3.5 kHz band RMS (default 1.5e-3; mics down into cardboard ~1e-4)")
+                    help="absolute onset level, 1-3.5 kHz band RMS (default 1.5e-3; mics down 1.2e-3)")
     ap.add_argument("--max-s", type=float, default=None, help="stop after this many seconds of audio")
     ap.add_argument("--no-record", action="store_true", help="live: do not save the raw 16-ch audio")
     ap.add_argument("--udp", type=str, default=None,
@@ -93,7 +93,9 @@ def main():
     if args.min_rms is not None:
         ccfg.min_rms = args.min_rms
     elif not mount.mics_up:
-        ccfg.min_rms = 1e-4  # mics into the cardboard: claps arrive ~10x weaker
+        # mics into the cardboard: real claps measured 1.7e-3..1e-2, typing / voices 3e-4..1.4e-3
+        ccfg.min_rms = 1.2e-3
+        ccfg.min_peak = 0.2
     det = ClapBearing(ccfg, mount, array_enu)
     udp = None
     if args.udp:

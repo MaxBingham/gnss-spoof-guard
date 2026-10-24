@@ -68,6 +68,10 @@ class CameraConfig:
     front_width: int = 320
     front_height: int = 240
     jpeg_quality: int = 80
+    # downward thermal (LWIR) camera, same mount as "down": 640 x 512, 50 deg horizontal FOV (sfhack/thermal/camera.py)
+    thermal_width: int = 640
+    thermal_height: int = 512
+    thermal_hfov_deg: float = 50.0
 
 
 @dataclass

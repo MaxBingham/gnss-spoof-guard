@@ -53,6 +53,25 @@ Long evals: run them from a frozen worktree so later edits do not leak in:
 | Backup videos | `$SFHACK_DATA/night/demo/` |
 | Docs | `docs/NIGHT_DEMO.md`, `docs/MAP_PACKAGE.md` ("Outside the US"), `DEMO_NIGHT.md` |
 
+## Final eval artifacts
+
+| Run | Code | Rows | Where |
+|---|---|---|---|
+| main | d2405bc | thermal, imu_trn (3 missions), straight + low_contrast (ukraine-1), low_contrast (berkeley) | `$SFHACK_DATA/night/eval/final_d2405bc` |
+| rw | 4e91336 | thermal_rw (ukraine-1) | `.../final_rw_4e91336` |
+| fix | b5409f4 | thermal (3 missions) | `.../final_fix_b5409f4` |
+| fix straight | b5409f4 | straight (ukraine-1, 8 seeds) | `.../final_fix_straight_b5409f4` |
+| fix low contrast | b5409f4 | low_contrast (ukraine-1, berkeley) | `.../final_fix_lowc_b5409f4` |
+
+Frozen mission data used by all of them: `$SFHACK_DATA/night/demo_eval_snap`. Logs: `$SFHACK_DATA/night/eval_*.log`.
+Rebuild the combined table + plot:
+
+```
+$D = "$env:SFHACK_DATA/night/eval"
+uv run python scripts/night_eval_report.py $D/final_d2405bc $D/final_rw_4e91336 "$D/final_fix_b5409f4::+tiltfix" `
+    "$D/final_fix_straight_b5409f4::+tiltfix" "$D/final_fix_lowc_b5409f4::+tiltfix" --out docs/night_eval
+```
+
 ## Next
 
 See REPORT_night-demo.md, "Next steps".

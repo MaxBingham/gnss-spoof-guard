@@ -74,3 +74,11 @@ Figures: `docs/night_route_ukraine-1.png`, `docs/night_route_berkeley.png`, `doc
 
 See docs/MAP_PACKAGE.md, "Outside the US": Sentinel-2 L2A + Copernicus GLO-30 + OSM, mission `ukraine-1`
 (Skhidnytsia), paved / unpaved road table, figure `docs/ukraine-1_roads.png`.
+
+## Results (final eval, 2026-10-24 night)
+
+20 seeds per mission, 23:00, 60 m AGL, GNSS completely off from 20 % of the route, arrival error at B <= 5 m:
+final build (night route + night-nav's tilt-bias learning) **berkeley 20/20, m-c804bb84 20/20, ukraine-1 20/20**
+(mean 0.4 / 0.9 / 1.9 m). Without thermal (IMU + TRN): 19/20, 11/20, 0/20. ukraine-1 on the straight route over
+the forest: 7/8 with the fix, 11/20 before it (vs 15/20 along the roads). Mild night (contrast x 0.4): berkeley
+18/20, ukraine-1 19/20. Full table, method, plot: REPORT_night-demo.md and `docs/night_eval/`.

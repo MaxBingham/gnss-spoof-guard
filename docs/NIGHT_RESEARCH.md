@@ -524,6 +524,26 @@ Summaries: [fresno](night_research/aster_night_fresno_summary.md), [davis](night
 5. In simulation we measure it honestly over 20 seeds, in Berkeley and in Ukraine: we report the share of flights
    that end within 5 m of the target with a 95 % confidence interval, not a single good video.
 
+   With numbers (team eval, see "Team results" below): with GNSS off from 20 % of the route, 20 of 20 night
+   flights reach the target within 5 m on each of three missions (Berkeley, a hill, Ukraine). Without the thermal
+   camera it is 19, 11 and 0 of 20.
+
+**Team results quoted in the pitch** (not my work; from `REPORT_night-demo.md` on branch `night-demo`, commit
+0035a9d, read at 06:05 on 2026-10-24; harness `demos/30_night_eval.py`, truth-scored, 60 m AGL, 23:00):
+
+| Mission | Thermal + TRN + IMU, final build | 95 % Wilson | Mean / worst arrival error | IMU + TRN only | Mild night (true contrast 0.4x) |
+|---|---|---|---|---|---|
+| berkeley | 20/20 | 84-100 % | 0.4 / 0.9 m | 19/20 | 18/20 |
+| m-c804bb84 (hill) | 20/20 | 84-100 % | 0.9 / 2.0 m | 11/20 | not run |
+| ukraine-1 (route along the roads) | 20/20 | 84-100 % | 1.9 / 2.5 m | 0/20 | 19/20 |
+
+- Success = horizontal truth error <= 5 m when the drone decides it is above B. Landing is not scored.
+- The IMU + TRN baseline was measured on the build before the tilt fix (night-demo d2405bc).
+- On ukraine-1 the straight route over the forest did worse before the fix (11/20 vs 15/20 along the roads).
+  With the fix it was 7/8 vs 20/20. These are small samples: suggestive, not conclusive.
+- night-nav's own run of the mild night (their build and data) gives berkeley 20/20 and hill 20/20. The table
+  above uses night-demo's integrated build.
+
 **Likely jury questions**
 - *"Doesn't this break with clouds, wind or rain?"*
   - Clouds after a sunny day keep the pavement warm; the contrast stays ~9 K in our model.
@@ -533,6 +553,9 @@ Summaries: [fresno](night_research/aster_night_fresno_summary.md), [davis](night
   - That is why the system never depends on thermal alone. When the matcher has no confident answer it gives
     no fix, and the drone continues on IMU + TRN with a growing, honestly displayed uncertainty.
   - In central Ukraine about 1 in 3 July nights is clear.
+  - In simulation, a mild night (true scene contrast cut to 0.4x while the prior still expects a hot day) still
+    gives 18/20 (Berkeley) and 19/20 (Ukraine) within 5 m. The failures are runaways where the filter stays
+    overconfident. The fix covariance should grow when contrast is low.
 - *"How is this different from what militaries already field?"*
   - Fielded systems (Maxar Raptor, Honeywell VAN, Ukrainian optical-nav modules) match camera images to stored
     imagery or 3D models. Those that publish numbers quote ~10-30 m (vendor claims).
@@ -550,8 +573,11 @@ Summaries: [fresno](night_research/aster_night_fresno_summary.md), [davis](night
 - The thermal world is simulated: our truth raster comes from the same physics as our prior, plus perturbations.
   Real cameras add vignetting, drift, non-uniformity, and unmodelled sources (traffic, AC units, wet patches).
 - Night temperatures come from a 1-D model checked against a handful of measurements; its 10 K asphalt-grass
-  contrast is about twice the two measured values. Satellite night data (90 m) confirms the signs, not the
-  magnitudes. A real night survey would certainly differ in the details.
+  contrast is about twice the two measured values. Satellite night data (90 m) is consistent with the signs; it
+  does not pin down the magnitudes. A real night survey would certainly differ in the details.
+- The 20/20 results score arrival above B, not landing. Below the thermal localizer's 10 m minimum height there
+  are no fixes. In one recorded flight the estimate drifted during the final hover, and the drone landed 6.7 m
+  from B. This is an open issue in `REPORT_night-nav.md`.
 - The 5 m target relies on low altitude and on mapped asphalt. Over parks, big roofs or rural fields between roads
   the camera often sees nothing matchable, and accuracy then rests on IMU + TRN.
 - Vendor accuracy figures we cite are claims, not independent tests.

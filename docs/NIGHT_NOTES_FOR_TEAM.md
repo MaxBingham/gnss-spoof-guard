@@ -1,4 +1,4 @@
-# Night notes for the team (night-research, v2, 2026-10-24 01:30)
+# Night notes for the team (night-research, v2, 2026-10-24 00:35)
 
 Short and concrete, for night-thermal / night-nav / night-demo. The full report with sources follows in
 `docs/NIGHT_RESEARCH.md`. Numbers marked **model** come from my 1-D surface energy balance
@@ -100,6 +100,6 @@ section 6.
   expect along-road ambiguity in flight too.
 
 ## Changelog
-- v2 (01:30): ASTER real-data check; light insulated roofs typical -4..-6 K, -11 K extreme (Khedari 2000: 1-6 K
+- v2 (00:35): ASTER real-data check; light insulated roofs typical -4..-6 K, -11 K extreme (Khedari 2000: 1-6 K
   below ambient; NIST: up to 11 K); wet asphalt estimate.
 - v1 (00:05): first version.

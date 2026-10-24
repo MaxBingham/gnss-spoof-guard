@@ -24,7 +24,7 @@ from .control.pose_source import EkfPoseSource, PoseSource
 from .estimation.ahrs import Ahrs, _rot_z
 from .estimation.ekf import Ekf
 from .messages import (
-    BaroMsg, CameraFrame, Decision, GnssMsg, Health, HealthState, ImuMsg, LidarMsg, MagMsg, MotorCmd, PoseEstimate,
+    BaroMsg, CameraFrame, CameraTiltCmd, Decision, GnssMsg, Health, HealthState, ImuMsg, LidarMsg, MagMsg, MotorCmd, PoseEstimate,
     RangeMsg, Setpoint, ThermalFrame, VisualFix,
 )
 from .perception.localizer import Localizer
@@ -100,6 +100,7 @@ class Autopilot:
         self.last_flow: Any | None = None
         self.lights = light_localizer
         self.light_localizer = light_localizer  # (alias: recon-mission's viewer reads light_localizer.last_blobs)
+        self.rear_tilt_cmd: float | None = None  # rear camera gimbal command (deg below body -x)
         self.light_frames = 0
         self.light_fixes = 0
         self.light_accepted = 0
@@ -396,6 +397,7 @@ class Autopilot:
         """Rear NIR camera: identified base lights -> position fix (NIS gate, like vision) + heading (compass bias)."""
         if self.lights is None or self.in_preflight or self.mission.done:
             return
+        self._aim_rear_camera(frame.t)
         self.light_frames += 1
         prior = self.pose(report=False)
         lf = self.lights.update(frame.t, frame.image, self.ahrs.R, prior.pos, float(np.sqrt(max(prior.cov[2, 2], 0.0))),
@@ -419,6 +421,17 @@ class Autopilot:
         self.last_light_fix = lf
         self.last_light_visual = fix
         self.bus.publish(topics.FIX, fix)
+
+    def _aim_rear_camera(self, t: float) -> None:
+        """Rear gimbal (one axis, degrees below body -x): point the optical axis at the base lights from the estimate.
+        A fixed mount sees the base only between ~0.8 and 2 km at 80 m AGL (18 deg down at 250 m, 15 deg tall FOV)."""
+        aim = self.lights.aim_point
+        d = aim - self.ekf.x[:3]
+        dep = math.atan2(-d[2], max(float(np.hypot(d[0], d[1])), 1.0))  # depression of the base, rad
+        tail = self.ahrs.R @ np.array([-1.0, 0.0, 0.0])
+        tilt = math.degrees(math.asin(max(-1.0, min(1.0, float(tail[2])))) + dep)
+        self.rear_tilt_cmd = float(np.clip(tilt, -10.0, 70.0))
+        self.bus.publish(topics.CAMERA_REAR_TILT, CameraTiltCmd(t, self.rear_tilt_cmd))
 
     def _learn_heading(self, lf: Any) -> None:
         """1-state KF on the compass bias. yaw_corr = true - AHRS heading = -(compass bias - mag_bias_est)."""

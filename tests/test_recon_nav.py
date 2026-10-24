@@ -106,7 +106,7 @@ def test_light_localizer_ids_position_and_heading() -> None:
     codes = make_codes(12)
     assert len(set(codes)) == 12
     truth = stub_base_lights(np.zeros(2), lambda x, y: 0.0)
-    loc = LightLocalizer(surveyed(truth, 0.15, 0), LightsConfig(), CameraConfig())
+    loc = LightLocalizer(surveyed(truth, 0.15, 0), LightsConfig(), CameraConfig(rear_pitch_down_deg=3.0))  # gimbal on the base
     rng = np.random.default_rng(3)
     # 1.5 km out on a bearing 60 deg (ENU yaw 30 deg), 80 m up, tail to the base; AHRS heading 1.5 deg off
     d = np.array([math.cos(math.radians(30)), math.sin(math.radians(30))])

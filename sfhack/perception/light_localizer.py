@@ -151,6 +151,8 @@ class LightLocalizer:
         self.last_blobs: list[tuple[float, float, str | None]] = []  # display: (u, v, light id or None) this frame
         self.last_ids: dict[str, tuple[float, float]] = {}  # id -> (u, v) this frame (display)
         self.n_id_conflicts = 0
+        fence = [lt.pos for lt in lights if lt.ring == "fence"] or [lt.pos for lt in lights]
+        self.aim_point = np.mean(fence, axis=0)  # where the rear gimbal points (base centre, lamp height)
         # code bits as arrays (cyclic)
         self._codes = {k: np.array([c == "1" for c in lt.code], bool) for k, lt in self.lights.items()}
 

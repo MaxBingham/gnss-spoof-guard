@@ -365,13 +365,13 @@ def draw(viewer, d, mission, pending, trail):
     add_sphere(scn, p + [0, 0, 1.2], 1.0, [1.0, 1.0, 0.1, 0.5])  # halo so the small X2 reads from far away
     for i in range(1, len(trail)):
         add_line(scn, trail[i - 1], trail[i], 0.25, [0.2, 0.9, 1.0, 0.8])
-    try:
-        info = (f"State: {mission.state}\nBearing: {('%.0f deg' % mission.bearing) if mission.bearing is not None else '-'}"
-                f"   (pending {pending:.0f})\nDistance from base: {np.linalg.norm(p[:2]):.0f} m   Alt: {p[2]:.0f} m")
-        viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_TOPLEFT,
-                          "UMA-16 -> recon drone", info))
-    except Exception:  # noqa: BLE001  (older viewer without set_texts)
-        pass
+
+
+def hud_text(d, mission, pending) -> str:
+    p = d.qpos[0:3]
+    b = f"{mission.bearing:.0f} deg" if mission.bearing is not None else "-"
+    return (f"State: {mission.state}\nBearing: {b}   (pending {pending:.0f}, ENTER to launch)\n"
+            f"Distance from base: {np.linalg.norm(p[:2]):.0f} m   Alt: {p[2]:.0f} m")
 
 
 def run_viewer(m, d, args):
@@ -426,6 +426,13 @@ def run_viewer(m, d, args):
                     trail.append(d.qpos[0:3].copy())
                     trail = trail[-400:]
                 draw(viewer, d, mission, pending, trail)
+                hud = hud_text(d, mission, pending)
+            # set_texts takes the viewer's lock itself: calling it inside `with viewer.lock()` deadlocks
+            try:
+                viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                                  "UMA-16 -> recon drone", hud))
+            except AttributeError:  # older viewer without set_texts
+                pass
             if mission.log and mission.log[-1] != last_print:
                 last_print = mission.log[-1]
                 print(last_print)

@@ -56,7 +56,7 @@ What to point at:
 ## What to say (short)
 
 - "At night a drone without GNSS is blind to normal cameras. But asphalt stores the day's heat and stays
-  warm for hours after sunset, while grass and trees cool down."
+  several degrees warmer than grass all night, while grass and trees cool down."
 - "From open daytime data, satellite imagery and OpenStreetMap, we predict what the ground looks like in
   thermal at 23:00. The drone matches its thermal camera against that prediction to know where it is."
 - "We plan the route where the camera will see roads. If it sees nothing, it keeps flying on inertial and
@@ -64,12 +64,14 @@ What to point at:
 - Result (fill from the final table): "<X>/20 flights end within 5 m of B in Berkeley, <Y>/20 in the
   Ukraine mission, GNSS off from 20 % of the route."
 
-Real-data backing (night-research, branch night-research, docs/night_research/): ASTER satellite night
-thermal (90 m, ~23:00) shows the paved road grid on hot summer nights (Fresno, 6 nights Jun-Jul; Davis July
-23:13: town +3.2 K over the fields); unpaved roads are NOT warm (Davis, Vinnytsia: 0-0.9 K cooler than road-free
-cells), which backs the paved-only road mask; matching each night image to the road map recovered the
-satellite's own 80-310 m geolocation error every time. Slide figure:
-`docs/night_research/aster_night_fresno_2003-07-28.png`.
+Real-data backing (night-research NIGHT_NOTES v4, branch night-research, docs/night_research/): ASTER satellite
+night thermal (90 m, ~23:00) shows the paved road grid on hot summer nights (Fresno, 6 nights Jun-Jul; Davis July
+23:13: town +3.2 K over the fields). No evidence that unpaved roads are warm (Davis, Vinnytsia: 0-0.9 K cooler
+than road-free cells), consistent with our paved-only road mask. Registering each night image to the road map
+finds a consistent 150-340 m offset, consistent with the satellite's own night geolocation error (no independent
+truth for it). Slide figure: `docs/night_research/aster_night_fresno_2003-07-28.png`. Asphalt vs grass: about
+5 K measured (up to ~10 K in our model) on clear calm nights after a hot day. Fielded GNSS-free systems that
+publish numbers quote ~10-30 m (vendor claims); one public night-thermal flight: < 15 m RMS.
 
 Honest limits (if asked): simulated thermal world and camera; hot day = the favourable case (our scenario);
 mild nights have less contrast (ASTER over Berkeley in spring: road cells only ~0.1-0.7 K warmer at 90 m) -> the

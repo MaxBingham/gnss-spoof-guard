@@ -74,7 +74,7 @@ def fly(job: dict) -> dict:
     _apply_sets(cfg, job.get("set", {}))
     cond = Conditions().update({"gnss.mode": "ok"})
     t_wall = time.time()
-    fs = FlightSystem(cfg=cfg, mission=job["mission"], seed=job["seed"], conditions=cond, night=True,
+    fs = FlightSystem(cfg=cfg, mission=job.get("mission_path") or job["mission"], seed=job["seed"], conditions=cond, night=True,
                       cruise_agl=job["agl"], thermal_renderer=job["renderer"], thermal_contrast=job.get("contrast", 1.0))
     ap = fs.autopilot
     wps = [w for w in fs.mission.waypoints if w.phase in ("TAKEOFF", "CRUISE")]
@@ -175,10 +175,12 @@ def main() -> None:
     ap.add_argument("--set", action="append", default=[], help="section.field=value config override (tuples: a:b:c)")
     ap.add_argument("--tag", default="", help="output folder / table name instead of the method")
     ap.add_argument("--out", default=str(data_dir() / "night" / "nav_eval"))
+    ap.add_argument("--mission-root", default="", help="read missions from <root>/<id> (a frozen copy) instead of "
+                    "$SFHACK_DATA/missions: the thermal files there get rebuilt in place")
     ap.add_argument("--trace", action="store_true", help="print the per-second trace of every flight")
     args = ap.parse_args()
     sets = dict(s.split("=", 1) for s in args.set)
-    jobs = [dict(mission=m, method=meth, seed=s, agl=args.agl, gnss_off_frac=args.gnss_off_frac, renderer=args.renderer,
+    jobs = [dict(mission=m, mission_path=str(Path(args.mission_root) / m) if args.mission_root else "", method=meth, seed=s, agl=args.agl, gnss_off_frac=args.gnss_off_frac, renderer=args.renderer,
                  max_t=args.max_t, out=args.out, set=sets, contrast=args.contrast, tag=(args.tag + "_" + meth.replace("+", "_")) if args.tag else "")
             for m in args.mission.split(",") for meth in args.methods.split(",")
             for s in range(args.seed0, args.seed0 + args.seeds)]

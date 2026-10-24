@@ -16,15 +16,23 @@ Missions need `world/thermal_truth.npz` + `onboard/thermal_prior.npz`; if missin
 
 Backup videos (if the live sim misbehaves), in `$env:SFHACK_DATA\night\demo\`, final build (b5409f4):
 **`ukraine-1_night_final.mp4`** (80 s, 4x, N at 76 s, ends "ABOVE B 1.5 m from B") and
-**`berkeley_night_final.mp4`** (2x, N at 40 s). 1920x1080, mp4v codec (no ffmpeg on this machine: play with VLC or
-a browser). Older takes: `*_v2.mp4` (before the tilt-bias fix, ukraine ends 3.8 m), `*_night.mp4` (end on the
-landing-outcome banner; landing is not part of tonight's scenario).
+**`berkeley_night_final_trim.mp4`** (65 s, 2x, N at 40 s, "ABOVE B 0.7 m", ends during the descent). 1920x1080,
+mp4v codec (no ffmpeg on this machine: play with VLC or a browser). Do NOT show the untrimmed
+`berkeley_night_final.mp4` past ~65 s: after the thermal fixes stop near the ground the hover in LAND drifts away
+(landing is tomorrow's work). Older takes: `*_v2.mp4` (before the tilt-bias fix, ukraine ends 3.8 m),
+`*_night.mp4` (end on the landing-outcome banner).
+
+**Speed**: the night sim costs ~230 ms per thermal frame (camera render + localizer) and ran at ~0.5x real time on
+this machine tonight (GPU busy with training, other agents' evals). If the window is choppy or slow, add
+`--thermal-hz 2.5` (half the thermal frames; validated: see REPORT, "thermal_2hz5") and keep speed 2x. Berkeley is
+short (~2 min of flight) and the better live demo; show Ukraine as the backup video, or live with `--thermal-hz 2.5`
+and key 4.
 
 ## Live, option A: straight from the terminal
 
 ```
-uv run python demos/demo_live.py --mission ukraine-1 --night --fullscreen
-uv run python demos/demo_live.py --mission berkeley --night --cruise-agl 60 --fullscreen
+uv run python demos/demo_live.py --mission berkeley --night --cruise-agl 60 --fullscreen     # short, best live
+uv run python demos/demo_live.py --mission ukraine-1 --night --fullscreen --thermal-hz 2.5  # long: key 4
 ```
 
 ## Live, option B: the planner page

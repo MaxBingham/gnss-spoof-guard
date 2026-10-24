@@ -103,6 +103,13 @@ format and frames in `docs/MAP_PACKAGE.md` (the contract with V3.2 and the objec
   the 30 m minimum cruise AGL.
 - Results (vision, seeds 0-4): berkeley 5/5 ARRIVED, mean 0.79 m from B; campus-glade 5/5, mean 1.21 m (worst 2.14 m).
 
+## Base <-> drone comms (MAVLink 2)
+
+`sfhack/comms` (docs/MAVLINK.md): `drone_link.py` is onboard (truth separation applies; `comms/` is in the test's
+onboard set), `base_link.py` is the base, `loopback.py` runs both in lockstep with the sim. The link model reaches them
+only as a `gate()` callable. Tracker harness: `--comms mavlink` (default) | `inproc`. Signing always on in the demo.
+YOLO on the GPU is not bit-repeatable (ultralytics sets cudnn.benchmark): compare transports with `--detector oracle`.
+
 ## Conventions
 
 World = local ENU (x east, y north, z up), origin = map center, yaw 0 = east CCW. All parameters in

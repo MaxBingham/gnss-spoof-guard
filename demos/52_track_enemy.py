@@ -6,6 +6,11 @@ front camera (YOLO), follows it at a standoff and reports it to the base over th
     uv run python demos/52_track_enemy.py --headless --bearing 60 --script-bearing   # no window: fly, print, score
     uv run python demos/52_track_enemy.py --record out.mp4 --bearing 60 --script-bearing --speed 2      # MP4
     uv run python demos/52_track_enemy.py --headless --detector oracle   # perfect detector (truth boxes): flight logic
+    uv run python demos/52_track_enemy.py --headless --bearing 60 --comms inproc   # old in-process base <-> drone path
+
+Base <-> drone: MAVLink 2 over UDP (signed; --comms mavlink, the default), base UDP 14560, drone UDP 14561, and the
+base forwards the drone's packets to QGroundControl on UDP 14550 (docs/MAVLINK.md). --comms inproc: the in-process
+path (same mission, no packets).
 
 Acoustic re-acquisition: while the link is up the base sends the UMA-16 bearing to the enemy ~1 Hz (sigma grows with
 the distance; the base tells our drone and the enemy apart by their rotor sound, ASSUMED to work in the sim:
@@ -91,7 +96,8 @@ def make_detector(args, tcfg: TrackerConfig):
 def new_scenario(world, args, detector, tcfg: TrackerConfig) -> TrackScenario:
     sc = TrackScenario(world, seed=args.seed, detector=detector, tcfg=tcfg, enemy_speed=args.enemy_speed,
                        availability=args.link, score=args.score or args.detector == "oracle",
-                       send_bearings=not args.no_base_bearing, forced_losses=args.forced_losses)
+                       send_bearings=not args.no_base_bearing, forced_losses=args.forced_losses, comms=args.comms,
+                       qgc=not args.no_qgc)
     if args.detector == "oracle":
         sc.pilot.detector = OracleDetector(sc.cam)
     if args.gnss_off:
@@ -146,6 +152,9 @@ def run_headless(world, args, tcfg: TrackerConfig) -> int:
                   f"dist to enemy {'-' if d is None else f'{d:6.1f}'} m  track err {te} m  AGL {sc.agl():4.0f}  "
                   f"rx {len(sc.received):3d}  det {sc.pilot.detect_ms:4.1f} ms", flush=True)
     print(summary(sc))
+    if sc.mav is not None:
+        print(sc.mav.stats())
+    sc.close()
     print(f"wall {time.time() - wall:.1f} s ({sc.t / max(time.time() - wall, 1e-6):.2f}x real time)")
     return 0 if sc.pilot.first_track_t is not None else 1
 
@@ -183,6 +192,9 @@ def run_record(world, args, tcfg: TrackerConfig) -> int:
     video.close()
     comp.close()
     print(summary(sc))
+    if sc.mav is not None:
+        print(sc.mav.stats())
+    sc.close()
     print(f"video: {out}  ({n} frames, {n / fps:.1f} s)")
     return 0
 
@@ -301,6 +313,7 @@ def run_viewer(world, args, tcfg: TrackerConfig) -> None:
             elif k == "BACKSPACE":
                 print(f"t={sc.t:6.1f}s RESET", flush=True)
                 comp.close()
+                sc.close()
                 sc = new_scenario(world, args, detector, tcfg)
                 comp = TrackComposer(sc, W, H)
                 script = BearingScript(pending, args.seed) if args.script_bearing else None
@@ -309,6 +322,7 @@ def run_viewer(world, args, tcfg: TrackerConfig) -> None:
                 if video is not None:
                     video.close()
                 comp.close()
+                sc.close()
                 cv2.destroyAllWindows()
                 return
         now = time.perf_counter()
@@ -345,6 +359,7 @@ def run_viewer(world, args, tcfg: TrackerConfig) -> None:
     if video is not None:
         video.close()
     comp.close()
+    sc.close()
     cv2.destroyAllWindows()
 
 
@@ -362,6 +377,9 @@ def main() -> None:
     ap.add_argument("--weights", default=None, help="YOLO weights (default TrackerConfig.weights under $SFHACK_DATA)")
     ap.add_argument("--enemy-speed", type=float, default=4.0, help="m/s (0 = random 3-5)")
     ap.add_argument("--link", type=float, default=0.8, help="link availability")
+    ap.add_argument("--comms", choices=("mavlink", "inproc"), default="mavlink",
+                    help="base <-> drone transport: MAVLink 2 over UDP (default) or the in-process path")
+    ap.add_argument("--no-qgc", action="store_true", help="do not forward the drone's MAVLink to QGC (UDP 14550)")
     ap.add_argument("--gnss-off", action="store_true", help="GNSS off from the start (key N toggles)")
     ap.add_argument("--no-base-bearing", action="store_true", help="the base sends no acoustic bearings in flight")
     ap.add_argument("--forced-losses", type=int, default=0,

@@ -566,3 +566,42 @@ class TrackerConfig:
 
     def focal_px(self) -> float:
         return (self.cam_w / 2) / math.tan(math.radians(self.hfov_deg) / 2)
+
+
+@dataclass
+class CommsConfig:
+    """Base <-> drone link over MAVLink 2 (sfhack/comms, docs/MAVLINK.md): UDP in the sim, a radio later.
+
+    The geodetic origin is the surveyed base (the UMA-16 mast, world (0, 0)); world z (the onboard datum, 0 = pad
+    ground) goes on the wire as AMSL = origin_alt_m + z. The demo origin is a made-up rural spot, not a real base."""
+
+    host: str = "127.0.0.1"
+    base_port: int = 14560  # the base listens here (drone -> base)
+    drone_port: int = 14561  # the drone listens here (base -> drone)
+    qgc_port: int = 14550  # QGroundControl's default UDP listen port; the base forwards the drone's packets there
+    qgc_forward: bool = True
+    drone_sysid: int = 1
+    drone_compid: int = 1  # MAV_COMP_ID_AUTOPILOT1
+    base_sysid: int = 250  # not 255: QGroundControl itself uses 255
+    base_compid: int = 190  # MAV_COMP_ID_MISSIONPLANNER (a GCS)
+    # MAVLink 2 signing: key = SHA-256 of the passphrase (env SFHACK_MAVLINK_KEY overrides). Unsigned or wrongly
+    # signed packets are dropped by both endpoints. Demo key: change it for anything real.
+    signing_passphrase: str = "sfhack-demo-signing-key"
+    signing: bool = True
+    origin_lat: float = 49.2500
+    origin_lon: float = 31.9000
+    origin_alt_m: float = 150.0
+    heartbeat_hz: float = 1.0
+    link_timeout_s: float = 2.5  # no HEARTBEAT from the peer for this long -> link down
+    telemetry_hz: float = 4.0  # GLOBAL_POSITION_INT, LOCAL_POSITION_NED
+    attitude_hz: float = 10.0
+    status_hz: float = 1.0  # SYS_STATUS, GPS_RAW_INT, EXTENDED_SYS_STATE
+    home_hz: float = 0.2
+    cmd_retry_s: float = 0.5  # COMMAND_LONG resent until COMMAND_ACK
+    report_resend_s: float = 1.0  # an enemy report not acknowledged (TRACK_REPORT_ACK) is resent after this
+    image_payload: int = 253  # ENCAPSULATED_DATA payload bytes
+
+    def signing_key(self) -> bytes:
+        import hashlib
+
+        return hashlib.sha256((os.environ.get("SFHACK_MAVLINK_KEY") or self.signing_passphrase).encode()).digest()

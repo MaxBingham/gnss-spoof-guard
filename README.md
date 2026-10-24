@@ -36,6 +36,22 @@ thermal camera.
 
 UMA-16 geometry, real recordings and open drone-audio datasets: https://github.com/JLrobot/Mic-Challenge
 
+## Base <-> drone link: MAVLink 2
+
+All base <-> drone traffic in the tracker (`demos/52_track_enemy.py`) is **signed MAVLink 2** over UDP (base 14560,
+drone 14561): standard messages (HEARTBEAT both ways = link state, GLOBAL_POSITION_INT, ATTITUDE, SYS_STATUS,
+COMMAND_LONG launch / recall, CAMERA_TRACKING_GEO_STATUS for the enemy track, ENCAPSULATED_DATA for the snapshot)
+plus a 3-message dialect (`ACOUSTIC_BEARING`, report bookkeeping + ACK). Reports buffer during link outages and are
+resent until acknowledged; unsigned or forged commands are dropped. The base forwards the drone's packets to
+QGroundControl on UDP 14550, so the drone shows up live on the QGC map. `--comms inproc` keeps the old in-process
+path. Details, message list, QGC how-to: [docs/MAVLINK.md](docs/MAVLINK.md).
+
+```
+uv run python demos/52_track_enemy.py --headless --bearing 60           # over MAVLink (default)
+uv run python -m sfhack.comms.signing_check                            # forged / replayed commands are dropped
+uv run python -m sfhack.comms.gcs_listen                               # what QGC sees, without QGC
+```
+
 ## Disclosure
 
 Prior work, built before the hackathon: the MuJoCo Skydio X2 simulation, the AHRS and EKF state estimation, the vision map-localizer, the Berkeley world, the autopilot and landing logic, the degradation levers, and the live viewer. Built on Saturday: detection, trust ranking, and the decision policy.

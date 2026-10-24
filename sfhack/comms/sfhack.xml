@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<!-- sfhack MAVLink 2 dialect: the base (UMA-16 microphone array) <-> our drone. Everything else is common.xml.
+     Message ids 54400-54402: unused by the dialects shipped with pymavlink 2.4.50 (mavgen fails on a clash).
+     docs/MAVLINK.md explains each message and why the standard set is not enough for it. -->
+<mavlink>
+  <include>common.xml</include>
+  <version>3</version>
+  <dialect>54</dialect>
+  <enums>
+    <enum name="SFHACK_ACOUSTIC_SOURCE">
+      <description>What an acoustic bearing points at (the base tells them apart by their rotor sound).</description>
+      <entry value="0" name="SFHACK_ACOUSTIC_SOURCE_UNKNOWN"/>
+      <entry value="1" name="SFHACK_ACOUSTIC_SOURCE_ENEMY"><description>The intruding drone.</description></entry>
+      <entry value="2" name="SFHACK_ACOUSTIC_SOURCE_OWN_DRONE"><description>Our own drone (position fix from the base).</description></entry>
+    </enum>
+    <enum name="SFHACK_TRACKER_STATE">
+      <description>Onboard tracker state when an enemy report was made.</description>
+      <entry value="0" name="SFHACK_TRACKER_STATE_OTHER"/>
+      <entry value="1" name="SFHACK_TRACKER_STATE_SEARCH"/>
+      <entry value="2" name="SFHACK_TRACKER_STATE_DETECTED"/>
+      <entry value="3" name="SFHACK_TRACKER_STATE_TRACKING"/>
+      <entry value="4" name="SFHACK_TRACKER_STATE_LOST"/>
+    </enum>
+  </enums>
+  <messages>
+    <message id="54400" name="ACOUSTIC_BEARING">
+      <description>Direction of a sound source measured by the base's microphone array (UMA-16), base to drone, ~1 Hz.</description>
+      <field type="uint64_t" name="time_usec" units="us">Measurement time (base clock).</field>
+      <field type="float" name="azimuth" units="deg">Compass bearing from the array, 0 = north, clockwise.</field>
+      <field type="float" name="elevation" units="deg">Elevation above the horizon. NaN if unknown.</field>
+      <field type="float" name="azimuth_sigma" units="deg">1-sigma of the azimuth.</field>
+      <field type="float" name="elevation_sigma" units="deg">1-sigma of the elevation. NaN if unknown.</field>
+      <field type="float" name="confidence">Detection confidence 0..1. NaN if unknown.</field>
+      <field type="uint8_t" name="source" enum="SFHACK_ACOUSTIC_SOURCE">What the bearing points at.</field>
+      <field type="uint8_t" name="array_id">Microphone array id (several arrays per base).</field>
+    </message>
+    <message id="54401" name="TRACK_REPORT_INFO">
+      <description>Bookkeeping of one buffered enemy report, drone to base. Sent right before the report's CAMERA_TRACKING_GEO_STATUS (and its image, if any); the base acknowledges the complete report with TRACK_REPORT_ACK.</description>
+      <field type="uint64_t" name="time_usec" units="us">When the report was made (drone clock).</field>
+      <field type="uint32_t" name="report_seq">Report sequence number, from 1.</field>
+      <field type="int32_t" name="own_lat" units="degE7">Our drone's estimated position when the report was made.</field>
+      <field type="int32_t" name="own_lon" units="degE7">Our drone's estimated position when the report was made.</field>
+      <field type="float" name="own_alt" units="m">Our drone's estimated altitude (AMSL) when the report was made.</field>
+      <field type="float" name="target_agl" units="m">Target height above the onboard terrain map.</field>
+      <field type="float" name="confidence">Track confidence 0..1.</field>
+      <field type="uint32_t" name="image_size" units="bytes">Size of the JPEG snapshot that follows (DATA_TRANSMISSION_HANDSHAKE + ENCAPSULATED_DATA), 0 = none.</field>
+      <field type="uint8_t" name="tracker_state" enum="SFHACK_TRACKER_STATE">Tracker state.</field>
+    </message>
+    <message id="54402" name="TRACK_REPORT_ACK">
+      <description>The base received enemy report report_seq completely (base to drone); the drone drops it from its resend buffer.</description>
+      <field type="uint32_t" name="report_seq">Acknowledged report.</field>
+    </message>
+  </messages>
+</mavlink>

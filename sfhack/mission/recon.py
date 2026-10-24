@@ -556,6 +556,20 @@ class ReconMission:
         lim = math.radians(45.0) * dt
         self.yaw = math.atan2(math.sin(self.yaw + np.clip(err, -lim, lim)), math.cos(self.yaw + np.clip(err, -lim, lim)))
 
+    def rear_tilt_deg(self, pose: PoseEstimate) -> float | None:
+        """Rear NIR gimbal tilt (deg below body -x) that puts the base centre on the optical axis: the depression
+        angle to the base plus the body's own pitch (nose-down cruise tilts the tail camera up)."""
+        if self.phase in ("PREFLIGHT", "LANDED", "REPORT"):
+            return None
+        d = pose.pos[:2] - self.pad
+        dist = float(np.linalg.norm(d))
+        if dist < 20.0:
+            return None
+        dep = math.degrees(math.atan2(pose.pos[2] - (self.pad_z + 3.0), dist))  # lights ~3 m up the fence posts
+        back = -pose.R[:, 0]  # body -x in the world
+        up = math.degrees(math.asin(float(np.clip(back[2], -1.0, 1.0))))
+        return float(np.clip(dep + up, -10.0, 70.0))
+
     # ------------------------------------------------------------------ thermal (camera rate)
 
     def on_thermal(self, frame: ThermalFrame, pose: PoseEstimate) -> None:

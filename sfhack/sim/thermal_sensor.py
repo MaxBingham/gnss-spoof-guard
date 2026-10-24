@@ -80,7 +80,7 @@ class ThermalSensor:
     """Publishes a ThermalFrame at `hz` from the simulator's current state (call `step()` after each sim step)."""
 
     def __init__(self, sim: Any, bus: Any, mission_dir: Path, world: Any, hz: float = 5.0, seed: int = 0,
-                 renderer: str = "auto", contrast: float = 1.0) -> None:
+                 renderer: str = "auto", contrast: float = 1.0, target_scene: Path | str | None = None) -> None:
         """`contrast`: scale the TRUE scene's temperatures around the air temperature (0.4 = a mild night: real
         ASTER night scenes over Berkeley suggest 1-3 K road contrast instead of the model's 5-10 K). The onboard
         prior is not changed, so this is also a prior-vs-reality contrast mismatch."""
@@ -97,7 +97,7 @@ class ThermalSensor:
             try:
                 from ..thermal.camera import ThermalCamera, load_truth  # night-thermal's renderer
 
-                self.truth = load_truth(truth_path)
+                self.truth = load_truth(truth_path, target_scene=target_scene)  # the scene the world was built with
                 self.kind = "full"
                 # Created at the first frame: it draws into the simulator's GL context (one context; switching
                 # between two costs ~50 ms per frame on Windows). The camera's calibration error is per seed.

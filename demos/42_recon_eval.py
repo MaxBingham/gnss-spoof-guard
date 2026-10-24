@@ -93,7 +93,7 @@ def main() -> None:
     ap.add_argument("--seed0", type=int, default=0)
     ap.add_argument("--navs", default="default", help="comma list: imu,flow,lights (recon-nav) or default")
     ap.add_argument("--workers", type=int, default=6)
-    ap.add_argument("--thermal-hz", type=float, default=2.0)
+    ap.add_argument("--thermal-hz", type=float, default=None)
     ap.add_argument("--gnss-on", action="store_true")
     ap.add_argument("--bearing", default=None)
     a = ap.parse_args()
@@ -119,7 +119,7 @@ def main() -> None:
                       f"false={r['n_false_finds']} landed={r['landed']} land_err={r['landing_err_m']:.1f} m "
                       f"t={r['mission_time_s']:.0f} s  wall {r['wall_s']:.0f} s", flush=True)
             (out / "results.json").write_text(json.dumps(results, indent=1, default=str), encoding="utf-8")
-    md = (f"# Recon eval {stamp}\n\nmission {a.mission}, seeds {a.seed0}-{a.seed0 + a.seeds - 1}, thermal {a.thermal_hz} Hz"
+    md = (f"# Recon eval {stamp}\n\nmission {a.mission}, seeds {a.seed0}-{a.seed0 + a.seeds - 1}, thermal {a.thermal_hz or 'cfg'} Hz"
           f"{', GNSS ON (stand-in)' if a.gnss_on else ', GNSS off at 50 m'}, wall {time.time() - t0:.0f} s\n\n{table(results)}\n")
     (out / "table.md").write_text(md, encoding="utf-8")
     print(md)

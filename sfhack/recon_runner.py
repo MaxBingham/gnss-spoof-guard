@@ -28,15 +28,23 @@ from .perception.thermal_detect import ThermalDetector
 from .runner import FlightSystem
 
 
-def true_targets(mission_dir: Path) -> list[dict[str, Any]]:
-    """world/target_scene.json objects with their kind (target | distractor); harness only."""
-    p = Path(mission_dir) / "world" / "target_scene.json"
+def scene_path(mission_dir: Path, scene_seed: int | None) -> Path | None:
+    """recon-world's per-seed scene world/recon/seed_<k>/target_scene.json (None: world/target_scene.json)."""
+    if scene_seed is None:
+        return None
+    p = Path(mission_dir) / "world" / "recon" / f"seed_{scene_seed}" / "target_scene.json"
+    return p if p.exists() else None
+
+
+def true_targets(mission_dir: Path, scene: Path | None = None) -> list[dict[str, Any]]:
+    """target_scene.json objects with their kind (target | distractor); harness only."""
+    p = scene or Path(mission_dir) / "world" / "target_scene.json"
     if not p.exists():
         return []
     objs = json.loads(p.read_text(encoding="utf-8")).get("objects", [])
     out = []
     for k, o in enumerate(objs):
-        kind = o.get("kind") or o.get("role") or ("distractor" if o.get("distractor") else "target")
+        kind = o.get("role") or o.get("kind") or ("distractor" if o.get("distractor") else "target")
         out.append({"name": o.get("name", f"target{k}"), "kind": "target" if kind in ("target", "vehicle", "person",
                     "people", "truck", "car") else kind, "xy": np.asarray(o["pos"][:2], float),
                     "class": o.get("class", o.get("label", o.get("name", "")))})
@@ -44,21 +52,22 @@ def true_targets(mission_dir: Path) -> list[dict[str, Any]]:
 
 
 def simulate_bearing(mission_dir: Path, base_xy: np.ndarray, seed: int, sigma_deg: float = 7.0,
-                     bias_std_deg: float = 4.0) -> dict[str, Any]:
+                     bias_std_deg: float = 4.0, scene: Path | None = None) -> dict[str, Any]:
     """Bearing to the target cluster as the base array would report it: recon-world's sim_array when present,
     else true azimuth + a per-seed bias + noise, sigma `sigma_deg` (engine noise, 1.5-3 km)."""
+    pre = Path(mission_dir) / "world" / "recon" / f"seed_{seed}" / "bearing.json"  # recon-world's per-seed array
+    if scene is not None and pre.exists() and pre.parent == scene.parent:
+        return json.loads(pre.read_text(encoding="utf-8"))
     try:
-        from .acoustic import sim_array  # recon-world
+        from .acoustic import sim_array  # recon-world: (BearingEstimate | None, info)
 
-        for fn in ("simulate_bearing", "bearing_from_truth", "simulate"):
-            if hasattr(sim_array, fn):
-                try:
-                    return getattr(sim_array, fn)(mission_dir, seed=seed)
-                except TypeError:
-                    continue
-    except ImportError:
+        out = sim_array.simulate_bearing(mission_dir, seed)
+        b = out[0] if isinstance(out, tuple) else out
+        if b is not None:
+            return b
+    except (ImportError, AttributeError, TypeError, FileNotFoundError):
         pass
-    tg = [t["xy"] for t in true_targets(mission_dir) if t["kind"] == "target"]
+    tg = [t["xy"] for t in true_targets(mission_dir, scene) if t["kind"] == "target"]
     if not tg:
         raise ValueError(f"no targets in {mission_dir}/world/target_scene.json: give a bearing")
     c = np.mean(tg, axis=0) - base_xy
@@ -73,11 +82,13 @@ class ReconFlight:
     def __init__(self, mission: str = "ukraine-1", seed: int = 0, bearing: Any = None, nav: str | None = None,
                  cfg: Config | None = None, gnss_off_m: float | None = 50.0, thermal_hz: float | None = None,
                  thermal_renderer: str = "auto", run_id: str | None = None, out_root: Path | None = None,
-                 render_front: bool = False) -> None:
+                 render_front: bool = False, scene_seed: int | str | None = "seed", rear_camera: bool = False) -> None:
+        """`scene_seed`: recon-world's per-seed target scene (world/recon/seed_<k>/); "seed" = the flight seed,
+        None = world/target_scene.json."""
         self.cfg = cfg or default_config()
         self.cfg.thermal.method = "off"  # no map-matching on the thermal prior: the thermal camera FINDS things here
-        if thermal_hz is not None:
-            self.cfg.thermal.camera_hz = thermal_hz
+        if thermal_hz is not None:  # optical flow (nav flow / lights) needs >= 5 Hz
+            self.cfg.thermal.camera_hz = max(thermal_hz, 5.0) if nav in ("flow", "lights") else thermal_hz
         params = inspect.signature(FlightSystem).parameters
         kw: dict[str, Any] = {}
         if nav is not None:
@@ -90,20 +101,34 @@ class ReconFlight:
         self.nav = nav
         self.seed = seed
         cond = Conditions().update(gnss__mode="ok")
+        from .runner import resolve_mission
+
+        self.scene = scene_path(resolve_mission(mission), seed if scene_seed == "seed" else scene_seed)
+        if self.scene is not None and "target_scene" in params:
+            kw["target_scene"] = self.scene
         self.fs = fs = FlightSystem(cfg=self.cfg, mission=mission, night=True, localizer="off", seed=seed,
                                     conditions=cond, render_front=render_front, thermal_renderer=thermal_renderer, **kw)
         if fs.thermal_sensor is None:
             from .sim.thermal_sensor import ThermalSensor
 
             fs.thermal_sensor = ThermalSensor(fs.sim, fs.bus, fs.mission_dir, fs.world, hz=self.cfg.thermal.camera_hz,
-                                              seed=seed, renderer=thermal_renderer)
+                                              seed=seed, renderer=thermal_renderer, target_scene=self.scene)
+        # rear NIR camera (recon-world): reuse the one the nav stack made (light localizer), else make one for the
+        # viewer when the world has base lights
+        self.rear = next((v for v in vars(fs).values() if type(v).__name__ == "RearCameraSensor"), None)
+        self._own_rear = False
+        if self.rear is None and rear_camera and fs.world_dir is not None and (fs.world_dir / "base_lights.json").exists():
+            from .sim.rear_camera import RearCameraSensor
+
+            self.rear = RearCameraSensor(fs.sim, fs.bus, fs.world_dir, seed=seed)
+            self._own_rear = True
         om = fs.onboard_map
         assert om is not None and fs.mission_dir is not None
         self.mission_id = fs.mission_dir.name
         self.base = load_base(fs.onboard_dir, om.a_enu)
         pad = np.asarray(self.base["pad_enu"], float)
         if bearing is None:
-            bearing = simulate_bearing(fs.mission_dir, pad, seed)
+            bearing = simulate_bearing(fs.mission_dir, pad, seed, scene=self.scene)
         self.bearing = load_bearing(bearing)
         self.recon = ReconMission(self.cfg.recon, self.cfg.mission, self.bearing, pad, fs.mission.yaw,
                                   ground_z=om.ground_z, map_inside=lambda xy, m: om.contains(xy, m), onboard_map=om,
@@ -134,6 +159,8 @@ class ReconFlight:
 
     def step(self) -> None:
         self.fs.step()
+        if self._own_rear:
+            self.rear.step()
         tr = self.fs.truth.state()
         if self.gnss_off_t is None and self.gnss_off_m is not None and \
                 float(np.linalg.norm(tr.pos[:2] - self.spawn[:2])) >= self.gnss_off_m:
@@ -177,7 +204,7 @@ class ReconFlight:
         import cv2
 
         cv2.imwrite(str(self.out_dir / "map_truth.png"), draw_map(
-            m, truth_track=tt, truth_targets=[(t["xy"], t["kind"]) for t in true_targets(self.fs.mission_dir)],
+            m, truth_track=tt, truth_targets=[(t["xy"], t["kind"]) for t in true_targets(self.fs.mission_dir, self.scene)],
             title=f"SCORED (truth): {self.mission_id} seed {self.seed}"))
         return s
 
@@ -185,7 +212,7 @@ class ReconFlight:
         fs, m = self.fs, self.recon
         truth = fs.truth.state()
         pad_true = np.asarray(fs.world.a_enu, float)
-        tg = true_targets(fs.mission_dir)
+        tg = true_targets(fs.mission_dir, self.scene)
         targets = [t for t in tg if t["kind"] == "target"]
         finds = (m.report or {}).get("finds", [])
         per_find = []

@@ -50,23 +50,15 @@ class ReconView:
         self.truth_trail: list[np.ndarray] = []
         self.est_trail: list[np.ndarray] = []
         self._next_trail = 0.0
-        self.targets = true_targets(self.fs.mission_dir)
+        self.targets = true_targets(self.fs.mission_dir, rf.scene)
         self.pad = self.m.pad
         self.pad_z = float(self.fs.true_ground_z(*self.pad))
-        self.rear = None  # recon-world's rear NIR camera (sfhack/sim/rear_camera.py), when merged
-        self.rear_img: np.ndarray | None = None
-        self.rear_t = -1.0
-        try:
-            from sfhack.sim import rear_camera  # noqa: F401
+        self.rear = rf.rear  # recon-world's RearCameraSensor (shared with the light localizer when nav uses it)
+        self.blink = None
+        if self.rear is not None:
+            from sfhack.sim.base_lights import BlinkAnimator
 
-            cls = getattr(rear_camera, "RearCamera", None)
-            if cls is not None:
-                try:
-                    self.rear = cls(self.fs.sim, self.fs.mission_dir)
-                except TypeError:
-                    self.rear = cls(self.fs.sim)
-        except Exception:  # noqa: BLE001  (not merged yet / different API: panel shows a placeholder)
-            self.rear = None
+            self.blink = BlinkAnimator(self.fs.sim.model, self.rear.lights)  # the 3D lights blink their codes
         self.map_img: np.ndarray | None = None
         self._map_t = -1.0
         self.decisions_seen = 0
@@ -86,28 +78,20 @@ class ReconView:
             self.est_trail.append(self.fs.autopilot.pose(report=False).pos.copy())
 
     def rear_frame(self) -> np.ndarray | None:
-        if self.rear is None or self.t - self.rear_t < 0.1:
-            return self.rear_img
-        self.rear_t = self.t
-        for fn in ("render", "frame", "capture"):
-            f = getattr(self.rear, fn, None)
-            if f is None:
-                continue
-            try:
-                out = f()
-            except TypeError:
-                out = f(self.fs.sim.data)
-            img = getattr(out, "image", out)
-            if isinstance(img, np.ndarray):
-                self.rear_img = img
-            break
-        return self.rear_img
+        last = getattr(self.rear, "last", None)
+        return None if last is None else last.image
+
+    def toggle_lights(self) -> str:
+        if self.rear is None:
+            return "no base lights in this world"
+        self.rear.lights.enabled = not getattr(self.rear.lights, "enabled", True)
+        return "on" if self.rear.lights.enabled else "OFF"
 
     def draw_geoms(self, scn: Any) -> None:
         g = Geoms(scn)
         m = self.m
         z0 = self.pad_z
-        g.cylinder([self.pad[0], self.pad[1], z0 + 0.08], 4.0, 0.06, GREEN3, 0.95, emission=0.4)
+        g.cylinder([self.pad[0], self.pad[1], z0 + 0.08], 2.5, 0.06, GREEN3, 0.95, emission=0.4)
         g.cylinder([self.pad[0], self.pad[1], z0 + 40.0], 0.5, 40.0, GREEN3, 0.18, emission=0.6)
         u = az_to_unit(m.az)
         n = np.array([u[1], -u[0]])
@@ -179,6 +163,8 @@ class ReconComposer:
         tr, est = view.fs.truth.state(), view.fs.autopilot.pose(report=False)
         aim = ((p(16) + p(380) + self.W - rw - m) / 2, (p(60) + self.H - p(330)) / 2, self.W, self.H, self.fovy)
         cam = self.chase.update(0.0 if paused else dt * speed, tr.pos, tr.vel, est.pos, aim=aim)  # sim time
+        if view.blink is not None:
+            view.blink.update(view.t)
         img = self.sr.render(view.fs.sim.data, cam, view.draw_geoms, None, (0, 0, 0), 0.0)
         t0 = time.perf_counter()
         th = int(rw * 512 / 640)
@@ -239,12 +225,21 @@ class ReconComposer:
                         0.5, (150, 160, 175), 1, cv2.LINE_AA)
         else:
             g = rimg if rimg.ndim == 3 else cv2.cvtColor(rimg.astype(np.uint8), cv2.COLOR_GRAY2RGB)
-            img = cv2.resize(g, (w, h), interpolation=cv2.INTER_AREA)
-            ll = getattr(view.fs.autopilot, "light_localizer", None)  # recon-nav: ids of the decoded lights
+            iw = min(w, int(h * g.shape[1] / g.shape[0]))  # keep the camera's aspect (letterbox)
+            x0 = (w - iw) // 2
+            img = np.full((h, w, 3), 8, np.uint8)
+            img[:, x0:x0 + iw] = cv2.resize(g, (iw, h), interpolation=cv2.INTER_AREA)
+            sx, sy = iw / g.shape[1], h / g.shape[0]
+            for lt in getattr(view.rear, "last_truth", []) or []:  # truth labels (harness display), grey
+                if isinstance(lt, dict) and lt.get("in_view") and not lt.get("occluded"):
+                    q = (x0 + int(lt["u"] * sx), int(lt["v"] * sy))
+                    cv2.putText(img, str(lt.get("id", "")), (q[0] + 6, q[1] + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.38,
+                                (140, 140, 150), 1, cv2.LINE_AA)
+            ll = getattr(view.fs.autopilot, "light_localizer", None)  # recon-nav: lights it decoded, green
             for b in getattr(ll, "last_blobs", []) or []:
                 try:
                     u, v, lid = b[0], b[1], b[2]
-                    q = (int(u * w / g.shape[1]), int(v * h / g.shape[0]))
+                    q = (x0 + int(u * sx), int(v * sy))
                     cv2.circle(img, q, 8, (0, 255, 120), 1, cv2.LINE_AA)
                     cv2.putText(img, str(lid), (q[0] + 9, q[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 120), 1)
                 except (IndexError, TypeError):
@@ -289,7 +284,7 @@ class ReconComposer:
             gnss = True
         d.text((p(14), y), "GNSS", font=f2, fill=TEXT)
         d.text((p(70), y), "ON" if gnss else "OFF (jammed)", font=f2, fill=GREEN if gnss else RED)
-        nav = view.rf.nav or "imu"
+        nav = "GNSS stand-in" if view.rf.gnss_off_m is None else (view.rf.nav or "imu+compass+baro")
         d.text((W - p(14), y), f"nav: {nav}", font=f2, fill=CYAN, anchor="ra")
         y += p(24)
         est = fs.autopilot.pose(report=False)

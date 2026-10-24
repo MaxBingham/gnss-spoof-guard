@@ -13,10 +13,11 @@ How (per frame, ~10 ms at 640 x 512):
 2. Hysteresis: pixels above `t_low` K, components that reach `t_high` K somewhere.
 3. Each component -> ground metres (gsd at the estimated height), minAreaRect length / width, mean / peak anomaly
    -> class:
-     vehicle  length 3-10 m, width 1.2-3.5 m, area 3.5-35 m^2, mean anomaly >= vehicle_min_mean_K (a running or
+     vehicle  length 3-12 m, width 1.2-4.5 m, area 3.5-45 m^2, mean anomaly >= vehicle_min_mean_K (a running or
               just-stopped engine warms the whole body: parked cars at night are BELOW air temperature, only a
               recently driven one has a 2 m^2 warm hood)
-     person   area 0.12-1.5 m^2, peak >= person_min_peak_K
+     person   area 0.08-0.9 m^2, length <= 1.3 m, peak >= person_min_peak_K (8 K: warm rocks peak lower)
+     fire     tiny and > 60 K: rejected
      rejected hot spot (HVAC unit, a parked car's hood, a moving car's engine bay), elongated / blocky warm
               ground (rocks, roads), roof-sized (barn roof), or at a building (onboard DSM > DTM + 2.5 m within
               5 m: roof edges and walls seen obliquely)
@@ -70,8 +71,12 @@ class DetectorParams:
     vehicle_wid_m: tuple[float, float] = (1.2, 4.5)
     vehicle_area_m2: tuple[float, float] = (3.5, 45.0)
     vehicle_min_mean_K: float = 5.0
-    person_area_m2: tuple[float, float] = (0.12, 1.5)
-    person_min_peak_K: float = 4.0
+    # people (seen from above ~0.5 x 0.3 m, +8.5 K body / +11 K head over the air) vs warm rocks (<= 1.8 m,
+    # +4..5.5 K over the air, i.e. <= ~7 K over grass): the peak separates them
+    person_area_m2: tuple[float, float] = (0.08, 0.9)
+    person_max_len_m: float = 1.3
+    person_min_peak_K: float = 8.0
+    fire_peak_K: float = 60.0  # a campfire (+300 K) or a burning wreck: hot spot, never a person / vehicle body
     roof_margin_m: float = 2.5  # DSM above DTM by more than this = on a roof ...
     roof_radius_m: float = 5.0  # ... anywhere within this distance of the blob
     min_agl_m: float = 15.0
@@ -170,7 +175,9 @@ class ThermalDetector:
     def _classify(self, area: float, length: float, width: float, mean: float,
                   peak: float) -> tuple[str | None, float, str]:
         p = self.p
-        if p.person_area_m2[0] <= area <= p.person_area_m2[1] and length <= 2.0:
+        if peak > p.fire_peak_K and area < p.vehicle_area_m2[0]:
+            return None, 0.0, f"fire ({peak:.0f} K)"
+        if p.person_area_m2[0] <= area <= p.person_area_m2[1] and length <= p.person_max_len_m:
             if peak < p.person_min_peak_K:
                 return None, 0.0, "small, too cold"
             conf = _ramp(peak, p.person_min_peak_K, p.person_min_peak_K + 4.0) * 0.8 + 0.2 * _ramp(area, 0.12, 0.3)

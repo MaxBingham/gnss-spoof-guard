@@ -43,7 +43,7 @@ def make_flight(a: argparse.Namespace) -> ReconFlight:
         print(f"bearing: {bearing} -> {json.loads(Path(bearing).read_text(encoding='utf-8'))}")
     return ReconFlight(mission=a.mission, seed=a.seed, bearing=bearing, nav=a.nav, cfg=cfg,
                        gnss_off_m=None if a.gnss_on else 50.0, thermal_hz=a.thermal_hz,
-                       run_id=f"{time.strftime('%Y%m%d-%H%M%S')}_demo_s{a.seed}")
+                       run_id=f"{time.strftime('%Y%m%d-%H%M%S')}_demo_s{a.seed}", rear_camera=not a.headless)
 
 
 def press(view: ReconView, k: str) -> str:
@@ -52,17 +52,7 @@ def press(view: ReconView, k: str) -> str:
         view.rf.gnss_off()
         return "GNSS off"
     if k == "L":
-        fs = view.fs
-        for name in ("toggle_lights", "set_lights"):  # recon-world / recon-nav hook
-            f = getattr(fs, name, None) or getattr(fs.sim, name, None)
-            if f is not None:
-                try:
-                    return f"lights {f()}"
-                except TypeError:
-                    on = not getattr(fs.sim, "lights_on", True)
-                    f(on)
-                    return f"lights {'on' if on else 'off'}"
-        return "no base lights in this world yet"
+        return f"base lights {view.toggle_lights()}"
     return ""
 
 
@@ -191,7 +181,7 @@ def main() -> None:
     ap.add_argument("--live-bearing", action="store_true", help="use $SFHACK_DATA/acoustic/bearing.json (demos/40_uma16_live.py)")
     ap.add_argument("--nav", default=None, help="imu | flow | lights (recon-nav; default: the FlightSystem default)")
     ap.add_argument("--gnss-on", action="store_true", help="keep GNSS on (development stand-in for a working nav)")
-    ap.add_argument("--thermal-hz", type=float, default=2.0)
+    ap.add_argument("--thermal-hz", type=float, default=None, help="thermal camera rate (default cfg, 5 Hz; >= 5 with flow)")
     ap.add_argument("--battery-min", type=float, default=0.0)
     ap.add_argument("--speed", type=int, default=4)
     ap.add_argument("--headless", action="store_true")

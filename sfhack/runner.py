@@ -93,6 +93,7 @@ class FlightSystem:
         thermal_renderer: str = "auto",
         thermal_contrast: float = 1.0,
         night_route: bool = True,
+        target_scene: str | Path | None = None,
     ) -> None:
         """`conditions`: initial degradation levers (default `cfg.conditions`). `schedule`: lever changes
         at sim times, [(t, {'gnss': 'drag:1.5@90', 'wind.speed': 6}), ...] (see sfhack.degradation.cli).
@@ -104,7 +105,8 @@ class FlightSystem:
         many m above the onboard DTM (cruise_at_agl). `thermal_renderer`: auto | full | stub.
         `night_route` (night-demo, night only, needs onboard/thermal_prior.npz): re-plan on the onboard map with the
         route choice of sfhack/planning/night_route.py (straight while warm road is expected in the thermal footprint,
-        else along the roads), at `cruise_agl` (default: the package's min_agl_m). Result in `self.night_route`."""
+        else along the roads), at `cruise_agl` (default: the package's min_agl_m). Result in `self.night_route`.
+        `target_scene` (recon seeds): another world/target_scene.json for the simulated world and its thermal truth."""
         self.cfg = cfg or default_config()
         self.night = night
         self.night_route = None  # NightRouteResult when the night route choice re-planned the route
@@ -138,7 +140,7 @@ class FlightSystem:
                 if not (self.world_dir / ALT_TEXTURE).exists():
                     raise FileNotFoundError(f"{ALT_TEXTURE} missing in {self.world_dir} (build it with the world builder)")
                 texture = ALT_TEXTURE
-            world = PackageWorld(self.world_dir, texture_file=texture)
+            world = PackageWorld(self.world_dir, texture_file=texture, target_scene=target_scene)
             # Onboard map: the mission package as uploaded to the drone (verified copy), else as built; the
             # sample world uses its own package for both.
             onboard_dir = self.world_dir
@@ -185,7 +187,8 @@ class FlightSystem:
             from .perception.thermal_localizer import ThermalLocalizer
             from .sim.thermal_sensor import ThermalSensor
             self.thermal_sensor = ThermalSensor(self.sim, self.bus, self.mission_dir, world, hz=self.cfg.thermal.camera_hz,
-                                                seed=seed, renderer=thermal_renderer, contrast=thermal_contrast)
+                                                seed=seed, renderer=thermal_renderer, contrast=thermal_contrast,
+                                                target_scene=target_scene)
             prior = self.onboard_dir / "thermal_prior.npz"
             if not prior.exists():  # uploaded before the thermal prior was built: use the built package's
                 prior = self.mission_dir / "onboard" / "thermal_prior.npz"

@@ -8,9 +8,10 @@
 
 Stage -> sim: a person walks around the array with a speaker playing drone sound. The INTRUDER (red quad) sits
 `--range` m out (default 500; `--range-from-level`: louder = closer, 150-1200 m) and `--intruder-agl` m above the
-terrain, always exactly on the drawn sound line (the smoothed bearing our drone hears too); with
-`--intruder-free` it flies after it instead, speed-limited (`--intruder-speed`, 20 m/s, accelerations <= 4 m/s^2).
-At 500 m one degree of walking is 8.7 m, so walk about 1 deg/s. Silent: it hovers.
+terrain, always exactly on the drawn sound line, and it closes on the base along that line
+(`--approach`, 15 m/s, never inside `--r-min`). With `--intruder-free` it flies after the line instead,
+speed-limited (`--intruder-speed`). At 500 m one degree of walking is 8.7 m, so walk about 1 deg/s.
+Silent: it hovers where it is.
 
 Audio in (UDP 5005, the 45 listener's contract): BearingEstimate JSON + az_rate_dps, level_db, seq, detected=true;
 one {"detected": false} on loss (= silent at once); plain BearingEstimate JSON (the clap listener) and bare numbers
@@ -19,8 +20,9 @@ they persist 1 s (then the bearing jumps there).
 
 Our drone knows only what the array sends (bearing + sigma, about 5 Hz), not the range:
   WAIT -> TAKEOFF (sound heard for 1.5 s) -> INTERCEPT: fly out along the audio ray at 15 m/s, leading the
-  bearing rate, the gimbal camera looking along the ray -> TRACK: the camera confirmed the intruder (3 hits in
-  2 s); hold station 40 m short of it and keep it centred -> LOST (no hit for 3 s): back to the audio ray.
+  bearing rate, the gimbal camera looking along the ray. At ~100 mph. -> STRIKE: the camera confirmed the
+  intruder (3 hits in 2 s); fly straight at it on the camera estimate -> STRUCK inside 8 m, then home.
+  LOST (no hit for 3 s): back onto the audio ray at the range the camera measured.
   Short dropouts: keep flying the last bearing + rate (extrapolated up to 3 s).
   No sound for 15 s, or 1500 m out (never further) -> RETURN -> DESCEND -> LANDED.
 
@@ -54,8 +56,10 @@ base = importlib.import_module("50_base_3d")
 PAD, az_to_dir, add_line, add_sphere, add_label = base.PAD, base.az_to_dir, base.add_line, base.add_sphere, base.add_label
 
 HUNT_AGL = 55.0            # our drone while searching (the intruder flies higher: the camera looks a little up)
-HUNT_SPEED = 15.0
-TRACK_SPEED = 18.0
+HUNT_SPEED = 45.0          # ~100 mph: a fast quad can do this; the run-in uses the same speed
+STRIKE_M = 8.0             # camera-guided run-in counts as a strike inside this (m)
+APPROACH = 15.0            # intruder closes on the base along the sound line (m/s)
+R_MIN = 50.0               # it never comes closer than this
 STANDOFF = 40.0
 MAX_OUT = 1500.0
 LEAD_S = 4.0               # aim where the bearing will be in this many seconds
@@ -267,9 +271,11 @@ class Intruder:
     at most `speed` m/s, accelerations <= INTRUDER_ACC (no teleports, no jitter); hovers while silent. After a
     silence or a bearing jump it heads straight for the new bearing (max speed when far)."""
 
-    def __init__(self, range_m: float, agl: float, speed: float, ground, range_from_level: bool = False):
+    def __init__(self, range_m: float, agl: float, speed: float, ground, range_from_level: bool = False,
+                 approach: float = 0.0, r_min: float = R_MIN):
         self.range_m, self.agl, self.speed, self.ground = range_m, agl, speed, ground
         self.range_from_level = range_from_level
+        self.approach, self.r_min = approach, r_min
         self.r_cur = range_m
         self.level_ref: float | None = None
         self.az: float | None = None
@@ -303,6 +309,8 @@ class Intruder:
         """line_az given: sit exactly on the drawn sound line (the bearing our drone hears), no lag of its own."""
         if self.pos is None:
             return
+        if hearing and self.approach > 0.0 and not self.range_from_level:
+            self.r_cur = max(self.r_min, self.r_cur - self.approach * dt)
         if line_az is not None:
             xy = az_to_dir(line_az) * self.r_cur
             step = xy - self.pos[:2]
@@ -386,7 +394,8 @@ class Camera:
 
 # ------------------------------------------------------------------------------------------------- hunter
 class Hunter(base.Mission):
-    """Our X2: WAIT -> TAKEOFF -> INTERCEPT <-> TRACK / LOST -> RETURN -> DESCEND -> LANDED."""
+    """Our X2: WAIT -> TAKEOFF -> INTERCEPT -> STRIKE (camera lock) -> RETURN -> DESCEND -> LANDED.
+    LOST falls back to the audio ray at the range the camera measured."""
 
     def __init__(self, ground, agl: float = HUNT_AGL):
         super().__init__(MAX_OUT, ground)
@@ -395,6 +404,7 @@ class Hunter(base.Mission):
         self.t_hit = -1e9
         self.est: np.ndarray | None = None
         self.r_est: float | None = None   # target range from the base, known once the camera has confirmed it
+        self.struck = False
         self.t_launch: float | None = None
         self.t_found: float | None = None
 
@@ -414,11 +424,11 @@ class Hunter(base.Mission):
         if self.state in ("INTERCEPT", "LOST") and len(self.hits) >= CONFIRM_HITS:
             if self.t_found is None:
                 self.t_found = t
-            self._go("TRACK", t)
+            self._go("STRIKE", t)
 
     def aim(self, cam: Camera, audio: Audio, t: float) -> None:
         c = cam.pos()
-        if self.state == "TRACK" and self.est is not None:
+        if self.state == "STRIKE" and self.est is not None:
             v = self.est - c
         elif audio.az is not None and self.r_est is not None and self.est is not None:
             p = az_to_dir(audio.predict(t)) * self.r_est   # lost: on the sound line at the range we saw it at
@@ -430,8 +440,8 @@ class Hunter(base.Mission):
         else:
             return
         tri = lambda period: 2 * abs((t / period) % 1.0 - 0.5) * 2 - 1    # noqa: E731  (-1..1 triangle)
-        sweep_y = 0.0 if self.state == "TRACK" else float(np.clip(2 * audio.sigma - FOV_H / 2, 0, 30)) * tri(3.0)
-        sweep_p = 0.0 if self.state == "TRACK" else 5.0 * tri(4.0)
+        sweep_y = 0.0 if self.state == "STRIKE" else float(np.clip(2 * audio.sigma - FOV_H / 2, 0, 30)) * tri(3.0)
+        sweep_p = 0.0 if self.state == "STRIKE" else 5.0 * tri(4.0)
         cam.yaw = math.atan2(v[1], v[0]) + math.radians(sweep_y)
         cam.pitch = math.atan2(v[2], float(np.linalg.norm(v[:2]))) + math.radians(sweep_p)
 
@@ -454,26 +464,23 @@ class Hunter(base.Mission):
                 self._go("RETURN", t)
                 return
             az = audio.predict(t) + float(np.clip(audio.rate, -5, 5)) * LEAD_S   # dropouts: last bearing + rate
-            r_goal = min(r_sp + 80.0, MAX_OUT) if self.r_est is None else min(max(self.r_est - STANDOFF, 0.0), MAX_OUT)
+            r_goal = min(r_sp + 250.0, MAX_OUT) if self.r_est is None else min(self.r_est, MAX_OUT)
             self._move_xy(az_to_dir(az) * r_goal, HUNT_SPEED, dt)
             self._terrain(dt, self.agl)
-        elif s == "TRACK":
+        elif s == "STRIKE":
             if audio.silent_for(t) > GIVE_UP_S:   # the sound stopped: the demo is over
                 self._go("RETURN", t)
                 return
             if t - self.t_hit > LOST_S:
                 self._go("LOST", t)
                 return
-            dxy = self.est[:2] - self.sp[:2]
-            n = max(float(np.linalg.norm(dxy)), 1e-6)
-            goal = self.est[:2] - dxy / n * STANDOFF
-            r_goal = float(np.linalg.norm(goal))
-            if r_goal > MAX_OUT - 1.0:
-                goal *= (MAX_OUT - 1.0) / r_goal
-            self._move_xy(goal, TRACK_SPEED, dt)
-            self.yaw = math.atan2(dxy[1], dxy[0])
-            floor = float(self.ground(*self.sp[:2])) + 20.0
-            self._move_z(max(float(self.est[2]) - 10.0, floor), dt)
+            if float(np.linalg.norm(pos - self.est)) < STRIKE_M:
+                self.struck = True
+                self._go("RETURN", t)
+                return
+            self._move_xy(self.est[:2], HUNT_SPEED, dt)
+            self.yaw = math.atan2(self.est[1] - self.sp[1], self.est[0] - self.sp[0])
+            self._move_z(float(self.est[2]), dt)
         else:
             super().update(pos, t, dt)
 
@@ -609,11 +616,29 @@ def walk_messages(args, rng: np.random.Generator) -> list[tuple[float, dict]]:
 
 
 # -------------------------------------------------------------------------------------------------- world
+class HunterController(base.Controller):
+    """The base demo clips horizontal acceleration at 4 m/s^2, which cannot reach ~100 mph in a short run."""
+
+    def __call__(self, pos, vel, R, omega, p_ref, v_ref, yaw_ref):
+        acc = self.kp * (p_ref - pos) + self.kd * (v_ref - vel)
+        acc[:2] = np.clip(acc[:2], -25.0, 25.0)
+        acc[2] = np.clip(acc[2], -15.0, 20.0)
+        f = self.mass * (acc + [0, 0, 9.81])
+        z = f / np.linalg.norm(f)
+        xc = np.array([math.cos(yaw_ref), math.sin(yaw_ref), 0.0])
+        y = np.cross(z, xc)
+        y /= np.linalg.norm(y)
+        Rd = np.column_stack([np.cross(y, z), y, z])
+        e = 0.5 * (Rd.T @ R - R.T @ Rd)
+        torque = -self.kR * np.array([e[2, 1], e[0, 2], e[1, 0]]) - self.kw * omega
+        return np.clip(self.mix_inv @ np.array([float(f @ R[:, 2]), *torque]), 0.0, self.ctrl_max)
+
+
 class Demo:
     def __init__(self, m, d, info, args, seed: int = 0):
         self.m, self.d, self.info, self.args = m, d, info, args
         self.rng = np.random.default_rng(seed)
-        self.ctrl = base.Controller(m)
+        self.ctrl = HunterController(m)
         self.reset()
 
     def reset(self) -> None:
@@ -621,7 +646,8 @@ class Demo:
         mujoco.mj_forward(self.m, self.d)
         a, g = self.args, self.info.ground
         self.audio, self.hunter = Audio(), Hunter(g)
-        self.intruder = Intruder(a.range, a.intruder_agl, a.intruder_speed, g, a.range_from_level)
+        self.intruder = Intruder(a.range, a.intruder_agl, a.intruder_speed, g, a.range_from_level,
+                                 a.approach, a.r_min)
         self.cam = Camera(self.m, self.d, self.rng)
         self.next_frame = 0.0
         self.trail: list[np.ndarray] = []
@@ -654,7 +680,7 @@ class Demo:
             self.next_frame = d.time + FRAME_DT
             r = self.cam.frame(self.intruder.pos if h.state not in ("WAIT", "LANDED") else None)
             h.on_frame(r, d.time)
-            if h.state == "TRACK" and self.intruder.pos is not None:
+            if h.state == "STRIKE" and self.intruder.pos is not None:
                 self.track_err.append(float(np.linalg.norm(d.qpos[0:3] - self.intruder.pos)))
         pos, vel, R, om = base.state_of(d)
         h.update(pos, d.time, dt, self.audio)
@@ -700,7 +726,7 @@ class Demo:
         for p0, p1 in zip(self.trail[:-1], self.trail[1:]):
             add_line(scn, p0, p1, 0.25, [0.2, 0.9, 1.0, 0.8])
         if h.state not in ("WAIT", "LANDED"):
-            locked = h.state == "TRACK"
+            locked = h.state == "STRIKE"
             c = self.cam.pos()
             fwd, right, up = cam_axes(self.cam.yaw, self.cam.pitch)
             L = float(self.cam.last.get("dist", 300.0)) if locked else 300.0
@@ -726,9 +752,11 @@ class Demo:
         if r and h.state not in ("WAIT", "LANDED"):
             view = "OCCLUDED" if r["occluded"] else "in view" if r["in_view"] else "not in view"
             lines.append(f"Camera: intruder {view}, {r['px']:.1f} px, {r.get('dist', 0):.0f} m")
+        if it.pos is not None:
+            lines.append(f"Intruder: {it.range_from_base():.0f} m out, closing {it.approach:.0f} m/s along the sound line")
         if h.t_found is not None:
-            lines.append(f"FOUND {h.t_found - h.t_launch:.0f} s after launch")
-        if h.state == "TRACK" and h.est is not None:
+            lines.append(("STRUCK, " if h.struck else "") + f"camera lock {h.t_found - h.t_launch:.0f} s after launch")
+        if h.state == "STRIKE" and h.est is not None:
             lines.append(f"Target estimate: {np.linalg.norm(h.est[:2]):.0f} m from base, "
                          f"bearing {(90 - math.degrees(math.atan2(h.est[1], h.est[0]))) % 360:.0f} deg")
         return "\n".join(lines)
@@ -800,10 +828,10 @@ class CameraView:
             x = int(CAM_W / 2 + math.tan(math.radians(r["ah"])) / th * CAM_W / 2)
             y = int(CAM_H / 2 - math.tan(math.radians(r["av"])) / tv * CAM_H / 2)
             s = max(int(r["px"]), 8)
-            col = (40, 255, 80) if h.state == "TRACK" else (255, 220, 0) if r["hit"] else (200, 200, 200)
-            cv2.rectangle(img, (x - s, y - s), (x + s, y + s), col, 2 if h.state == "TRACK" else 1)
+            col = (40, 255, 80) if h.state == "STRIKE" else (255, 220, 0) if r["hit"] else (200, 200, 200)
+            cv2.rectangle(img, (x - s, y - s), (x + s, y + s), col, 2 if h.state == "STRIKE" else 1)
         cv2.drawMarker(img, (CAM_W // 2, CAM_H // 2), (255, 255, 255), cv2.MARKER_CROSS, 14, 1)
-        label = "LOCK" if h.state == "TRACK" else "SEARCH" if h.state in ("INTERCEPT", "LOST") else h.state
+        label = "STRIKE" if h.state == "STRIKE" else "SEARCH" if h.state in ("INTERCEPT", "LOST") else h.state
         cv2.putText(img, f"X2 CAM {FOV_H:.0f} deg  {label}", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     (255, 255, 255), 1, cv2.LINE_AA)
         cv2.rectangle(img, (0, 0), (CAM_W - 1, CAM_H - 1), (255, 255, 255), 1)
@@ -905,7 +933,7 @@ def run_headless(m, d, info, args, seed: int = 0, quiet: bool = False) -> dict:
     res = {"launched": h.t_launch is not None, "found": h.t_found is not None,
            "t_find_s": round(h.t_found - h.t_launch, 1) if h.t_found is not None else None,
            "track_dist_median_m": round(float(np.median(demo.track_err)), 1) if demo.track_err else None,
-           "state": h.state, "t": round(d.time, 1),
+           "struck": h.struck, "state": h.state, "t": round(d.time, 1),
            "landing_err_m": round(float(np.linalg.norm(d.qpos[:2] - PAD)), 2),
            "max_out_m": round(demo.max_out, 1), "intruder_max_speed_mps": round(demo.intruder.v_max, 2),
            "msgs": a.n_msgs, "gated": a.n_gated, "jumps": a.n_jumps, "loss_msgs": a.n_lost}
@@ -918,7 +946,9 @@ def run_headless(m, d, info, args, seed: int = 0, quiet: bool = False) -> dict:
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--world", choices=["farm", "simple"], default="farm")
-    ap.add_argument("--range", type=float, default=500.0, help="intruder distance from the base (m)")
+    ap.add_argument("--range", type=float, default=500.0, help="intruder start distance from the base (m)")
+    ap.add_argument("--approach", type=float, default=APPROACH, help="intruder closes on the base at this speed (m/s)")
+    ap.add_argument("--r-min", type=float, default=R_MIN, help="closest the intruder comes (m)")
     ap.add_argument("--intruder-agl", type=float, default=80.0, help="intruder height above the terrain (m)")
     ap.add_argument("--intruder-speed", type=float, default=20.0, help="max intruder speed with --intruder-free (m/s)")
     ap.add_argument("--intruder-free", action="store_true",
@@ -944,7 +974,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 def build(world: str):
-    base.CLIMB = 4.0
+    base.CLIMB, base.SINK, base.OUT_SPEED = 20.0, 12.0, HUNT_SPEED
     return base.build_model(world)
 
 

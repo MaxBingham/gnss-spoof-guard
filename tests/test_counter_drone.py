@@ -170,6 +170,20 @@ def test_clean_walk_found_and_landed(farm):
     assert r["max_out_m"] <= cd.MAX_OUT
 
 
+def test_intruder_closes_along_the_line():
+    a, it = cd.Audio(), cd.Intruder(500.0, 80.0, 20.0, flat, approach=15.0, r_min=50.0)
+    t, dt = 0.0, 0.05
+    while t < 10.0:
+        if abs(t / 0.2 - round(t / 0.2)) < 1e-6:
+            a.update(20.0, 5.0, t)
+            it.hear(a.az, t)
+        it.update(t, dt, True, a.line if a.line else a.az)
+        a.advance(t, dt)
+        t += dt
+    assert abs(it.range_from_base() - (500.0 - 15.0 * 10.0)) < 2.0
+    assert np.linalg.norm(it.pos[:2] - cd.az_to_dir(a.line) * it.r_cur) < 1e-6
+
+
 def test_intruder_on_the_sound_line():
     a, it = cd.Audio(), cd.Intruder(500.0, 80.0, 20.0, flat)
     t, dt = 0.0, 0.01

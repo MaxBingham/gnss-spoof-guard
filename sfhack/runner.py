@@ -20,7 +20,7 @@ from .config import SAMPLE_WORLD_DIR, Config, data_dir, default_config
 from .degradation.conditions import Conditions, ConditionsMsg
 from .messages import Disturbance
 from .perception.localizer import Localizer
-from .planning.mission import Mission, a_to_b_plan, fly_x2_plan, route_plan
+from .planning.mission import Mission, a_to_b_plan, cruise_at_agl, fly_x2_plan, route_plan
 from .sim.mujoco_sim import MujocoSim
 from .sim.truth import TruthPoseSource, TruthProvider
 from .world.onboard_map import OnboardMap
@@ -87,12 +87,22 @@ class FlightSystem:
         conditions: Conditions | None = None,
         schedule: list[tuple[float, dict[str, Any]]] | None = None,
         mission: str | Path | None = None,
+        night: bool = False,
+        cruise_agl: float | None = None,
+        thermal_renderer: str = "auto",
     ) -> None:
         """`conditions`: initial degradation levers (default `cfg.conditions`). `schedule`: lever changes
         at sim times, [(t, {'gnss': 'drag:1.5@90', 'wind.speed': 6}), ...] (see sfhack.degradation.cli).
         `mission`: a mission prepared by sfhack.missionprep (id under $SFHACK_DATA/missions, or its directory):
-        the simulated world (truth) comes from <mission>/world, the onboard map and route from <mission>/onboard."""
+        the simulated world (truth) comes from <mission>/world, the onboard map and route from <mission>/onboard.
+        `night` (night-nav, mission packages with thermal files): the RGB down camera is useless in the dark, so the
+        vision localizer is off; a downward thermal camera (sim/thermal_sensor.py, truth: world/thermal_truth.npz)
+        feeds the onboard ThermalLocalizer (onboard/thermal_prior.npz). `cruise_agl`: fly the package route this
+        many m above the onboard DTM (cruise_at_agl). `thermal_renderer`: auto | full | stub."""
         self.cfg = cfg or default_config()
+        self.night = night
+        if night:
+            localizer = "off"
         self.bus = Bus()
         self.seed = seed
         self.mission_dir = resolve_mission(mission) if mission is not None else None
@@ -130,6 +140,8 @@ class FlightSystem:
             yaw = math.atan2(d[1], d[0])
             route = (self.onboard_map.mission or {}).get("route")
             plan = route_plan(route, mc) if route else a_to_b_plan(start, self.goal_xy, mc)
+            if cruise_agl is not None:
+                plan = cruise_at_agl(plan, self.onboard_map.ground_z, cruise_agl)
             spawn_z = world.ground_z(*start)  # harness: the true ground under A (z datum: 0 for mission worlds)
 
         self.world = world  # simulator side: true terrain for scoring and display
@@ -142,6 +154,20 @@ class FlightSystem:
         self.conditions_log: list[tuple[float, str]] = [(0.0, self.sim.conditions.summary())]  # harness log
         self.truth = TruthProvider(self.sim)
         start3 = np.array([start[0], start[1], 0.0])
+        self.thermal_sensor = None
+        thermal_loc = None
+        if night and self.cfg.thermal.method != "off":  # "off": IMU + baro + TRN only (baseline)
+            if self.mission_dir is None or self.onboard_dir is None:
+                raise ValueError("night mode needs a mission package (thermal_truth / thermal_prior)")
+            from .perception.thermal_localizer import ThermalLocalizer
+            from .sim.thermal_sensor import ThermalSensor
+            self.thermal_sensor = ThermalSensor(self.sim, self.bus, self.mission_dir, world, hz=self.cfg.thermal.camera_hz,
+                                                seed=seed, renderer=thermal_renderer)
+            prior = self.onboard_dir / "thermal_prior.npz"
+            if not prior.exists():  # uploaded before the thermal prior was built: use the built package's
+                prior = self.mission_dir / "onboard" / "thermal_prior.npz"
+            thermal_loc = ThermalLocalizer(self.onboard_dir, self.cfg.thermal, onboard_map=self.onboard_map,
+                                           prior_path=prior)
         self.mission = Mission(plan, start3, yaw, mc,
                                ground_z=self.onboard_map.ground_z if self.onboard_map is not None else None)
         self.autopilot = Autopilot(
@@ -151,6 +177,7 @@ class FlightSystem:
             truth_pose_source=TruthPoseSource(self.truth),
             pose_source=pose_source,
             seed=seed,
+            thermal_localizer=thermal_loc,
         )
         self.localizer_name = localizer if self.onboard_map else "off"
         self.recorder = recorder
@@ -211,6 +238,8 @@ class FlightSystem:
         while self.schedule and self.t >= self.schedule[0][0]:
             self.update_conditions(self.schedule.pop(0)[1])
         self.sim.step()
+        if self.thermal_sensor is not None:
+            self.thermal_sensor.step()
         if self.t >= self._next_log:
             self._next_log = self.t + 0.1
             est = self.autopilot.pose()

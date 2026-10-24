@@ -264,6 +264,43 @@ class HealthConfig:
 
 
 @dataclass
+class ThermalConfig:
+    """Night (night-nav): thermal localizer (perception/thermal_localizer.py) and the simulated thermal camera."""
+
+    camera_hz: float = 5.0  # thermal frames per second fed to the localizer
+    method: str = "ncc"
+    tpl_mpp: float = 0.5  # m per template cell (= prior resolution)
+    tpl_frac: float = 0.33  # template half size = this x height above the surface (footprint half ~0.37 x h)
+    tpl_min_m: float = 6.0
+    tpl_max_m: float = 22.0
+    min_alt: float = 10.0  # m above the surface: below this the footprint is too small
+    min_std_K: float = 0.4  # rectified image std below this = uniform (no fix)
+    search_margin_m: float = 6.0  # search radius = 3 sigma(prior) + margin, clipped to [min, max]
+    search_min_m: float = 8.0
+    search_max_m: float = 60.0
+    yaw_search_deg: tuple[float, ...] = (-3.0, -1.5, 0.0, 1.5, 3.0)
+    min_score: float = 0.45  # NCC peak below this -> no fix
+    min_margin: float = 0.06  # best - second local maximum below this -> ambiguous
+    peak_excl_m: float = 4.0
+    curv_ref: float = 0.05
+    sigma_floor: float = 1.0  # m
+    tilt_std_deg: float = 0.5
+    grad_min_score: float = 0.35
+    # road centerlines
+    road_trunc_m: float = 4.0  # chamfer distance truncation
+    road_temp_T_m: float = 0.25  # chamfer likelihood temperature (m of mean distance)
+    road_min_px: int = 30  # centerline pixels needed (15 m of road)
+    road_min_quality: float = 0.55  # fraction of observed centerline within 1.5 m of a prior road
+    road_sigma_floor: float = 1.0
+    road_max_minor_m: float = 6.0  # cov minor axis 1-sigma above this = no fix
+    road_include_footways: bool = True  # campus: footways are paved and warm too
+    # junctions
+    junc_gate_m: float = 12.0
+    junc_sigma: float = 2.0
+    combo_agree_chi2: float = 9.21
+
+
+@dataclass
 class DisturbanceConfig:
     wind_drag: float = 0.15  # N per m/s of relative air speed (linear drag model for wind force)
     imu_bias_jump: float = 0.3  # m/s^2, magnitude of an accel bias jump
@@ -281,6 +318,7 @@ class Config:
     localizer: LocalizerConfig = field(default_factory=LocalizerConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
     trn: TrnConfig = field(default_factory=TrnConfig)
+    thermal: ThermalConfig = field(default_factory=ThermalConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
     # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
     conditions: Conditions = field(default_factory=Conditions)

@@ -8,7 +8,9 @@ controller is a `TruthPoseSource` injected from outside (dashboard "truth" switc
 from __future__ import annotations
 
 import copy
+import math
 import time
+from typing import Any
 
 import numpy as np
 
@@ -22,7 +24,7 @@ from .estimation.ahrs import Ahrs
 from .estimation.ekf import Ekf
 from .messages import (
     BaroMsg, CameraFrame, Decision, GnssMsg, Health, HealthState, ImuMsg, LidarMsg, MagMsg, MotorCmd, PoseEstimate,
-    RangeMsg, Setpoint, VisualFix,
+    RangeMsg, Setpoint, ThermalFrame, VisualFix,
 )
 from .perception.localizer import Localizer
 from .planning.health import HealthMonitor
@@ -46,6 +48,7 @@ class Autopilot:
         truth_pose_source: PoseSource | None = None,
         pose_source: str = "ekf",
         seed: int = 0,
+        thermal_localizer: Any | None = None,
     ) -> None:
         self.cfg = cfg
         self.bus = bus
@@ -67,6 +70,17 @@ class Autopilot:
             from .world.onboard_dsm import build_dsm
             self.trn = TrnFilter(cfg.trn, build_dsm(onboard_map, cfg.trn.dsm_mpp), seed=seed)
         self.sources_used: set[str] = set()  # position sources the main filter fused (gnss / vision / trn)
+        # Night (night-nav): downward thermal camera matched against the onboard thermal prior
+        self.thermal = thermal_localizer
+        self.thermal_frames = 0
+        self.thermal_fixes = 0  # fixes the thermal localizer returned
+        self.thermal_accepted = 0  # ... fused into the main filter
+        self.thermal_ms_total = 0.0
+        self.thermal_by_method: dict[str, list[int]] = {}  # method -> [returned, accepted]
+        self.last_thermal_fix: VisualFix | None = None
+        self.thermal_log: list[tuple[float, str, float, float, bool, float]] = []  # t, method, x, y, accepted, yaw_corr
+        self.lidar_agl: float | None = None  # nadir lidar: camera height above the surface below
+        self._lidar_t = -1.0
         self.health = HealthMonitor(cfg.health)
         self.controller = GeometricController(vehicle, cfg.gains)
         self._sources: dict[str, PoseSource] = {"ekf": EkfPoseSource(self)}
@@ -105,6 +119,7 @@ class Autopilot:
         bus.subscribe(topics.CAMERA_DOWN, self.on_camera)
         bus.subscribe(topics.GNSS, self.on_gnss)
         bus.subscribe(topics.LIDAR, self.on_lidar)
+        bus.subscribe(topics.THERMAL, self.on_thermal)
 
     # ------------------------------------------------------------------ switches
 
@@ -238,6 +253,7 @@ class Autopilot:
         """TRN: one lidar scan into the particle filter. Its prior is the GNSS-free track when there is one (TRN
         must not inherit a spoof). Fixes go to the GNSS-free track always, to the main filter only while no GNSS
         arrives (the naive GNSS baseline stays as it was)."""
+        self._lidar_height(msg)
         if self.trn is None or self.in_preflight or self.mission.done:
             return
         ref = self.ekf_free if self.ekf_free is not None else self.ekf
@@ -265,6 +281,59 @@ class Autopilot:
                 self.log_decision(msg.t, self.ekf.last_decision.replace("vision fix", "TRN fix"))
             self.health.on_fix(fix)
         self.bus.publish(topics.FIX, fix)
+
+    def _lidar_height(self, msg: LidarMsg) -> None:
+        """Height above the surface below from the near-nadir lidar beams (vertical component, AHRS tilt)."""
+        R = self.ahrs.R
+        hs = []
+        for a, r in zip(msg.angles, msg.ranges):
+            if abs(a) < 0.08 and np.isfinite(r):
+                d = R @ np.array([0.0, -math.sin(a), -math.cos(a)])
+                hs.append(-r * d[2])
+        if hs:
+            self.lidar_agl = float(np.median(hs))
+            self._lidar_t = msg.t
+
+    def on_thermal(self, frame: ThermalFrame) -> None:
+        """Night: thermal fix vs the onboard thermal prior, fused like the vision fixes (NIS gate). The GNSS-free
+        track gets its own fix around its own prior first (as on_camera)."""
+        if self.thermal is None or self.in_preflight or self.mission.done:
+            return
+        agl = self.lidar_agl if self.lidar_agl is not None and frame.t - self._lidar_t < 0.5 else None
+        free = self.ekf_free
+        if free is not None:
+            ff = self.thermal.update(frame.image_K, free.pose(self.ahrs.R, self.ahrs.omega, self.ahrs.yaw, report=False),
+                                     agl, frame.intrinsics, t=frame.t)
+            if ff is not None:
+                free.update_fix(self._thermal_visual_fix(ff, frame))
+        prior = self.pose(report=False)
+        t0 = time.perf_counter()
+        tf = self.thermal.update(frame.image_K, prior, agl, frame.intrinsics, t=frame.t)
+        self.thermal_frames += 1
+        self.thermal_ms_total += (time.perf_counter() - t0) * 1000.0
+        if tf is None:
+            return
+        fix = self._thermal_visual_fix(tf, frame)
+        self.thermal_fixes += 1
+        stats = self.thermal_by_method.setdefault(tf.method, [0, 0])
+        stats[0] += 1
+        accepted = self.ekf.update_fix(fix)
+        if accepted:
+            self.thermal_accepted += 1
+            stats[1] += 1
+            self.sources_used.add("thermal")
+        self.thermal_log.append((frame.t, tf.method, float(tf.xy[0]), float(tf.xy[1]), accepted, tf.yaw_corr))
+        if self.ekf.last_decision:
+            self.log_decision(frame.t, self.ekf.last_decision.replace("vision fix", "thermal fix"))
+        self.health.on_fix(fix)
+        self.last_thermal_fix = fix
+        self.bus.publish(topics.FIX, fix)
+
+    @staticmethod
+    def _thermal_visual_fix(tf: Any, frame: ThermalFrame) -> VisualFix:
+        return VisualFix(frame.t, np.asarray(tf.xy, float).copy(), np.asarray(tf.cov, float).copy(), f"thermal-{tf.method}",
+                         n_inliers=int(round(100 * tf.quality)), proc_ms=tf.proc_ms, frame_seq=frame.seq,
+                         quality=float(tf.quality))
 
     def _on_gnss_lost(self, t: float) -> None:
         """GNSS fixes stopped (jam / receiver off). Hand over to the GNSS-free track when it is healthy (it never

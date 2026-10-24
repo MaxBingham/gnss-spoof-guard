@@ -270,3 +270,25 @@ def test_underground_building_is_not_a_roof() -> None:
         cm = classify(rgb, nir, g, {"elements": osm["elements"] + [el]}, origin, [lm])
         r, c = g.to_px(np.array([-15.0, -15.0])).round().astype(int)[::-1]
         assert (cm.cls[r, c] in (CLS["roof_dark"], CLS["roof_light"])) == roof, tags
+
+
+def test_traffic_moves_along_paved_roads() -> None:
+    g = Grid(-100.0, 100.0, 0.5, 400, 400)
+    t = np.full(g.shape, 290.0, np.float32)
+    cls = np.full(g.shape, CLS["grass"], np.uint8)
+    cls[190:210, :] = CLS["asphalt"]  # an east-west road through y = 0
+    truth = ThermalTruth(t, g, 291.0, 289.0, {}, cls=cls,
+                         roads=[{"pts_enu": [[-100.0, 0.0], [100.0, 0.0]], "width_m": 8.0}])
+    m, d = _camera_world(0.0, 0.0, 60.0)
+    cam = ThermalCamera(m, netd_K=0.0, abs_error_K=0.0, gain_error=0.0, traffic=40, seed=3)
+    a = cam.scene_temperature(d, truth)
+    assert (a > 289.0 + 10).any()  # hot engine hoods in view
+    d.time += 2.0
+    b = cam.scene_temperature(d, truth)
+    assert np.abs(a - b).max() > 5  # they moved
+    # off the pavement nothing is painted: an all-grass map shows no cars
+    truth.cls = np.full(g.shape, CLS["grass"], np.uint8)
+    cam2 = ThermalCamera(m, netd_K=0.0, abs_error_K=0.0, gain_error=0.0, traffic=40, seed=3)
+    assert cam2.scene_temperature(d, truth).max() < 291.0
+    cam.close()
+    cam2.close()

@@ -497,7 +497,8 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     onboard_meta = {**meta, "kind": "thermal prior (onboard)", "classifier": cm_p.stats}
     _save_npz(mdir / "world" / "thermal_truth.npz", temp_K=truth.astype(np.float32),
                         wall_K=np.float32(t_air + 1.5), air_K=np.float32(t_air), cls=truth_cls,
-                        cars=json.dumps(cars), meta=json.dumps(world_meta))
+                        cars=json.dumps(cars), meta=json.dumps(world_meta),
+                        roads_json=json.dumps([w for w in cm_t.roads_json if w["kind"] == "vehicle" and w["paved"]]))
     pr_path = mdir / "onboard" / "thermal_prior.npz"
     _save_npz(pr_path, temp_K=prior.astype(np.float32), sigma_K=sig.astype(np.float32),
                         cls=cm_p.cls, roads=cm_p.roads, road_kind=cm_p.road_kind,

@@ -1,3 +1,41 @@
+# RESUME - branch night-thermal (2026-10-24, night agent night-thermal)
+
+Thermal world model + simulated LWIR camera. Report: `REPORT_night-thermal.md`. Model and formats:
+`docs/THERMAL_MODEL.md`. Folder C:\dev\night-thermal (not pushed; the owner pushes in the morning).
+
+## Continue
+
+```powershell
+cd C:\dev\night-thermal
+. .\scripts\env.ps1
+$env:UV_PROJECT_ENVIRONMENT = "$HOME\.venvs\sf-hack-night-thermal"     # env.ps1 sets the v5 venv; override after
+uv run python -m pytest tests -q                                        # full suite (thermal: tests/test_thermal.py)
+uv run python -m sfhack.thermal build --mission berkeley m-c804bb84 ukraine-1   # 9 / 12 / 42 s, rewrites the npz files
+uv run python -m sfhack.thermal build --mission berkeley --hour 21      # other hour (local clock); --contrast 0.4 = mild night
+uv run python demos/20_thermal_view.py --mission berkeley               # window: camera | ortho | prior (Esc, Space)
+uv run python demos/20_thermal_view.py --mission ukraine-1 --record     # mp4 -> $SFHACK_DATA\night\thermal\
+uv run python demos/21_thermal_figures.py                               # docs/figures/*
+```
+
+In code:
+
+```python
+from sfhack.thermal.camera import ThermalCamera, load_truth   # simulator side
+sim.render("down"); cam = ThermalCamera(sim.model, renderer=sim.renderer)
+img_K = cam.render(sim.data, load_truth(mission_dir))          # (512, 640) float32 K; cam.to_8bit(img_K)
+from sfhack.thermal.prior import load_prior                    # onboard side
+prior = load_prior(onboard_dir); pred_K, sig_K = prior.predict_view(xy, agl, cam.intrinsics, yaw=yaw)
+```
+
+## Open
+
+- Light insulated roofs -6.6 K (literature typical -4..-6). Seasons other than summer are rough presets. No weather.
+- Cars and wet patches are fixed per build (`--seed`), not per flight.
+- night-nav (thermal localizer, eval) and night-demo (viewer, Ukraine, final eval) consume these files; see their
+  branches for the flight results.
+
+---
+
 # RESUME - branch v5-mission-planner (2026-10-23)
 
 ## Done (all committed + pushed, 38/38 tests green incl. truth separation)

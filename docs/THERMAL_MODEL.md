@@ -144,7 +144,10 @@ Ground sample distance 8.7 cm at 60 m, footprint 56 x 45 m.
 Per frame: one GL pass gives depth **and** segmentation (MuJoCo's Renderer needs two) at 320 x 256 (or 300 x 240
 inside the simulator's renderer); every pixel is back-projected to world xyz; ground, roof slabs and tree crowns
 sample the truth raster (bilinear, softened by sigma 0.3 m so class edges are edges, not 0.5 m stair steps), walls get `wall_K` (air + 1.5 K, +-1 K per building), trunks ~air, objects
-from `world/target_scene.json` their `temp_K` (default air - 1 K), the drone itself air, sky air - 30 K; a
+from `world/target_scene.json` their `temp_K` (default air - 1 K), the drone itself air, sky air - 30 K; **moving traffic** (`traffic=6` vehicles per camera seed, 6-12 m/s
+along the truth's paved vehicle roads, right lane, U-turn at the road end): body ~air - 1 K, engine hood
++14..+25 K, windscreen air - 4 K (reflects the sky), drawn only on paved pixels (hidden under crowns). No map
+knows it; a
 world-fixed 0.25 m texture (0.2 K) breaks up the 0.5 m raster; air path tau = exp(-range / 8 km). Then upsample
 to 640 x 512, optics blur (sigma 0.8 px), vignetting (-0.15 K at the corners), fixed-pattern noise (80 mK pixel,
 40 mK column, 0.5 % gain), an absolute calibration error per camera (offset 2 K, gain 3 % (1 std): uncooled
@@ -170,7 +173,7 @@ per frame); pass `renderer=sim.renderer` to draw into the simulator's context (6
   other than summer are rough presets.
 - Sentinel-2 (10 m) makes the off-road prior blurry. OSM geometry keeps the roads sharp, but untagged village
   lanes are a coin flip.
-- Cars and wet patches are static per build (`--seed`), not per flight.
+- Parked cars and wet patches are static per build (`--seed`). Moving traffic is per flight (camera side, below).
 
 Sources: Oke, *Boundary Layer Climates*; Parton & Logan 1981 (air temperature model); Berdahl & Fromberg 1982
 (clear-sky emissivity); Meinel 1976 (clear-sky beam); material properties: Hendel et al. 2016 and textbook

@@ -26,7 +26,8 @@ simulated downward LWIR camera, per the interface contract in NIGHT_PLAN.md. Det
   build. New missions get it from night-demo's missionprep (same file name and format, agreed by message).
 - Camera `ThermalCamera`: 640 x 512, 50 deg HFOV, a `thermal` camera on the X2 (same mount as `down`). One GL pass
   gives depth + segmentation; each pixel goes back to world xyz and samples the truth raster; walls, trunks,
-  objects, drone and sky get their own temperatures. Then blur, vignetting, FPN, absolute calibration error
+  objects, drone and sky get their own temperatures; moving traffic (6 cars per flight with hot engine hoods,
+  along the paved roads, per camera seed). Then blur, vignetting, FPN, absolute calibration error
   (2 K / 3 %), drift with flat-field correction, NETD 50 mK, and `to_8bit` AGC white-hot.
   **70 ms per frame (14 Hz)** in flight when it shares the simulator's GL context (`renderer=sim.renderer`);
   129 ms with a second context. The requirement was >= 10 Hz.
@@ -58,7 +59,7 @@ See the tables in `docs/THERMAL_MODEL.md` (calibration vs literature; per-missio
 ## Next steps
 
 - Validate against a real night thermal scene (night-research's ASTER work) and tune the contrast per site.
-- Per-flight randomization of cars / wet patches (seeded) instead of per build.
+- Per-flight randomization of parked cars / wet patches (traffic is already per flight).
 - Wind and cloud as parameters (contrast drops 30-80 %), then a robustness sweep in the nav eval.
 
 ## Disclosure (pre-hackathon work, all built tonight by an AI agent, Claude Opus 5.5)

@@ -14,7 +14,9 @@ what you reuse in your report under "Disclosure").
 - Base branch: `origin/main` (acoustic-recon = night-demo + this plan was merged into main; if your branch was made from origin/acoustic-recon that is the same code). Reuse what exists: Ukraine mission `ukraine-1`
   (`$SFHACK_DATA\missions\ukraine-1`), thermal model + thermal camera (`sfhack/thermal/`), EKF / AHRS / autopilot,
   night viewer (`demos/liveview/night.py`), eval harness style (`demos/30_night_eval.py`).
-- Never push (I push). Commit at every working step. Do not touch main or other branches.
+- Remote branches are only `main`, `jean` (my branch) and Max's own branch. Agent branches (recon-*) stay LOCAL,
+  never push them. Commit at every working step. Do not touch main or Max's branch. recon-mission integrates all
+  four and I push that result as `jean` (`git push origin recon-mission:jean`).
 - All agent folders live in `C:\Users\jean-\OneDrive\Dokumente\5 Claude Projects\14 Mic Challenge` (paths have spaces: always quote them). Fetch others:
   `git fetch "C:\Users\jean-\OneDrive\Dokumente\5 Claude Projects\14 Mic Challenge\<branch>" <branch>`, merge FETCH_HEAD. Never edit another agent's folder. OneDrive: `git config gc.auto 0` is set, never run git gc.
 - Truth separation stays (CLAUDE.md HARD RULE): onboard code never imports sim / truth / degradation. Tests green.

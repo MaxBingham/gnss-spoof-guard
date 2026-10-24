@@ -39,7 +39,7 @@ import numpy as np
 import scipy.io.wavfile as wavfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from sfhack.acoustic.array import FS, N_MICS, Mounting, mic_positions  # noqa: E402
+from sfhack.acoustic.array import N_MICS, Mounting, mic_positions  # noqa: E402
 from sfhack.acoustic.bearing import BearingEstimate  # noqa: E402
 from sfhack.acoustic.detect import AcousticPipeline, WindowResult, circ_mean_std_deg  # noqa: E402
 from sfhack.acoustic.doa import angle_diff_deg  # noqa: E402
@@ -48,15 +48,14 @@ from sfhack.config import AcousticConfig, data_dir  # noqa: E402
 
 # --------------------------------------------------------------------------------------------- sources
 class FileSource:
-    def __init__(self, path: Path, window: int, realtime: bool, loop: bool):
+    def __init__(self, path: Path, window_s: float, realtime: bool, loop: bool):
         fs, x = wavfile.read(path)
         if x.ndim != 2 or x.shape[1] < N_MICS:
             raise SystemExit(f"{path}: need >= {N_MICS} channels, got shape {x.shape}")
-        if fs != FS:
-            raise SystemExit(f"{path}: need {FS} Hz, got {fs}")
+        self.fs = int(fs)
         scale = {np.dtype("int16"): 32768.0, np.dtype("int32"): 2.0 ** 31}.get(x.dtype, 1.0)
         self.x = x[:, :N_MICS].astype(np.float64) / scale
-        self.window, self.realtime, self.loop = window, realtime, loop
+        self.window, self.realtime, self.loop = int(window_s * self.fs), realtime, loop
         self.k = 0
         self.t_start = time.time()
         self.paused = False
@@ -68,7 +67,7 @@ class FileSource:
                 return None
             self.k = 0
         if self.realtime:
-            delay = self.t_start + (self.k + self.window) / FS - time.time()
+            delay = self.t_start + (self.k + self.window) / self.fs - time.time()
             if delay > 0:
                 time.sleep(delay)
         out = self.x[self.k:self.k + self.window]
@@ -76,7 +75,7 @@ class FileSource:
         return out
 
     def t(self) -> float:
-        return self.k / FS
+        return self.k / self.fs
 
     def close(self):
         pass
@@ -103,8 +102,20 @@ def find_device(match: str) -> int | None:
     return min(cands)[1] if cands else None
 
 
+def supported_rate(idx: int, wanted: int) -> int:
+    """`wanted` if the device takes it, else its own default rate (Linux ALSA: the UMA-16 offers 44.1 kHz only)."""
+    import sounddevice as sd
+    for fs in (wanted, int(sd.query_devices(idx)["default_samplerate"])):
+        try:
+            sd.check_input_settings(device=idx, channels=N_MICS, samplerate=fs, dtype="float32")
+            return fs
+        except Exception:
+            continue
+    raise SystemExit(f"device {idx} accepts neither {wanted} Hz nor its default rate with {N_MICS} channels")
+
+
 class LiveSource:
-    def __init__(self, device: int | None, match: str, window: int, record_path: Path | None):
+    def __init__(self, device: int | None, match: str, window_s: float, record_path: Path | None, fs: int):
         import sounddevice as sd
         self.sd = sd
         idx = device if device is not None else find_device(match)
@@ -115,8 +126,9 @@ class LiveSource:
                              "Fallback: --file <16ch.wav>")
         d = sd.query_devices(idx)
         self.name = f"[{idx}] {d['name']} ({sd.query_hostapis(d['hostapi'])['name']})"
-        print("input:", self.name)
-        self.window = window
+        self.fs = supported_rate(idx, fs)
+        print("input:", self.name, f"@ {self.fs} Hz" + ("" if self.fs == fs else f" (device does not take {fs})"))
+        self.window = int(window_s * self.fs)
         self.q: queue.Queue[np.ndarray] = queue.Queue()
         self.buf = np.zeros((0, N_MICS))
         self.n_read = 0
@@ -131,7 +143,7 @@ class LiveSource:
                 self.status_msgs += 1
             self.q.put(indata[:, :N_MICS].copy())
 
-        self.stream = sd.InputStream(device=idx, channels=N_MICS, samplerate=FS, dtype="float32",
+        self.stream = sd.InputStream(device=idx, channels=N_MICS, samplerate=self.fs, dtype="float32",
                                      blocksize=1024, callback=cb)
         self.stream.start()
 
@@ -150,15 +162,15 @@ class LiveSource:
         return out
 
     def t(self) -> float:
-        return self.n_read / FS
+        return self.n_read / self.fs
 
     def close(self):
         self.stream.stop()
         self.stream.close()
         if self.rec:
             x = np.concatenate(self.rec)
-            wavfile.write(self.record_path, FS, np.clip(x * 32767, -32768, 32767).astype(np.int16))
-            print(f"raw audio: {self.record_path} ({len(x) / FS:.0f} s)")
+            wavfile.write(self.record_path, self.fs, np.clip(x * 32767, -32768, 32767).astype(np.int16))
+            print(f"raw audio: {self.record_path} ({len(x) / self.fs:.0f} s)")
 
 
 # --------------------------------------------------------------------------------------------- view
@@ -334,7 +346,7 @@ def make_demo_wav(args, cfg: AcousticConfig) -> Path:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--list", action="store_true", help="list input devices and exit")
-    ap.add_argument("--file", type=Path, help="16-ch 48 kHz WAV instead of the live array")
+    ap.add_argument("--file", type=Path, help="16-ch WAV instead of the live array (any sample rate)")
     ap.add_argument("--fast", action="store_true", help="file: as fast as possible (default: real time)")
     ap.add_argument("--loop", action="store_true", help="file: loop forever")
     ap.add_argument("--device", type=int, help="sounddevice index (default: auto, name contains 'UMA16')")
@@ -382,15 +394,15 @@ def main():
     session = data_dir() / "acoustic" / datetime.now().strftime("%Y%m%d_%H%M%S")
     session.mkdir(parents=True, exist_ok=True)
     out = args.out or data_dir() / "acoustic" / "bearing.json"
-    window = int(cfg.window_s * cfg.fs)
 
     if args.file:
-        src = FileSource(args.file, window, realtime=not args.fast, loop=args.loop)
+        src = FileSource(args.file, cfg.window_s, realtime=not args.fast, loop=args.loop)
         full_scale = 1.0
     else:
-        src = LiveSource(args.device, cfg.device_match, window,
-                         None if args.no_record else session / "session.wav")
+        src = LiveSource(args.device, cfg.device_match, cfg.window_s,
+                         None if args.no_record else session / "session.wav", cfg.fs)
         full_scale = 1.0
+    cfg.fs = src.fs  # the pipeline runs at the rate the source actually delivers
     pipe = AcousticPipeline(cfg, array_enu=array_enu, full_scale=full_scale)
     mount = pipe.mount
     view = None if args.headless else View(cfg, mount, src.name, args.camera, args.hfov)

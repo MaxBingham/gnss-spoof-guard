@@ -29,6 +29,7 @@ import json
 import math
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime
 from pathlib import Path
 
@@ -268,20 +269,41 @@ def main() -> None:
     jobs.sort(key=lambda j: (j["row"] not in ("thermal", "imu_trn"), -ROUGH_COST.get(j["mission"], 1.0)))
     print(f"{len(jobs)} flights on {args.workers} workers -> {out}", flush=True)
     results, t0 = [], time.time()
-    with ProcessPoolExecutor(args.workers) as ex:
-        futs = {ex.submit(fly, j): j for j in jobs}
-        for f in as_completed(futs):
-            j = futs[f]
-            try:
-                r = f.result()
-            except Exception as e:  # noqa: BLE001 - one broken flight must not lose the others
-                print(f"FAILED {j}: {type(e).__name__}: {e}", flush=True)
-                continue
-            results.append(r)
-            print(f"[{len(results):3d}/{len(jobs)} {time.time() - t0:6.0f}s] {r['mission']:12s} {r['row']:9s} seed {r['seed']:2d}: "
-                  f"arrival {r['arrival_err']:7.1f} m  ({r['outcome']}, gnss off {r['gnss_off_t']}, "
-                  f"{r['counters']}) {' '.join(r['notes'])}", flush=True)
-            (out / "results.json").write_text(json.dumps(results, indent=1), encoding="utf-8")
+    if (out / "results.json").exists():  # resume: keep finished flights, run the rest
+        results = json.loads((out / "results.json").read_text(encoding="utf-8"))
+        done = {(r["mission"], r["row"], r["seed"]) for r in results}
+        jobs = [j for j in jobs if (j["mission"], j["row"], j["seed"]) not in done]
+        print(f"resume: {len(results)} flights already in {out / 'results.json'}, {len(jobs)} to go", flush=True)
+    n_total = len(results) + len(jobs)
+    for attempt in range(6):  # a worker killed from outside (memory) breaks the whole pool: start a new one
+        if not jobs:
+            break
+        broken = False
+        with ProcessPoolExecutor(args.workers) as ex:
+            futs = {ex.submit(fly, j): j for j in jobs}
+            for f in as_completed(futs):
+                j = futs[f]
+                try:
+                    r = f.result()
+                except BrokenProcessPool as e:
+                    broken = True
+                    print(f"pool broken ({e}); restarting it for the remaining flights", flush=True)
+                    break
+                except Exception as e:  # noqa: BLE001 - one broken flight must not lose the others
+                    print(f"FAILED {j}: {type(e).__name__}: {e}", flush=True)
+                    jobs = [x for x in jobs if x is not j]
+                    continue
+                results.append(r)
+                jobs = [x for x in jobs if x is not j]
+                print(f"[{len(results):3d}/{n_total} {time.time() - t0:6.0f}s] {r['mission']:12s} {r['row']:9s} seed {r['seed']:2d}: "
+                      f"arrival {r['arrival_err']:7.1f} m  ({r['outcome']}, gnss off {r['gnss_off_t']}, "
+                      f"{r['counters']}) {' '.join(r['notes'])}", flush=True)
+                (out / "results.json").write_text(json.dumps(results, indent=1), encoding="utf-8")
+            if broken:
+                for f in futs:
+                    f.cancel()
+        if not broken:
+            break
     md = table(results)
     (out / "table.md").write_text(md + "\n", encoding="utf-8")
     print("\n" + md)

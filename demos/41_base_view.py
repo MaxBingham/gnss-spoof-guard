@@ -137,7 +137,7 @@ def chase_camera(xy: np.ndarray, z: float, heading: float, mode: str, centre: np
         cam.elevation = -12.0
     else:  # overview: the base from above, drone somewhere around
         cam.lookat[:] = [centre[0], centre[1], 0.0]
-        cam.distance = 420.0
+        cam.distance = 300.0
         cam.azimuth = -60.0
         cam.elevation = -35.0
     return cam
@@ -153,6 +153,7 @@ def main() -> None:
     ap.add_argument("--out", default=None)
     ap.add_argument("--every", type=float, default=10.0, help="headless: save a frame every N s of path time")
     ap.add_argument("--fixed-mount", action="store_true", help="do not move the rear camera gimbal")
+    ap.add_argument("--camera", choices=("chase", "overview"), default="chase", help="initial 3D camera")
     a = ap.parse_args()
 
     mdir = mission_dir(a.mission)
@@ -174,13 +175,14 @@ def main() -> None:
     anim = BlinkAnimator(sim.model, rear.lights)
     path = Path3(world, centre, bearing, a.agl, a.speed)
     opt = mujoco.MjvOption()
+    opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = False
     print(f"base at {centre.round(1)}, {len(rear.lights.lights.lights)} lights, bearing {bearing:.1f} deg; "
           f"path {path.T:.0f} s (orbit 250 m, out to the map edge and back), {a.agl:.0f} m AGL")
 
     out = Path(a.out) if a.out else Path(mdir.parent.parent / "recon" / "base_view")
     if a.headless:
         out.mkdir(parents=True, exist_ok=True)
-    t, speed, paused, mode = 0.0, 4.0, False, "chase"
+    t, speed, paused, mode = 0.0, 4.0, False, a.camera
     dt = 1.0 / cfg.camera.rear_hz
     next_save, rows, wall = 0.0, [], time.perf_counter()
     while True:

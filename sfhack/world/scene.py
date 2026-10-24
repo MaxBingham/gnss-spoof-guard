@@ -349,11 +349,12 @@ class PackageWorld:
             zg = self.ground_z(x, y)
             world.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[0.07, max(z - zg, 0.5) / 2, 0],
                            pos=[x, y, (z + zg) / 2], rgba=[0.3, 0.3, 0.3, 1], **vis)
-            # emitter + halo (a real lamp is ~0.2 m; drawn larger so it reads in the chase view)
-            world.add_geom(name=f"baselight_{lt['id']}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.45, 0, 0],
+            # emitter + halo (a real lamp is ~0.2 m; drawn much larger so it reads from hundreds of metres in the
+            # 3D view - 850 nm is invisible to the eye, the red glow is a display convention)
+            world.add_geom(name=f"baselight_{lt['id']}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.7, 0, 0],
                            pos=[x, y, z], rgba=[1.0, 0.25, 0.2, 1], material=glow.name, **vis)
-            world.add_geom(name=f"baseglow_{lt['id']}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[1.6, 0, 0],
-                           pos=[x, y, z], rgba=[1.0, 0.2, 0.15, 0.25], material=glow.name, **vis)
+            world.add_geom(name=f"baseglow_{lt['id']}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[3.0, 0, 0],
+                           pos=[x, y, z], rgba=[1.0, 0.2, 0.15, 0.3], material=glow.name, **vis)
         sp = self.dir / "stray_lights.json"
         for st in (json.loads(sp.read_text(encoding="utf-8"))["lights"] if sp.exists() else []):
             world.add_geom(name=f"straylight_{st['id']}", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.35, 0, 0],

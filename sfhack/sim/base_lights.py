@@ -24,7 +24,7 @@ from ..world.base import BaseLight, BaseLights, az_deg
 
 ON_RGBA = np.array([1.0, 0.25, 0.2, 1.0])
 OFF_RGBA = np.array([0.18, 0.06, 0.05, 1.0])
-GLOW_RGBA = np.array([1.0, 0.2, 0.15, 0.25])
+GLOW_RGBA = np.array([1.0, 0.2, 0.15, 0.3])
 
 
 @dataclass

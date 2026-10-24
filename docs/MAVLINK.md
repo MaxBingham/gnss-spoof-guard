@@ -36,6 +36,8 @@ base's `received` / `rx_t`); only the transport changes.
 
 All on `127.0.0.1` in the sim (`CommsConfig.host`). If a port is taken (several sims at once) the endpoint falls
 back to an ephemeral port and says so; the harness pairs the two endpoints by their real addresses.
+The evaluation (`demos/56_track_eval.py`, parallel workers, `--comms mavlink | inproc`) always uses ephemeral ports
+and no QGC forwarding.
 System ids: drone 1 / component 1 (autopilot), base 250 / component 190 (not 255: QGC uses 255).
 
 ## Messages

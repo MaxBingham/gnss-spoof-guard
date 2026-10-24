@@ -63,14 +63,15 @@ def run_one(job: dict) -> dict:
     rng = np.random.default_rng(seed + 31)
     b0 = float(rng.uniform(0, 360))
     tcfg = TrackerConfig()
+    comms = dict(comms=job.get("comms", "mavlink"), fixed_ports=False, qgc=False)  # parallel workers: own ports
     if kind == "A":
         sc = TrackScenario(_world, seed=seed, detector=_det, tcfg=tcfg, enemy_speed=None, availability=0.8,
-                           score=True)
+                           score=True, **comms)
         script = m52.BearingScript(b0, seed)
         max_t = job.get("max_t", 260.0)
     else:
         sc = TrackScenario(_world, seed=seed, detector=_det, tcfg=tcfg, enemy_speed=None, availability=job["link"],
-                           score=False, send_bearings=job["bearing"] == "bearing", forced_losses=3)
+                           score=False, send_bearings=job["bearing"] == "bearing", forced_losses=3, **comms)
         script = None
         max_t = job.get("max_t", 380.0)
     t0 = time.time()
@@ -83,6 +84,7 @@ def run_one(job: dict) -> dict:
                 sc.hear(az, "script")
         if kind == "B" and len(sc.losses) >= 3 and sc.losses[-1].end_t is not None:
             break
+    sc.close()
     p = sc.pilot
     err_tr, err_lost = [], []
     for r in sc.received:
@@ -282,6 +284,7 @@ def main() -> None:
     ap.add_argument("--weights", default=None)
     ap.add_argument("--report", action="store_true", help="only aggregate the saved runs")
     ap.add_argument("--redo", action="store_true", help="re-run jobs that already have a result")
+    ap.add_argument("--comms", choices=("mavlink", "inproc"), default="mavlink", help="base <-> drone transport")
     a = ap.parse_args()
     (OUT / "runs").mkdir(parents=True, exist_ok=True)
     if not a.report:
@@ -294,6 +297,8 @@ def main() -> None:
                      for cb, cl in CONDS_B for s in range(a.seeds or 10)]
         if not a.redo:
             jobs = [j for j in jobs if not (OUT / "runs" / f"{j['name']}.json").exists()]
+        for j in jobs:
+            j["comms"] = a.comms
         print(f"{len(jobs)} runs on {a.workers} workers", flush=True)
         t0 = time.time()
         with mp.get_context("spawn").Pool(a.workers, initializer=_init, initargs=(a.weights,)) as pool:

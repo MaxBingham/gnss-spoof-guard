@@ -54,6 +54,29 @@ Ukraine:
 - Only 22 % of OSM roads carry `surface`.
 - Clear sky on only ~31-38 % of July nights at 23 h.
 
+## Team results used in the pitch (not my work)
+
+Read-only from branch `night-demo` (commit 0035a9d, `REPORT_night-demo.md`) at 06:05. Night 23:00, 60 m AGL, GNSS
+off from 20 % of the route, 20 seeds. Success = within 5 m of B when the drone decides it is above B; landing is
+not scored.
+
+| Mission | Final build | 95 % Wilson | IMU + TRN only | Mild night (0.4x contrast) |
+|---|---|---|---|---|
+| berkeley | 20/20 (mean 0.4 m) | 84-100 % | 19/20 | 18/20 |
+| m-c804bb84 (hill) | 20/20 (mean 0.9 m) | 84-100 % | 11/20 | - |
+| ukraine-1 (roads route) | 20/20 (mean 1.9 m) | 84-100 % | 0/20 | 19/20 |
+
+These numbers are now in NIGHT_RESEARCH.md §7: in pitch sentence 5, in a table, and in the mild-night Q&A.
+Two limits are added there:
+- arrival is scored, landing is not;
+- on a mild night the filter can stay overconfident (the open issues in night-nav's and night-demo's reports).
+
+My research numbers fed into it:
+- the 0.7 / 0.4x contrast rows (measured ~5 K vs model 10 K);
+- the paved-only warm-road rule;
+- the polarity-free gradient matcher;
+- the 1-D road fixes.
+
 ## What failed / limits
 
 - The literature has few **absolute** night-time surface temperatures. My table therefore rests on a 1-D model
@@ -94,6 +117,9 @@ Ukraine:
 3. Get one ECOSTRESS summer night scene (steps above) for a 70 m check of road corridors.
 4. A real check needs a night flight with a radiometric LWIR camera over a mapped area, one or two
    transects, plus ground truth.
+5. Tie the thermal fix covariance to the measured scene contrast. The model supports this: contrast drops ~35 %
+   with a 3 m/s breeze, and satellite data shows only +0.1..+0.7 K on mild nights. The mild-night runaways are
+   overconfident fixes.
 
 ## Disclosure (pre-hackathon work)
 

@@ -9,62 +9,21 @@ away) cannot be seen in the dark, but it can be heard. GNSS is jammed, and there
 the base and the drone at any time: whatever the drone does after takeoff, it does on its own.
 
 **Setup.**
-- **Base:** one miniDSP UMA-16 v2 microphone array (16 MEMS mics, 4 x 4, 42 mm pitch) listens and gives the
-  direction (azimuth, rough elevation, with uncertainty) a sound comes from. Navigation lights on the fence
-  (see below). A landing pad where the drone hands over its data.
-- **Drone: a quadcopter (reconnaissance only).** IMU, compass, barometer, GNSS only for the first 50 m (then
-  switched off with a key, to show the drift), a downward thermal camera, a rear-facing narrow-FOV camera
-  that sees the base lights (a quadcopter can also yaw around briefly to look back with its front camera).
-  No lidar. No microphone array on the drone (maybe later).
+- **Base:** one miniDSP UMA-16 v2 microphone array (16 MEMS mics, 4 x 4, 42 mm pitch) in the middle of the
+  base listens and gives the direction (azimuth, rough elevation, with uncertainty) a sound comes from. A fence
+  and a landing pad.
+- **Drone: a quadcopter (reconnaissance only).** IMU, compass, barometer, GNSS (only for the first 50 m in the
+  GNSS-denied version), cameras. No lidar. No microphone array on the drone (maybe later).
 
-**Mission.**
-1. The UMA-16 hears a source and estimates its bearing. Before takeoff the drone gets that bearing.
-2. The drone takes off, flies 50 m with GNSS, then GNSS is gone.
-3. It flies out along the bearing line on its own estimate.
-4. It does not know how far away the source is or what it is, so it flies a search pattern that widens with
-   distance (a cone sized from the array's bearing uncertainty plus its own drift) and looks for warm objects
-   (vehicles, people) in the thermal image. The thermal camera is used to find things, not to navigate on
-   landmarks.
-5. When it finds something it circles over it for a while and keeps it in view (relative to the target, no
-   absolute position needed), and stores thermal images + the estimated position of every find.
-6. **Return and report.** Everything is jammed, so nothing is sent from out there. The drone flies back,
-   homes in on the base lights (now in front of it), lands on the pad and hands over its report: what it
-   found, where (bearing + distance from the base), when, with images and its flight track. On the way in the
-   UMA-16 also hears it coming and recognises it as our own drone by its sound signature.
+**MVP (what we build first).** Someone claps next to the real UMA-16 (on a Linux PC). Its bearing goes over UDP
+to the simulation laptop. The drone in the sim takes off from the base, flies out along that bearing, looks,
+comes back and lands. Daytime, GNSS on.
 
-**Keeping the drift small without GNSS and without a link.**
-- **Preflight alignment:** gyro bias at rest, compass calibration, takeoff pad with a surveyed orientation;
-  the first 50 m of GNSS check heading and velocity.
-- **Optical flow (downward thermal camera + barometer):** ground speed without any map or landmark, like an
-  optical mouse. Typical drift ~1-3 % of the distance instead of hundreds of metres from the IMU alone.
-- **Navigation lights at the base (the key part):**
-  - **Inner ring on the fence:** a light every ~30 deg around the perimeter (12 lights on a ~150 m wide base),
-    infrared (850 nm, invisible to the eye), each blinking its own code so the drone knows which one it sees
-    and does not confuse it with fires or other lights. Positions are surveyed.
-  - **Outer ring (optional):** 6-8 posts ~400 m out, for a longer baseline.
-  - **How the drone uses them:** the rear camera measures the directions to 3 or more identified lights. With
-    their known positions this gives the drone's position AND heading (resection, as in classic surveying),
-    **independent of the compass**. Two lights that line up on the bearing line also work as ship-style
-    leading lights: aligned = on the line. The elevation angle to the base plus the barometric altitude
-    gives a second distance estimate.
-  - Rough accuracy at 2 km (camera ~0.02 deg per pixel): sideways ~1 m; distance ~8 m with the fence ring
-    alone (150 m baseline), ~2 m with the outer ring. Usable as long as the lights are in view (a few km at
-    night, clear air, line of sight).
-  - Fully passive for the drone, nothing to jam. Lights only on during a mission, aimed low and outward.
-- **Beyond light range or out of sight:** optical flow + IMU + compass carry on; the search cone grows with the
-  uncertainty; on the way back the lights pull the estimate in again.
-
-Rough budget over 3 km: IMU + compass only: 100 m to several 100 m off the line; + optical flow: ~100 m
-sideways (compass) and 30-90 m along the line; + base lights: metres to ~10 m while they are in view. The
-array's bearing error (about +-5-10 deg, i.e. +-170-350 m at 2 km) is larger than that, which is why the
-search widens.
-
-**Demo.** Live: the real UMA-16 on the table hears a sound (speaker with a vehicle recording) and its bearing
-becomes the drone's mission. Simulation (MuJoCo, Ukraine mission from `night-demo`): the base with its fence
-and **visibly glowing navigation lights**; the drone flies out, GNSS off after 50 m; a panel with the rear
-camera showing the lights with their IDs; three tracks side by side: IMU only (drifts away), + optical flow,
-+ base lights (stays on the line); the widening search cone; the thermal find; the flight back, the landing
-on the pad, and the report screen ("2 vehicles, 1.9 km at 047 deg, 23:14", with images).
+**Next steps after the MVP.**
+1. GNSS off after 50 m: show the drift and keep it small (preflight alignment, optical flow, compass).
+2. A search pattern that widens with distance (bearing uncertainty + own drift).
+3. Night: thermal camera to find vehicles / people along the bearing.
+4. Return and report: no data link, so the drone flies back and hands over what it found on the pad.
 
 UMA-16 geometry, real recordings and open drone-audio datasets: https://github.com/JLrobot/Mic-Challenge
 

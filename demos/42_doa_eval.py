@@ -15,7 +15,8 @@ Recordings: Mic-Challenge `data/uma16_real/jduanen_acoustic_camera/` (MIT), foun
    UMA-16 background (both recordings, incl. their tones as interferers) or white noise, at several SNRs
    (source power / background power over the full band). "near" = broadband engine (speaker demo);
    "far" = the same through a 2nd-order 300 Hz low-pass (2-3 km: air absorption and ground effect remove the
-   highs; most energy below the band where a 126 mm aperture resolves well). Runs the full AcousticPipeline
+   highs; most energy below the band where a 126 mm aperture resolves well); "far_mp" = far + one reflection
+   (-3 dB, 15 ms, from 70-110 deg to the side; `--signals far_mp`). Runs the full AcousticPipeline
    (noise floor, detection, tracker) and scores the window DOAs and the stable BearingEstimate.
 
 Output: $SFHACK_DATA/acoustic/eval/<stamp>/{results.json, table.md, err_vs_snr.png}
@@ -37,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sfhack.acoustic.array import C_SOUND, FS, mic_positions, unit_vector  # noqa: E402
 from sfhack.acoustic.detect import AcousticPipeline, circ_mean_std_deg  # noqa: E402
 from sfhack.acoustic.doa import DoaConfig, SrpPhat, angle_diff_deg  # noqa: E402
-from sfhack.acoustic.synth import array_recording, engine_signal  # noqa: E402
+from sfhack.acoustic.synth import array_recording, engine_signal, plane_wave  # noqa: E402
 from sfhack.config import AcousticConfig, data_dir  # noqa: E402
 
 REC_REL = Path("ext/Mic-Challenge/data/uma16_real/jduanen_acoustic_camera")
@@ -102,7 +103,7 @@ def run_case(case: dict) -> dict:
     rng_seed = case["seed"]
     dur = case["learn_s"] + 2.0 + case["src_s"]
     mono = engine_signal(dur, rpm=case["rpm"], seed=rng_seed)
-    if case["signal"] == "far":
+    if case["signal"].startswith("far"):
         b, a = signal.butter(2, 300.0, btype="low", fs=FS)
         mono = signal.lfilter(b, a, mono)
     mono = mono[: int((case["src_s"]) * FS)]
@@ -111,6 +112,14 @@ def run_case(case: dict) -> dict:
         noise = np.load(case["bg_path"])
     x = array_recording(case["az"], case["el"], duration_s=dur, snr_db=case["snr"], onset_s=case["learn_s"] + 2.0,
                         seed=rng_seed, mono=mono, noise=noise)
+    if case["signal"].endswith("_mp"):
+        # One wall / building reflection: -3 dB, 15 ms later (~5 m extra path), from 70-110 deg to either side.
+        rng = np.random.default_rng(rng_seed)
+        az_r = case["az"] + rng.choice([-1, 1]) * rng.uniform(70, 110)
+        d = int(0.015 * FS)
+        refl = plane_wave(np.concatenate([np.zeros(d), mono])[: len(mono)] * 10 ** (-3 / 20), az_r, case["el"])
+        k = int((case["learn_s"] + 2.0) * FS)
+        x[k:k + len(refl)] += refl[: len(x) - k]     # same scale as the direct path (array_recording scales noise)
     p = AcousticPipeline(cfg)
     n = int(cfg.window_s * FS)
     onset = case["learn_s"] + 2.0
@@ -234,7 +243,7 @@ def main():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(1, 2, figsize=(11, 4))
-    for sig, ls in (("near", "-"), ("far", "--")):
+    for sig, ls in zip(dict.fromkeys(r["signal"] for r in table), ("-", "--", ":")):
         for bg, col in (("white", "C0"), ("real_cal", "C1"), ("real_cap", "C2")):
             rr = [r for r in table if r["signal"] == sig and r["bg"] == bg]
             s = [r["snr_db"] for r in rr]

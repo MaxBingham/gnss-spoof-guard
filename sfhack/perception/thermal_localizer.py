@@ -85,19 +85,27 @@ def _orient_channels(img: np.ndarray, sigma: float = 1.0) -> np.ndarray:
 
 
 def _skeleton(mask: np.ndarray) -> np.ndarray:
-    """Morphological thinning (Zhang-Suen via cv2.ximgproc when available, else iterative erosion skeleton)."""
-    m = (mask > 0).astype(np.uint8) * 255
-    try:
-        return cv2.ximgproc.thinning(m) > 0  # type: ignore[attr-defined]
-    except AttributeError:
-        skel = np.zeros_like(m)
-        el = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
-        img = m.copy()
-        while cv2.countNonZero(img):
-            er = cv2.erode(img, el)
-            skel |= cv2.subtract(img, cv2.dilate(er, el))
-            img = er
-        return skel > 0
+    """Zhang-Suen thinning (vectorized per sub-iteration): 1-px, 8-connected centerlines."""
+    img = np.pad((mask > 0).astype(np.uint8), 1)
+    while True:
+        changed = False
+        for step in (0, 1):
+            p2, p3, p4 = img[:-2, 1:-1], img[:-2, 2:], img[1:-1, 2:]
+            p5, p6, p7 = img[2:, 2:], img[2:, 1:-1], img[2:, :-2]
+            p8, p9 = img[1:-1, :-2], img[:-2, :-2]
+            nb = [p2, p3, p4, p5, p6, p7, p8, p9]
+            B = sum(n.astype(np.int32) for n in nb)
+            A = sum(((nb[k] == 0) & (nb[(k + 1) % 8] == 1)).astype(np.int32) for k in range(8))
+            c = img[1:-1, 1:-1] == 1
+            if step == 0:
+                m = c & (B >= 2) & (B <= 6) & (A == 1) & ((p2 * p4 * p6) == 0) & ((p4 * p6 * p8) == 0)
+            else:
+                m = c & (B >= 2) & (B <= 6) & (A == 1) & ((p2 * p4 * p8) == 0) & ((p2 * p6 * p8) == 0)
+            if m.any():
+                img[1:-1, 1:-1][m] = 0
+                changed = True
+        if not changed:
+            return img[1:-1, 1:-1] > 0
 
 
 def _junctions_px(skel: np.ndarray, min_sep_px: float) -> list[tuple[float, float]]:
@@ -136,6 +144,7 @@ class ThermalLocalizer:
         self.temp = np.ascontiguousarray(pr["temp_K"], np.float32)
         self.H, self.W = self.temp.shape
         self.roads_json = pr["roads_json"]
+        self.roads_mask = (pr["roads"] > 0) if "roads" in pr else None
         self._blur_cache: dict[int, np.ndarray] = {}
         self._orient_cache: dict[int, np.ndarray] = {}
         self._build_road_layers()
@@ -152,7 +161,18 @@ class ThermalLocalizer:
     # ------------------------------------------------------------------ prior layers
 
     def _build_road_layers(self) -> None:
-        """Road centerline raster (1 px lines) and junction list from the OSM ways in the prior."""
+        """Road centerline raster (1 px lines) and junctions. road_ref "mask": thinned road mask of the prior (the
+        paved surface as predicted, so wide roads, plazas' edges and parking aisles sit where they are warm);
+        "osm": the OSM way polylines (their nodes give the junctions; footway lines often run beside the warm
+        band, and many warm roads have no way in the bbox)."""
+        if self.cfg.road_ref == "mask" and self.roads_mask is not None:
+            m = cv2.morphologyEx(self.roads_mask.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+            sk = _skeleton(m)
+            self.centerline = sk.astype(np.uint8)
+            js = _junctions_px(sk, 4.0 / self.res)
+            self.junctions = np.array([[self.min_x + (c + 0.5) * self.res, self.max_y - (r + 0.5) * self.res]
+                                       for r, c in js], float).reshape(-1, 2)
+            return
         cl = np.zeros((self.H, self.W), np.uint8)
         deg: dict[tuple[int, int], int] = {}
         for w in self.roads_json:
@@ -285,29 +305,36 @@ class ThermalLocalizer:
         best = float(best)
         if best < min_score:
             return self._fail(f"{method}: low score", best)
-        local_max = (score >= cv2.dilate(score, np.ones((5, 5), np.uint8))) & (score > -1.0)
-        excl = max(3, int(round(c.peak_excl_m / mpp)))
-        local_max[max(0, i - excl):i + excl + 1, max(0, j - excl):j + excl + 1] = False
+        # Peak region: the connected cells within peak_delta of the best score. Its shape is the information:
+        # one straight edge or road gives a ridge (1-D fix), a corner or junction a compact peak. A round
+        # covariance from the curvature on the two grid axes reported ridges as sharp 2-D fixes (wrong by 10-20 m
+        # along the ridge, 25 % of the Berkeley fixes in the open-loop bench).
+        reg = (score >= best - c.peak_delta).astype(np.uint8)
+        _, lab = cv2.connectedComponents(reg, connectivity=8)
+        comp = lab == lab[i, j]
+        if comp[0, :].any() or comp[-1, :].any() or comp[:, 0].any() or comp[:, -1].any():
+            return self._fail(f"{method}: ridge leaves the window", best)
+        near = cv2.dilate(comp.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        local_max = (score >= cv2.dilate(score, np.ones((5, 5), np.uint8))) & ~near & (score > -1.0)
         second = float(score[local_max].max()) if local_max.any() else -1.0
         if best - second < c.min_margin:
             return self._fail(f"{method}: ambiguous", best)
-
-        def subpix(a: float, b: float, cc: float) -> tuple[float, float]:
-            den = a - 2 * b + cc
-            if den >= 0:
-                return 0.0, 1e-3
-            return float(np.clip(0.5 * (a - cc) / den, -0.5, 0.5)), -den
-
-        di, ci = subpix(score[i - 1, j], score[i, j], score[i + 1, j]) if 0 < i < score.shape[0] - 1 else (0.0, 1e-3)
-        dj, cj = subpix(score[i, j - 1], score[i, j], score[i, j + 1]) if 0 < j < score.shape[1] - 1 else (0.0, 1e-3)
-        x = px - S * mpp + (j + dj) * mpp
-        y = py + S * mpp - (i + di) * mpp
-        sharp = math.sqrt(c.curv_ref / max(min(ci, cj), 1e-3))
-        sig_px = (1.0 + 4.0 * (1.0 - best)) * float(np.clip(sharp, 0.5, 4.0))
-        sig = math.hypot(c.sigma_floor, sig_px * mpp, alt * math.radians(c.tilt_std_deg))
+        ii, jj = np.nonzero(comp)
+        w = score[ii, jj] - (best - c.peak_delta) + 1e-3
+        w = w / w.sum()
+        mi, mj = float((w * ii).sum()), float((w * jj).sum())
+        di_, dj_ = ii - mi, jj - mj
+        cpx = np.array([[(w * dj_ * dj_).sum(), -(w * dj_ * di_).sum()],
+                        [-(w * dj_ * di_).sum(), (w * di_ * di_).sum()]]) + np.eye(2) / 12.0  # (x, y) in cells^2
+        x = px - S * mpp + mj * mpp
+        y = py + S * mpp - mi * mpp
+        k = c.peak_cov_scale * (1.0 + 2.0 * (1.0 - best)) ** 2
+        cov = cpx * mpp * mpp * k + np.eye(2) * (c.sigma_floor ** 2 + (alt * math.radians(c.tilt_std_deg)) ** 2)
         self.last_score = best
-        return ThermalFix(np.array([x, y]), np.eye(2) * sig * sig, best_rot, best, method,
-                          info={"second": second, "margin": best - second})
+        ev = np.linalg.eigvalsh(cov)
+        return ThermalFix(np.array([x, y]), cov, best_rot, best, method,
+                          info={"second": second, "margin": best - second, "sig_major": math.sqrt(ev[1]),
+                                "sig_minor": math.sqrt(ev[0]), "peak_cells": int(comp.sum())})
 
     def _rotations(self, tpl: np.ndarray) -> list[tuple[float, np.ndarray]]:
         n = tpl.shape[0]

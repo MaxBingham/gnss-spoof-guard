@@ -293,8 +293,8 @@ class ThermalConfig:
     yaw_search_deg: tuple[float, ...] = (-3.0, -1.5, 0.0, 1.5, 3.0)
     min_score: float = 0.45  # NCC peak below this -> no fix
     min_margin: float = 0.06  # best - second local maximum below this -> ambiguous
-    peak_excl_m: float = 4.0
-    curv_ref: float = 0.05
+    peak_delta: float = 0.05  # peak region = cells within this of the best score (its shape -> covariance)
+    peak_cov_scale: float = 1.0  # covariance = this x weighted spread of the peak region (+ floor, tilt)
     sigma_floor: float = 1.0  # m
     tilt_std_deg: float = 0.5
     grad_min_score: float = 0.35
@@ -305,7 +305,8 @@ class ThermalConfig:
     road_min_quality: float = 0.55  # fraction of observed centerline within 1.5 m of a prior road
     road_sigma_floor: float = 1.0
     road_max_minor_m: float = 6.0  # cov minor axis 1-sigma above this = no fix
-    road_include_footways: bool = True  # campus: footways are paved and warm too
+    road_include_footways: bool = True  # campus: footways are paved and warm too (road_ref "osm")
+    road_ref: str = "mask"  # reference centerlines: "mask" (thinned prior road mask) | "osm" (way polylines)
     # junctions
     junc_gate_m: float = 12.0
     junc_sigma: float = 2.0

@@ -386,9 +386,9 @@ class Autopilot:
         self._thermal_pending = (fix.t, innov)
         return False
 
-    @staticmethod
-    def _thermal_visual_fix(tf: Any, frame: ThermalFrame) -> VisualFix:
-        return VisualFix(frame.t, np.asarray(tf.xy, float).copy(), np.asarray(tf.cov, float).copy(), f"thermal-{tf.method}",
+    def _thermal_visual_fix(self, tf: Any, frame: ThermalFrame) -> VisualFix:
+        cov = np.asarray(tf.cov, float) * self.cfg.thermal.fix_cov_scale
+        return VisualFix(frame.t, np.asarray(tf.xy, float).copy(), cov, f"thermal-{tf.method}",
                          n_inliers=int(round(100 * tf.quality)), proc_ms=tf.proc_ms, frame_seq=frame.seq,
                          quality=float(tf.quality))
 

@@ -281,6 +281,9 @@ class ThermalConfig:
     # could not follow, the filter stayed confident (2-sigma 2.5 m) while the true error grew to 14 m, and then
     # rejected the correct thermal fixes (m-c804bb84 seed 0 ran away).
     ekf_acc_bias_rw: float | None = None
+    # Thermal fixes arrive at 5 Hz with errors correlated over seconds (same map region, same prior bias); fused as
+    # independent they collapse the EKF covariance (formal 2-sigma ~0.6 m vs ~2-3 m true). Scale their covariance.
+    fix_cov_scale: float = 1.0
     confirm_jump_m: float = 5.0  # a fix moving the estimate more than this needs a second, consistent fix (0 = off)
     confirm_window_s: float = 2.0
     confirm_tol_m: float = 3.0

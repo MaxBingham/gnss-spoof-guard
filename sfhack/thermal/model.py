@@ -43,6 +43,11 @@ from .shading import sky_view, sun_exposure
 
 RES = 0.5
 FORMAT = "sfhack-thermal/1"
+# Truth contrast around the air temperature. The energy balance gives asphalt - grass ~10 K at 23 h after a hot
+# day (the top of the literature range); measurements on clear calm nights say ~5 K (night-research NIGHT_NOTES
+# v4). 0.7 puts the truth at ~7 K. The prior keeps the full model: an amplitude error the matcher must absorb
+# (zero-mean NCC is scale-invariant, so localization barely depends on it; demos/22_thermal_matchability.py).
+DEFAULT_CONTRAST = 0.7
 UNTAGGED_PAVED_P = 0.4  # outside the US: share of minor roads without a surface tag that are paved (truth draw)
 
 
@@ -328,10 +333,9 @@ def _save_npz(path: Path, **arrays: Any) -> None:
     os.replace(tmp, path)
 
 
-
 def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "summer", seed: int = 0,
                   climate: Climate | None = None, log: Any = print, write: bool = True,
-                  contrast: float = 1.0, inversion_K_per_100m: float = 1.4) -> dict[str, Any]:
+                  contrast: float = DEFAULT_CONTRAST, inversion_K_per_100m: float = 1.4) -> dict[str, Any]:
     """Build and write the truth + prior. `write=False`: write nothing, return the info dict plus
     "arrays": {truth, prior, sigma, cls_truth, cls_prior, roads, air_K} (figures at other hours)."""
     t0 = time.time()
@@ -496,12 +500,13 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     world_meta = {**meta, "kind": "thermal truth (simulator only)", "seed": seed, "deviations": info}
     onboard_meta = {**meta, "kind": "thermal prior (onboard)", "classifier": cm_p.stats}
     _save_npz(mdir / "world" / "thermal_truth.npz", temp_K=truth.astype(np.float32),
-                        wall_K=np.float32(t_air + 1.5), air_K=np.float32(t_air), cls=truth_cls,
-                        cars=json.dumps(cars), meta=json.dumps(world_meta))
+              wall_K=np.float32(t_air + 1.5 * contrast), air_K=np.float32(t_air), cls=truth_cls,
+              cars=json.dumps(cars), meta=json.dumps(world_meta),
+              roads_json=json.dumps([w for w in cm_t.roads_json if w["kind"] == "vehicle" and w["paved"]]))
     pr_path = mdir / "onboard" / "thermal_prior.npz"
     _save_npz(pr_path, temp_K=prior.astype(np.float32), sigma_K=sig.astype(np.float32),
-                        cls=cm_p.cls, roads=cm_p.roads, road_kind=cm_p.road_kind,
-                        roads_json=json.dumps(cm_p.roads_json), meta=json.dumps(onboard_meta))
+              cls=cm_p.cls, roads=cm_p.roads, road_kind=cm_p.road_kind,
+              roads_json=json.dumps(cm_p.roads_json), meta=json.dumps(onboard_meta))
     if (mdir / "drone").is_dir():
         tmp = mdir / "drone" / "thermal_prior.tmp"
         shutil.copyfile(pr_path, tmp)

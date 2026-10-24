@@ -1,6 +1,6 @@
 # RESUME - branch night-nav (2026-10-24, night before the hackathon)
 
-Previous resume (V5 mission planner): `docs/RESUME_v5-mission-planner.md`.
+Previous resume (V5 mission planner): `docs/RESUME_v5-mission-planner.md`; night-thermal's: `docs/RESUME_night-thermal.md`.
 What happened tonight, numbers, what failed: `REPORT_night-nav.md`. Design + tables: `docs/NIGHT_NAV.md`.
 
 ## Setup (own venv, data outside the repo)

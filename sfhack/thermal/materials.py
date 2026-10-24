@@ -28,7 +28,7 @@ class Material:
 
 SOIL = (0.6, 0.9, 1.7e6)
 MATERIALS: list[Material] = [
-    Material("soil", ((0.6, 0.4, 1.4e6),), 0.22, 0.93, evap=0.05, prior_sigma_K=2.0),
+    Material("soil", ((0.03, 0.2, 1.1e6), (0.6, 0.4, 1.4e6)), 0.24, 0.93, evap=0.08, prior_sigma_K=2.5),
     Material("asphalt", ((0.08, 1.2, 2.0e6), (0.30, 1.0, 1.8e6), SOIL), 0.09, 0.95, prior_sigma_K=1.5),
     Material("asphalt_minor", ((0.05, 1.1, 2.0e6), (0.25, 0.9, 1.7e6), SOIL), 0.13, 0.95, prior_sigma_K=1.8),
     Material("concrete", ((0.12, 1.2, 1.9e6), (0.20, 0.8, 1.6e6), SOIL), 0.35, 0.92, prior_sigma_K=1.8),
@@ -37,8 +37,8 @@ MATERIALS: list[Material] = [
     Material("dry_grass", ((0.03, 0.07, 0.3e6), (0.6, 0.35, 1.3e6)), 0.26, 0.96, evap=0.08, h_mult=1.3,
              prior_sigma_K=2.0),
     Material("tree", ((0.01, 0.5, 1.5e6),), 0.15, 0.97, evap=0.7, h_mult=20.0, bottom="adiabatic", prior_sigma_K=1.2),
-    Material("water", ((1.0, 30.0, 4.18e6),), 0.06, 0.98, evap=0.5, prior_sigma_K=1.5),
-    Material("dirt_road", ((0.6, 0.6, 1.6e6),), 0.24, 0.93, evap=0.03, prior_sigma_K=2.0),
+    Material("water", ((1.0, 30.0, 4.18e6),), 0.06, 0.98, evap=0.5, prior_sigma_K=3.0),
+    Material("dirt_road", ((0.03, 0.25, 1.2e6), (0.6, 0.5, 1.5e6)), 0.28, 0.93, evap=0.12, prior_sigma_K=2.5),
     # flat roofs: membrane over insulation over the deck (most commercial roofs: little mass above the
     # insulation, so they cool below air at night), ballasted / concrete-topped roofs keep their heat
     Material("roof_dark", ((0.01, 0.17, 1.0e6), (0.03, 0.5, 1.5e6), (0.08, 0.04, 4e4), (0.15, 1.4, 2.0e6)), 0.10, 0.93,

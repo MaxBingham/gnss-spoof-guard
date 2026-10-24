@@ -241,3 +241,54 @@ def test_night_cooling_through_the_night(curves) -> None:
     assert tab[19.85][a] > tab[21.85][a] > tab[1.85][a]
     for v in tab.values():
         assert v[a] - v[g] > 3.0
+
+
+def test_untagged_minor_roads_abroad_are_uncertain() -> None:
+    g, rgb, nir, origin, osm = _synthetic_scene()
+    road = osm["elements"][0]
+    road["tags"] = {"highway": "residential"}  # no surface tag
+    prior = classify(rgb, nir, g, osm, origin, [], untagged_paved_p=0.4)
+    assert prior.cls[100, 100] == CLS["dirt_road"] and prior.roads[100, 100] == 0 and prior.uncertain[100, 100]
+    assert prior.roads_json[0]["paved"] is None
+    truth = classify(rgb, nir, g, osm, origin, [], untagged_paved_p=0.4, truth=True)
+    assert truth.cls[100, 100] in (CLS["dirt_road"], CLS["asphalt_minor"])
+    us = classify(rgb, nir, g, osm, origin, [])  # US default: untagged residential is asphalt
+    assert us.cls[100, 100] == CLS["asphalt"] and us.roads[100, 100] == 1
+
+
+def test_underground_building_is_not_a_roof() -> None:
+    g, rgb, nir, origin, osm = _synthetic_scene()
+    lat0, lon0 = origin.to_latlon(-20, -20)
+    lat1, lon1 = origin.to_latlon(-10, -10)
+    ring = [{"lat": lat0, "lon": lon0}, {"lat": lat0, "lon": lon1}, {"lat": lat1, "lon": lon1},
+            {"lat": lat1, "lon": lon0}, {"lat": lat0, "lon": lon0}]
+    fp = [[-20.0, -20.0], [-10.0, -20.0], [-10.0, -10.0], [-20.0, -10.0]]
+    for tags, roof in (({"building": "yes"}, True), ({"building": "garages", "layer": "-1"}, False),
+                       ({"building": "underground"}, False)):
+        el = {"type": "way", "id": 7, "tags": tags, "geometry": ring}
+        lm = {"id": 0, "type": "building", "osm_id": "way/7", "footprint_enu": fp, "height": 8.0}
+        cm = classify(rgb, nir, g, {"elements": osm["elements"] + [el]}, origin, [lm])
+        r, c = g.to_px(np.array([-15.0, -15.0])).round().astype(int)[::-1]
+        assert (cm.cls[r, c] in (CLS["roof_dark"], CLS["roof_light"])) == roof, tags
+
+
+def test_traffic_moves_along_paved_roads() -> None:
+    g = Grid(-100.0, 100.0, 0.5, 400, 400)
+    t = np.full(g.shape, 290.0, np.float32)
+    cls = np.full(g.shape, CLS["grass"], np.uint8)
+    cls[190:210, :] = CLS["asphalt"]  # an east-west road through y = 0
+    truth = ThermalTruth(t, g, 291.0, 289.0, {}, cls=cls,
+                         roads=[{"pts_enu": [[-100.0, 0.0], [100.0, 0.0]], "width_m": 8.0}])
+    m, d = _camera_world(0.0, 0.0, 60.0)
+    cam = ThermalCamera(m, netd_K=0.0, abs_error_K=0.0, gain_error=0.0, traffic=40, seed=3)
+    a = cam.scene_temperature(d, truth)
+    assert (a > 289.0 + 10).any()  # hot engine hoods in view
+    d.time += 2.0
+    b = cam.scene_temperature(d, truth)
+    assert np.abs(a - b).max() > 5  # they moved
+    # off the pavement nothing is painted: an all-grass map shows no cars
+    truth.cls = np.full(g.shape, CLS["grass"], np.uint8)
+    cam2 = ThermalCamera(m, netd_K=0.0, abs_error_K=0.0, gain_error=0.0, traffic=40, seed=3)
+    assert cam2.scene_temperature(d, truth).max() < 291.0
+    cam.close()
+    cam2.close()

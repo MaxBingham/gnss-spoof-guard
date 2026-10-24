@@ -31,6 +31,7 @@ the EKF tilt corrections in night mode; now the default).
 | berkeley | low_contrast | 20 | 18 | 90% [70%, 97%] | 39.6 / 0.7 / 566.1 | 11.8 | 7.7 | 309 |
 | berkeley | thermal+tiltfix | 20 | 20 | 100% [84%, 100%] | 0.4 / 0.4 / 0.9 | 0.6 | 2.5 | 349 |
 | berkeley | low_contrast+tiltfix | 20 | 18 | 90% [70%, 97%] | 19.3 / 0.6 / 225.7 | 19.5 | 2.6 | 312 |
+| berkeley | thermal_2hz5+tiltfix | 10 | 10 | 100% [72%, 100%] | 0.6 / 0.7 / 1.0 | 0.6 | 2.5 | 178 |
 | m-c804bb84 | thermal | 20 | 20 | 100% [84%, 100%] | 1.3 / 1.3 / 2.3 | 0.8 | 2.5 | 561 |
 | m-c804bb84 | imu_trn | 20 | 11 | 55% [34%, 74%] | 68.5 / 4.8 / 565.1 | 18.0 | 9.5 | 0 |
 | m-c804bb84 | thermal+tiltfix | 20 | 20 | 100% [84%, 100%] | 0.9 / 0.9 / 2.0 | 0.4 | 2.5 | 564 |
@@ -42,6 +43,7 @@ the EKF tilt corrections in night mode; now the default).
 | ukraine-1 | thermal+tiltfix | 20 | 20 | 100% [84%, 100%] | 1.9 / 2.1 / 2.5 | 1.6 | 2.5 | 1100 |
 | ukraine-1 | straight+tiltfix | 8 | 7 | 88% [53%, 98%] | 51.3 / 0.8 / 403.9 | 1.4 | 2.5 | 883 |
 | ukraine-1 | low_contrast+tiltfix | 20 | 19 | 95% [76%, 99%] | 40.0 / 2.1 / 761.6 | 1.7 | 2.5 | 1005 |
+| ukraine-1 | thermal_2hz5+tiltfix | 10 | 10 | 100% [72%, 100%] | 2.1 / 2.1 / 2.6 | 1.6 | 2.5 | 540 |
 
 Rows: thermal = thermal localizer (`grad`) + TRN + IMU on the night route (ukraine-1: ROADS, along the road);
 imu_trn = no thermal (baseline); straight = thermal on the planner's straight route (ukraine-1: 1129 m without
@@ -61,6 +63,8 @@ Reading it:
   within 5 m 11 vs 15, p = 0.32). When a straight flight survives it is slightly more precise.
 - IMU + TRN alone: fine on the short Berkeley leg (450 m blind), 11/20 on the hill, 0/20 on ukraine-1 (every
   flight diverges in calm air; see "What failed").
+- **Live-demo speed lever** `--thermal-hz 2.5` (half the thermal frames, half the sim cost): berkeley 10/10,
+  ukraine-1 10/10 within 5 m (mean 0.6 / 2.1 m), as good as 5 Hz.
 - Mild night (0.4x contrast): final build: berkeley 18/20, ukraine-1 19/20 (before the fix 18/20 and 11/20). Matching is scale-invariant, so most flights hold; the losses are runaways. The two berkeley losses are overconfident (claimed 2-sigma 2.6 m while far off): a mild night needs a contrast-aware fix covariance (next steps).
 
 ## What works
@@ -112,11 +116,15 @@ Reading it:
   thermal fixes; a blind 30 s stretch (forest on the straight route) can still run away (1/8 with the fix).
 - **Mild nights**: at 0.4x contrast 2/20 Berkeley flights run away while claiming a 2-sigma of 2.6 m:
   the fix covariance does not yet scale with the scene contrast (overconfidence).
+- **Landing after arrival (not tonight's scope, found while recording)**: berkeley final build, seed 0: ABOVE B at
+  0.7 m, then below the thermal localizer's minimum height (10 m) there are no fixes; the drone hovers in LAND and
+  the estimate runs away (2-sigma 19.6 m at t = 139 s, estimate error up to 1.7 km later, "landed" 6.7 m from B).
+  The pre-fix take landed 1.38 m, ukraine-1 final build 1.43 m. Reported to night-nav (open issue in their
+  report). The backup video `berkeley_night_final_trim.mp4` ends during the clean descent.
+- **Sim speed**: night mode costs ~230 ms per thermal frame (camera render ~97 ms, localizer ~135 ms) and ran at
+  ~0.5x real time here (GPU busy with training); the viewer showed 2-3 fps.
 - Everything is simulated: thermal world, camera and traffic are night-thermal's model, calibrated to literature
   and night-research's numbers, not to flight data. Hot calm clear night = the favourable case.
-- The viewer ran at 2-3 fps tonight because CPU (four agents' evals) and GPU (detector training) were saturated;
-  sim + thermal rendering + localizer is ~290 ms per displayed frame under that load. Expect better on Saturday;
-  if not, use speed 1 or the backup videos.
 - Backup videos are mp4v (no ffmpeg on this machine): play in VLC / browsers; convert if needed.
 - Sentinel-2 at 10 m is blurry as the world texture (0.5 m grid); GLO-30 is a DSM, so the "terrain" of
   ukraine-1 contains the forest canopy shape; 346 of 348 buildings use the default 10 m height.
@@ -128,7 +136,9 @@ Reading it:
 
 ## Next steps
 
-- Saturday: landing at B (thermal fixes stop near the ground; precision descent logic exists from V2).
+- Saturday: landing at B at night: thermal fixes stop below 10 m; check whether the gyro-bias integral keeps
+  acting in the low hover without fixes (night-nav's suggestion: `cfg.thermal.night_tilt_bias_ki = 0` for the final
+  descent restores the pre-fix behaviour that landed 1.4 m), use the rangefinder + last fix for the flare.
 - Rotor-drag model + drag-velocity fusion (as in death-v3) so blind stretches do not run away.
 - Route choice: weight by thermal localizability (prior gradient energy) instead of road area only; add
   junction density; show the night route on the planner page.

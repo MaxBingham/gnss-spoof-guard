@@ -62,6 +62,7 @@ Long evals: run them from a frozen worktree so later edits do not leak in:
 | fix | b5409f4 | thermal (3 missions) | `.../final_fix_b5409f4` |
 | fix straight | b5409f4 | straight (ukraine-1, 8 seeds) | `.../final_fix_straight_b5409f4` |
 | fix low contrast | b5409f4 | low_contrast (ukraine-1, berkeley) | `.../final_fix_lowc_b5409f4` |
+| 2.5 Hz | d39609d | thermal_2hz5 (ukraine-1, berkeley, 10 seeds) | `.../final_2hz5_d39609d` |
 
 Frozen mission data used by all of them: `$SFHACK_DATA/night/demo_eval_snap`. Logs: `$SFHACK_DATA/night/eval_*.log`.
 Rebuild the combined table + plot:
@@ -69,7 +70,8 @@ Rebuild the combined table + plot:
 ```
 $D = "$env:SFHACK_DATA/night/eval"
 uv run python scripts/night_eval_report.py $D/final_d2405bc $D/final_rw_4e91336 "$D/final_fix_b5409f4::+tiltfix" `
-    "$D/final_fix_straight_b5409f4::+tiltfix" "$D/final_fix_lowc_b5409f4::+tiltfix" --out docs/night_eval
+    "$D/final_fix_straight_b5409f4::+tiltfix" "$D/final_fix_lowc_b5409f4::+tiltfix" "$D/final_2hz5_d39609d::+tiltfix" `
+    --out docs/night_eval
 ```
 
 ## Next

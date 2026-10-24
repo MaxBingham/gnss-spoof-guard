@@ -167,11 +167,24 @@ def headless(farm, *argv):
 def test_clean_walk_found_and_landed(farm):
     r = headless(farm)
     assert r["found"] and r["state"] == "LANDED" and r["landing_err_m"] < 1.0, r
-    assert r["max_out_m"] <= cd.MAX_OUT and r["intruder_max_speed_mps"] <= 20.0 + 1e-6
+    assert r["max_out_m"] <= cd.MAX_OUT
+
+
+def test_intruder_on_the_sound_line():
+    a, it = cd.Audio(), cd.Intruder(500.0, 80.0, 20.0, flat)
+    t, dt = 0.0, 0.01
+    while t < 60:
+        if abs(t / 0.2 - round(t / 0.2)) < 1e-6:
+            a.update(10.0 + 1.0 * t + np.random.default_rng(int(t * 5)).normal(0, 4), 5.0, t)
+            it.hear(a.az, t)
+        it.update(t, dt, a.hearing(t), a.az)
+        assert np.linalg.norm(it.pos[:2] - cd.az_to_dir(a.az) * 500.0) < 1e-6
+        t += dt
 
 
 def test_messy_walk_found_and_landed(farm):
-    r = headless(farm, "--walk-noise", "6", "--outliers", "0.05", "--dropouts", "2:20", "--dropout-loss-msg")
+    r = headless(farm, "--walk-noise", "6", "--outliers", "0.05", "--dropouts", "2:20", "--dropout-loss-msg",
+                 "--intruder-free")
     assert r["found"] and r["state"] == "LANDED" and r["landing_err_m"] < 1.0, r
     assert r["gated"] > 0 and r["loss_msgs"] >= 2
     assert r["intruder_max_speed_mps"] <= 20.0 + 1e-6

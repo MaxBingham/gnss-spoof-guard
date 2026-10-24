@@ -8,8 +8,9 @@
 
 Stage -> sim: a person walks around the array with a speaker playing drone sound. The INTRUDER (red quad) sits
 `--range` m out (default 500; `--range-from-level`: louder = closer, 150-1200 m) and `--intruder-agl` m above the
-terrain on the bearing of that sound, smoothed and speed-limited (`--intruder-speed`, 20 m/s, accelerations
-<= 4 m/s^2: at 500 m one degree of walking is 8.7 m, so walk about 1 deg/s). Silent: it hovers.
+terrain, always exactly on the drawn sound line (the smoothed bearing our drone hears too); with
+`--intruder-free` it flies after it instead, speed-limited (`--intruder-speed`, 20 m/s, accelerations <= 4 m/s^2).
+At 500 m one degree of walking is 8.7 m, so walk about 1 deg/s. Silent: it hovers.
 
 Audio in (UDP 5005, the 45 listener's contract): BearingEstimate JSON + az_rate_dps, level_db, seq, detected=true;
 one {"detected": false} on loss (= silent at once); plain BearingEstimate JSON (the clap listener) and bare numbers
@@ -72,6 +73,7 @@ OUTLIER_DEG = 30.0         # gate: a bearing > max(3 sigma, this) off the smooth
 OUTLIER_PERSIST_S = 1.0    # ... unless such bearings agree with each other for this long (then jump there)
 RATE_MAX = 10.0            # deg/s, clip on the bearing rate
 EXTRAP_S = 3.0             # in a dropout, extrapolate the bearing with the rate for at most this long
+LINE_TAU = 0.6             # the drawn sound line glides after the smoothed bearing with this time constant
 INTRUDER_ACC = 4.0         # m/s^2
 INTRUDER_K = 0.2           # 1/s, intruder velocity = K * distance to its goal + bearing-rate feed-forward
 INTRUDER_AB = (0.06, 0.0019)  # alpha-beta gains on the 5 Hz bearings (critically damped, ~3 s)
@@ -141,6 +143,7 @@ class Audio:
 
     def __init__(self):
         self.az: float | None = None
+        self.line: float | None = None
         self.raw: float | None = None
         self.sigma, self.rate = 5.0, 0.0
         self.level_db: float | None = None
@@ -232,6 +235,16 @@ class Audio:
             return 0.0
         return t - self.t_last if self.az is not None else math.inf
 
+    def advance(self, t: float, dt: float) -> None:
+        """The drawn sound line (and where the intruder sits): the smoothed bearing glided every sim step, so it
+        moves continuously instead of stepping with each 5 Hz message."""
+        if self.az is None:
+            return
+        if self.line is None:
+            self.line = self.az
+        else:
+            self.line = blend_deg(self.line, self.predict(t), 1 - math.exp(-dt / LINE_TAU))
+
     def predict(self, t: float) -> float:
         """Smoothed bearing carried forward with the rate over a dropout (at most EXTRAP_S)."""
         return (self.az + self.rate * float(np.clip(t - self.t_last, 0.0, EXTRAP_S))) % 360.0
@@ -286,8 +299,20 @@ class Intruder:
             xy = az_to_dir(self.az) * self.r_cur
             self.pos = np.array([*xy, self.ground(*xy) + self.agl])
 
-    def update(self, t: float, dt: float, hearing: bool = True) -> None:
+    def update(self, t: float, dt: float, hearing: bool = True, line_az: float | None = None) -> None:
+        """line_az given: sit exactly on the drawn sound line (the bearing our drone hears), no lag of its own."""
         if self.pos is None:
+            return
+        if line_az is not None:
+            xy = az_to_dir(line_az) * self.r_cur
+            step = xy - self.pos[:2]
+            sp = float(np.linalg.norm(step)) / dt
+            self.vel = step / dt
+            self.v_max = max(self.v_max, min(sp, 1e3))
+            if sp > 0.5:
+                self.yaw = math.atan2(step[1], step[0])
+            self.pos[:2] = xy
+            self.pos[2] = float(self.ground(*xy)) + self.agl + 0.6 * math.sin(0.7 * t)
             return
         v_des = np.zeros(2)
         if hearing:
@@ -369,6 +394,7 @@ class Hunter(base.Mission):
         self.hits: deque[float] = deque()
         self.t_hit = -1e9
         self.est: np.ndarray | None = None
+        self.r_est: float | None = None   # target range from the base, known once the camera has confirmed it
         self.t_launch: float | None = None
         self.t_found: float | None = None
 
@@ -383,6 +409,8 @@ class Hunter(base.Mission):
         while self.hits and t - self.hits[0] > CONFIRM_S:
             self.hits.popleft()
         self.t_hit, self.est = t, r["est"]
+        if len(self.hits) >= CONFIRM_HITS:
+            self.r_est = float(np.linalg.norm(r["est"][:2]))
         if self.state in ("INTERCEPT", "LOST") and len(self.hits) >= CONFIRM_HITS:
             if self.t_found is None:
                 self.t_found = t
@@ -392,6 +420,9 @@ class Hunter(base.Mission):
         c = cam.pos()
         if self.state == "TRACK" and self.est is not None:
             v = self.est - c
+        elif audio.az is not None and self.r_est is not None and self.est is not None:
+            p = az_to_dir(audio.predict(t)) * self.r_est   # lost: on the sound line at the range we saw it at
+            v = np.array([*(p - c[:2]), float(self.est[2]) - c[2]])
         elif audio.az is not None:
             r_look = float(np.linalg.norm(c[:2])) + 250.0
             p = az_to_dir(audio.predict(t)) * r_look
@@ -423,7 +454,8 @@ class Hunter(base.Mission):
                 self._go("RETURN", t)
                 return
             az = audio.predict(t) + float(np.clip(audio.rate, -5, 5)) * LEAD_S   # dropouts: last bearing + rate
-            self._move_xy(az_to_dir(az) * min(r_sp + 80.0, MAX_OUT), HUNT_SPEED, dt)
+            r_goal = min(r_sp + 80.0, MAX_OUT) if self.r_est is None else min(max(self.r_est - STANDOFF, 0.0), MAX_OUT)
+            self._move_xy(az_to_dir(az) * r_goal, HUNT_SPEED, dt)
             self._terrain(dt, self.agl)
         elif s == "TRACK":
             if audio.silent_for(t) > GIVE_UP_S:   # the sound stopped: the demo is over
@@ -614,7 +646,9 @@ class Demo:
     def step(self) -> None:
         m, d, h = self.m, self.d, self.hunter
         dt = m.opt.timestep
-        self.intruder.update(d.time, dt, self.audio.hearing(d.time))
+        self.audio.advance(d.time, dt)
+        self.intruder.update(d.time, dt, self.audio.hearing(d.time),
+                             None if self.args.intruder_free else self.audio.line)
         h.aim(self.cam, self.audio, d.time)
         if d.time >= self.next_frame:
             self.next_frame = d.time + FRAME_DT
@@ -647,7 +681,8 @@ class Demo:
             col = [1.0, 0.45, 0.1, 0.9] if hearing else [0.6, 0.6, 0.6, 0.5]
             for s, width, c in ((0.0, w, col), (-2 * a.sigma, w / 3, [1.0, 0.6, 0.2, 0.35]),
                                 (2 * a.sigma, w / 3, [1.0, 0.6, 0.2, 0.35])):
-                pts = base.terrain_path(g, a.az + s, length, 25.0 if s == 0 else 50.0, 4.0)
+                pts = base.terrain_path(g, (a.line if a.line is not None else a.az) + s, length,
+                                        25.0 if s == 0 else 50.0, 4.0)
                 pts[0] = [0, 0, 3.3]
                 for p0, p1 in zip(pts[:-1], pts[1:]):
                     add_line(scn, p0, p1, width, c)
@@ -885,7 +920,9 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--world", choices=["farm", "simple"], default="farm")
     ap.add_argument("--range", type=float, default=500.0, help="intruder distance from the base (m)")
     ap.add_argument("--intruder-agl", type=float, default=80.0, help="intruder height above the terrain (m)")
-    ap.add_argument("--intruder-speed", type=float, default=20.0, help="max intruder speed (m/s)")
+    ap.add_argument("--intruder-speed", type=float, default=20.0, help="max intruder speed with --intruder-free (m/s)")
+    ap.add_argument("--intruder-free", action="store_true",
+                    help="intruder flies after the sound speed-limited (default: always exactly on the sound line)")
     ap.add_argument("--udp-port", type=int, default=5005, help="0 = off")
     ap.add_argument("--no-camera-view", action="store_true", help="no camera picture in the viewer corner")
     ap.add_argument("--headless", action="store_true")

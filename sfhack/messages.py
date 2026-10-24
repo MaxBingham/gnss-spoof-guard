@@ -220,3 +220,38 @@ def to_jsonable(obj: Any) -> Any:
     if hasattr(obj, "__dataclass_fields__"):
         return {k: to_jsonable(getattr(obj, k)) for k in obj.__dataclass_fields__ if k != "image"}
     return obj
+
+
+@dataclass
+class GimbalCmd:
+    """Onboard -> front gimbal (topic `camera/gimbal/cmd`): pan relative to the heading (deg, + = left / CCW) and tilt
+    up from the horizon (deg). The gimbal slews there at its rate limit; the horizon stays level."""
+
+    t: float
+    pan_deg: float
+    tilt_deg: float
+
+
+@dataclass
+class GimbalFrame:
+    """Front camera on the 2-axis gimbal (topic `camera/gimbal`): RGB plus the gimbal encoder readings at exposure.
+    Pixel -> world ray: optical axis = heading + pan, tilt up from the horizon; level horizon (no roll); square
+    pixels, principal point at the image centre, `hfov_deg` across the width."""
+
+    t: float
+    seq: int
+    image: np.ndarray  # (H, W, 3) uint8 RGB, row 0 = top
+    hfov_deg: float
+    pan_deg: float
+    tilt_deg: float
+
+
+@dataclass
+class BearingUpdate:
+    """The current UMA-16 bearing to the enemy from the base (topic `link/bearing`), ~1 Hz, delivered only while the
+    link is up. The base tells our drone and the enemy apart by their rotor sound (assumed to work in the sim)."""
+
+    t: float  # when the base sent it
+    az_deg: float  # compass degrees from the array
+    first_heard_t: float  # when the base first heard the enemy (the 500 m assumption starts there)
+    sigma_deg: float = 5.0  # 1-sigma of this bearing (grows with the enemy's distance from the array)

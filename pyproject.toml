@@ -22,6 +22,25 @@ dependencies = [
     "sounddevice>=0.5.6",
 ]
 
+[project.optional-dependencies]
+# Enemy-drone detector (sfhack/perception/drone_detector.py): training, evaluation, runtime.
+# Ultralytics is AGPL-3.0 (see README "Enemy-drone tracker"). CUDA 12.8 wheels on Windows / Linux (PyPI torch on
+# Windows is CPU-only): uv sync --extra detector
+detector = [
+    "torch>=2.5",
+    "torchvision>=0.20",
+    "ultralytics>=8.3",
+]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
 [build-system]
 requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"

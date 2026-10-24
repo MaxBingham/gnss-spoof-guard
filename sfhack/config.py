@@ -134,6 +134,24 @@ class EkfConfig:
     # held at this floor (2σ = 2.5 m). It does not grow with a spoof offset, so a drag still
     # claims a few metres against a hundred-metre error.
     horiz_std_floor: float = 1.25
+    # V3.2 GNSS -> GNSS-free transition. A naive GNSS jump (50 m in one epoch) moved the accel-bias states by
+    # ~1 m/s^2, which the error-state reset handed to the AHRS as a 5 deg tilt: after the jam the drone flew
+    # off at 20 m/s with 2-sigma ~2 m. Normal per-update bias steps are <= 0.022 m/s^2 (vision + GNSS).
+    acc_bias_step_max: float = 0.03  # m/s^2, max change of (bx, by) from one measurement update
+    gnss_loss_after_s: float = 1.0  # no GNSS fix this long after having had them = GNSS lost
+    # GNSS-free track: a second EKF (IMU + baro + vision, never GNSS) started at the first GNSS fix and run in
+    # parallel. On GNSS loss the main filter adopts it when it is healthy (HANDOVER). A spoof the naive
+    # main filter swallowed (lever jump: 50 m) is then gone at once; inflating the main covariance instead
+    # cannot reach that far: a 60 m NCC window at 40 m altitude is ambiguous almost everywhere (no fixes for
+    # 27 s, then a confident fix 65 m wrong).
+    gnss_free_track: bool = True
+    handover_max_fix_age_s: float = 5.0  # GNSS-free track is healthy: an accepted vision fix this recent ...
+    handover_max_sigma2: float = 10.0  # ... and its 2-sigma below this (m)
+    # Fallback (no healthy GNSS-free track, e.g. camera lost at the jam): floor the main covariance here, the
+    # GNSS-made ~0.4 m is no promise once the receiver is gone, then re-localize on the first STRONG fix.
+    gnss_loss_pos_std: float = 5.0  # m
+    gnss_loss_vel_std: float = 1.0  # m/s
+    reloc_min_quality: float = 0.6  # NCC peak score a fix needs to re-localize after GNSS loss
 
 
 @dataclass
@@ -183,6 +201,47 @@ class LocalizerConfig:
 
 
 @dataclass
+class TrnConfig:
+    """TRN (perception/trn.py): nadir lidar vs onboard DSM particle filter. Values = death-v3's urban set."""
+
+    enabled: bool = True  # --trn on|off. Fused into the main filter only while no GNSS arrives (the naive
+    # GNSS baseline and the spoof demo stay as they were); always into the GNSS-free track.
+    dsm_mpp: float = 1.0  # m, onboard DSM raster
+    n_particles: int = 3000
+    sigma_meas: float = 2.0  # m, lidar + map error (1 sigma core of the Student-t)
+    nu: float = 3.0  # Student-t dof (heavy tails: trees, footprint polygon vs simulated box walls)
+    outlier_floor: float = 0.05  # likelihood floor (fraction of the peak)
+    beam_weight: float = 0.35  # log-likelihood weight per beam (the 8 beams span ~11 m: correlated map error)
+    corr_length: float = 3.0  # m, map-error correlation length along track (likelihood tempering)
+    update_hz: float = 10.0
+    min_range: float = 0.5  # m
+    init_inflate: float = 1.5  # initial cloud = EKF covariance x this (std), at least init_min_std
+    init_min_std: float = 4.0
+    init_max_std: float = 150.0
+    bias_init_std: float = 4.0  # m
+    bias_keep_std: float = 1.0  # m, bias spread on a restart once the bias has been learned
+    bias_rw: float = 0.05  # m/sqrt(s)
+    vel_err_min_std: float = 0.2  # m/s
+    vel_err_rw: float = 0.02  # m/s/sqrt(s), on top of the EKF's velocity-variance growth
+    pos_rw: float = 0.05  # m/sqrt(m travelled), roughening
+    min_travel: float = 60.0  # m of matched track after (re)initialization before the first fix
+    max_fix_std: float = 5.0  # m, cloud 1-sigma below this always qualifies for a fix ...
+    rel_fix_std: float = 0.4  # ... or below this x the INS 1-sigma ...
+    cap_fix_std: float = 25.0  # ... but never wider than this
+    min_fix_std: float = 1.0  # m, floor of the published fix sigma
+    # Closed-loop dead reckoning drifts 2-3 m/s here (no airframe drag in calm air, so the accelerometer cannot
+    # see velocity): with V3's sparse fixes (every 20 m, sigma x 2) the EKF ran 10-25 m off while the TRN cloud
+    # itself stayed within 1-3 m, and hovering over B drifted 60 m. So fixes are frequent, and while hovering
+    # one every hover_fix_s (the cloud then spreads with the INS velocity error, so its covariance stays honest).
+    fix_inflate: float = 1.5  # published sigma = cloud sigma x this (correlated map errors)
+    fix_interval: float = 0.5  # s between published fixes
+    fix_travel: float = 6.0  # m of new track between two fixes ...
+    hover_fix_s: float = 2.0  # ... or this long when (almost) hovering
+    info_track_m: float = 120.0  # along-track window for the information-content report
+    lost_after_s: float = 8.0  # likelihood at the outlier floor this long -> re-initialize (keeps the bias)
+
+
+@dataclass
 class HealthConfig:
     """Thresholds on the 2-sigma horizontal radius and the time since the last accepted visual fix."""
 
@@ -193,7 +252,68 @@ class HealthConfig:
     return_after_hold_s: float = 10.0  # HOLD this long without recovery -> RETURN_TO_LAST_FIX
     land_sigma2: float = 45.0
     land_no_fix_s: float = 60.0
+    # V3.2: sigma2 > land_sigma2 means HOLD (hover and keep searching), not LAND, while blind. LAND only
+    # after land_no_fix_s without any fix. False = the old rule (sigma-based LAND).
+    hold_when_blind: bool = True
+    # V3.2 TRN: hovering gives terrain-referenced navigation no new terrain (no fixes while hovering), so while
+    # TRN is tracking the drone keeps flying at the degraded speed across flat stretches, up to these limits.
+    hold_sigma2_trn: float = 40.0
+    hold_no_fix_s_trn: float = 30.0
     degraded_speed_scale: float = 0.5
+    # Night-nav: no HOLD / RETURN / LAND mid-route when the uncertainty grows. Hovering gives TRN and the thermal
+    # localizer nothing new and the INS drifts all the same, so the drone keeps flying the planned route
+    # (state DEGRADED, reason "BLIND, keep route") and the HUD shows the growing 2-sigma. False = V3.2 rules.
+    keep_route_when_blind: bool = True
+    blind_speed_scale: float = 1.0  # cruise speed factor while DEGRADED under keep_route_when_blind
+
+
+@dataclass
+class ThermalConfig:
+    """Night (night-nav): thermal localizer (perception/thermal_localizer.py) and the simulated thermal camera."""
+
+    camera_hz: float = 5.0  # thermal frames per second fed to the localizer
+    # Heading: the compass has a constant ~1 deg bias; every velocity change is then rotated into the wrong
+    # direction (8 m/s x 1.5 deg = 0.2 m/s cross-track drift). With yaw_feedback the yaw corrections of accepted
+    # thermal fixes (yaw search of the template) teach the autopilot the compass bias, slowly.
+    yaw_feedback: bool = False
+    confirm_jump_m: float = 5.0  # a fix moving the estimate more than this needs a second, consistent fix (0 = off)
+    confirm_window_s: float = 2.0
+    confirm_tol_m: float = 3.0
+    yaw_feedback_gain: float = 0.05  # per accepted fix
+    yaw_feedback_min_quality: float = 0.6
+    yaw_feedback_max_deg: float = 5.0
+    method: str = "ncc"
+    tpl_mpp: float = 0.5  # m per template cell (= prior resolution)
+    tpl_frac: float = 0.26  # template half size = this x height above the surface: the north-up square must fit
+    # in the 56 x 45 m (at 60 m) footprint at any heading (inscribed half ~0.26 x h at 45 deg)
+    tpl_min_m: float = 6.0
+    tpl_max_m: float = 18.0
+    min_alt: float = 10.0  # m above the surface: below this the footprint is too small
+    min_std_K: float = 0.4  # rectified image std below this = uniform (no fix)
+    search_margin_m: float = 6.0  # search radius = 3 sigma(prior) + margin, clipped to [min, max]
+    search_min_m: float = 8.0
+    search_max_m: float = 60.0
+    yaw_search_deg: tuple[float, ...] = (-3.0, -1.5, 0.0, 1.5, 3.0)
+    min_score: float = 0.45  # NCC peak below this -> no fix
+    min_margin: float = 0.06  # best - second local maximum below this -> ambiguous
+    peak_delta: float = 0.05  # peak region = cells within this of the best score (its shape -> covariance)
+    peak_cov_scale: float = 1.0  # covariance = this x weighted spread of the peak region (+ floor, tilt)
+    sigma_floor: float = 1.0  # m
+    tilt_std_deg: float = 0.5
+    grad_min_score: float = 0.35
+    # road centerlines
+    road_trunc_m: float = 4.0  # chamfer distance truncation
+    road_temp_T_m: float = 0.25  # chamfer likelihood temperature (m of mean distance)
+    road_min_px: int = 30  # centerline pixels needed (15 m of road)
+    road_min_quality: float = 0.55  # fraction of observed centerline within 1.5 m of a prior road
+    road_sigma_floor: float = 1.0
+    road_max_minor_m: float = 6.0  # cov minor axis 1-sigma above this = no fix
+    road_include_footways: bool = True  # campus: footways are paved and warm too (road_ref "osm")
+    road_ref: str = "mask"  # reference centerlines: "mask" (thinned prior road mask) | "osm" (way polylines)
+    # junctions
+    junc_gate_m: float = 12.0
+    junc_sigma: float = 2.0
+    combo_agree_chi2: float = 9.21
 
 
 @dataclass
@@ -213,6 +333,8 @@ class Config:
     ahrs: AhrsConfig = field(default_factory=AhrsConfig)
     localizer: LocalizerConfig = field(default_factory=LocalizerConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
+    trn: TrnConfig = field(default_factory=TrnConfig)
+    thermal: ThermalConfig = field(default_factory=ThermalConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
     # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
     conditions: Conditions = field(default_factory=Conditions)

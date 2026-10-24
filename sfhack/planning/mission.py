@@ -45,6 +45,32 @@ def route_plan(route: list[dict], cfg: MissionConfig) -> list[Waypoint]:
     return [Waypoint(np.array(w["enu"], float), speeds[w["phase"]], w["phase"]) for w in route]
 
 
+def cruise_at_agl(plan: list[Waypoint], ground_z: Callable[[np.ndarray], float], agl: float,
+                  max_leg_m: float = 50.0, step_m: float = 5.0) -> list[Waypoint]:
+    """The same horizontal route flown `agl` m above the map's bare earth (night-nav: 60 m AGL): TAKEOFF climbs
+    to A's ground + agl, CRUISE legs are split into <= max_leg_m pieces, each at agl above the highest ground
+    along it (terrain following in steps), DESCEND / LAND are kept. `ground_z`: the onboard DTM."""
+    out: list[Waypoint] = []
+    prev: np.ndarray | None = None
+    for wp in plan:
+        if wp.phase == "TAKEOFF":
+            p = wp.pos.copy()
+            p[2] = ground_z(p[:2]) + agl
+            out.append(Waypoint(p, wp.speed, wp.phase))
+        elif wp.phase == "CRUISE" and prev is not None:
+            a, b = prev[:2], wp.pos[:2]
+            n = max(1, int(math.ceil(float(np.linalg.norm(b - a)) / max_leg_m)))
+            for k in range(1, n + 1):
+                p0, p1 = a + (b - a) * (k - 1) / n, a + (b - a) * k / n
+                m = max(2, int(math.ceil(float(np.linalg.norm(p1 - p0)) / step_m)) + 1)
+                z = max(ground_z(p0 + (p1 - p0) * s) for s in np.linspace(0.0, 1.0, m)) + agl
+                out.append(Waypoint(np.array([p1[0], p1[1], z]), wp.speed, "CRUISE"))
+        else:
+            out.append(Waypoint(wp.pos.copy(), wp.speed, wp.phase))
+        prev = wp.pos
+    return out
+
+
 def fly_x2_plan(alt: float = 5.0, speed: float = 3.0, land_speed: float = 0.7) -> list[Waypoint]:
     """The original fly_x2.py square: take off, 15 m east, 15 m north, land."""
     return [

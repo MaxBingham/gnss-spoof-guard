@@ -1,4 +1,4 @@
-# Night notes for the team (night-research, v3, 2026-10-24 01:05)
+# Night notes for the team (night-research, v3, 2026-10-24 00:50)
 
 Short and concrete, for night-thermal / night-nav / night-demo. The full report with sources follows in
 `docs/NIGHT_RESEARCH.md`. Numbers marked **model** come from my 1-D surface energy balance
@@ -117,7 +117,7 @@ section 6.
 - No usable summer night scene exists for the ukraine-1 area (the only one, 2006-06-01, is cloudy).
 
 ## Changelog
-- v3 (01:05): hot-summer and Ukraine sites (section 7).
+- v3 (00:50): hot-summer and Ukraine sites (section 7).
 - v2 (00:35): ASTER real-data check; light insulated roofs typical -4..-6 K, -11 K extreme (Khedari 2000: 1-6 K
   below ambient; NIST: up to 11 K); wet asphalt estimate.
 - v1 (00:05): first version.

@@ -120,8 +120,13 @@ that the structure is where the prior says. (ukraine-1 at 0.4x not run: time.)
 Sanity check on night-thermal's FINAL data (moving traffic, truth contrast 0.7, rebuilt 01:17; the live mission
 folders, latest camera code, this branch at 4e2f977), only 2 seeds each: berkeley 2/2 (0.1 / 0.4 m), m-c804bb84
 2/2 (0.8 / 1.4 m), ukraine-1 1/2 (0.8 m; seed 1 ran away). Consistent with the frozen-data table, too few seeds
-for more. night-demo's final eval runs the full 20 seeds on that data (with this branch at 4904433, i.e. before
-the gyro-bias fix).
+for more.
+
+Independent run by night-demo (their numbers, reported to me at ~04:50; night-demo b5409f4 = this branch's 651b398
++ night-thermal 146a89f + their night route choice; frozen copy of the FINAL data with traffic and contrast 0.7;
+error at the ABOVE_B decision), 20 seeds each: berkeley 20/20 (mean 0.4 m, max 0.9), m-c804bb84 20/20 (0.9 / 2.0),
+ukraine-1 on the ROADS route 20/20 (1.9 / 2.5). Without the gyro-bias fix (4904433): 20/20, 20/20, 15/20.
+ukraine-1 on the straight route with the fix: 5/6 at that time (one runaway at the forest).
 
 ### Stage 1: method comparison (before the gyro-bias fix)
 

@@ -20,6 +20,7 @@ import math
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 import numpy as np
@@ -178,6 +179,7 @@ def main() -> None:
     ap.add_argument("--mission-root", default="", help="read missions from <root>/<id> (a frozen copy) instead of "
                     "$SFHACK_DATA/missions: the thermal files there get rebuilt in place")
     ap.add_argument("--trace", action="store_true", help="print the per-second trace of every flight")
+    ap.add_argument("--resume", action="store_true", help="read back flights whose JSON exists (same --tag)")
     args = ap.parse_args()
     sets = dict(s.split("=", 1) for s in args.set)
     jobs = [dict(mission=m, mission_path=str(Path(args.mission_root) / m) if args.mission_root else "", method=meth, seed=s, agl=args.agl, gnss_off_frac=args.gnss_off_frac, renderer=args.renderer,
@@ -186,21 +188,53 @@ def main() -> None:
             for s in range(args.seed0, args.seed0 + args.seeds)]
     t0 = time.time()
     rows = []
-    with ProcessPoolExecutor(max_workers=min(args.workers, len(jobs))) as ex:
-        for job, r in zip(jobs, ex.map(fly, jobs)):
-            r["tag"] = job["tag"]
-            rows.append(r)
-            a = r["arrive"] or {}
-            print(f"{r['mission']:>11} {r['tag'] or r['method']:>12} seed {r['seed']:2d}: error at B {r['final_err']:6.1f} m "
-                  f"(arrival {a.get('err', float('nan')):.1f} m, claimed 2s {a.get('sigma2', float('nan')):.1f} m), "
-                  f"est err mean/max {r['est_err_mean']:.1f}/{r['est_err_max']:.1f}, "
-                  f"thermal {r['thermal_accepted']}/{r['thermal_fixes']}/{r['thermal_frames']} {r['thermal_ms']:.0f} ms, "
-                  f"TRN {r['trn_accepted']}, GNSS off {r['gnss_off_t'] or 0:.0f} s, {r['renderer']}, "
-                  f"{r['wall_s']:.0f} s wall{' TIMEOUT' if r['timeout'] else ''}", flush=True)
-            if args.trace:
-                print("   t phase health err 2sig yaw_err thermal_acc thermal_ret trn_acc agl")
-                for row in r["trace"]:
-                    print("  ", *row)
+
+    def out_path(job: dict) -> Path:
+        tag = job.get("tag") or job["method"].replace("+", "_")
+        return Path(job["out"]) / job["mission"] / tag / f"seed{job['seed']}.json"
+
+    def report(job: dict, r: dict) -> None:
+        r["tag"] = job["tag"]
+        rows.append(r)
+        a = r["arrive"] or {}
+        print(f"{r['mission']:>11} {r['tag'] or r['method']:>12} seed {r['seed']:2d}: error at B {r['final_err']:6.1f} m "
+              f"(arrival {a.get('err', float('nan')):.1f} m, claimed 2s {a.get('sigma2', float('nan')):.1f} m), "
+              f"est err mean/max {r['est_err_mean']:.1f}/{r['est_err_max']:.1f}, "
+              f"thermal {r['thermal_accepted']}/{r['thermal_fixes']}/{r['thermal_frames']} {r['thermal_ms']:.0f} ms, "
+              f"TRN {r['trn_accepted']}, GNSS off {r['gnss_off_t'] or 0:.0f} s, {r['renderer']}, "
+              f"{r['wall_s']:.0f} s wall{' TIMEOUT' if r['timeout'] else ''}", flush=True)
+        if args.trace:
+            print("   t phase health err 2sig yaw_err thermal_acc thermal_ret trn_acc agl")
+            for row in r["trace"]:
+                print("  ", *row)
+
+    todo = []
+    for job in jobs:  # --resume: flights already written for this tag are read back, not flown again
+        p = out_path(job)
+        if args.resume and p.exists():
+            report(job, json.loads(p.read_text(encoding="utf-8")))
+        else:
+            todo.append(job)
+    tries: dict[tuple, int] = {}
+    while todo:
+        # A native crash in one worker (GL context under load) breaks the whole pool: restart the pool and
+        # resubmit what did not finish; a flight whose pool broke twice is reported, not retried forever.
+        pending, todo = todo, []
+        with ProcessPoolExecutor(max_workers=min(args.workers, len(pending))) as ex:
+            futs = [(job, ex.submit(fly, job)) for job in pending]
+            for job, fu in futs:
+                try:
+                    report(job, fu.result())
+                except BrokenProcessPool:
+                    key = (job["mission"], job["method"], job["seed"])
+                    tries[key] = tries.get(key, 0) + 1
+                    if tries[key] <= 1:
+                        todo.append(job)
+                    else:
+                        print(f"{job['mission']:>11} {job['tag'] or job['method']:>12} seed {job['seed']:2d}: "
+                              "worker crashed twice, not scored", flush=True)
+        if todo:
+            print(f"(process pool broke; resubmitting {len(todo)} flights)", flush=True)
     print(f"\n{len(jobs)} flights in {time.time() - t0:.0f} s, settings: {sets or 'defaults'}, agl {args.agl}, "
           f"GNSS off at {args.gnss_off_frac:.0%} of the route\n")
     print(summarize(rows, args.radius))

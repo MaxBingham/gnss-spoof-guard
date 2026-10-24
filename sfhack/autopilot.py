@@ -8,6 +8,7 @@ controller is a `TruthPoseSource` injected from outside (dashboard "truth" switc
 from __future__ import annotations
 
 import copy
+import dataclasses
 import math
 import time
 from typing import Any
@@ -72,6 +73,10 @@ class Autopilot:
         self.sources_used: set[str] = set()  # position sources the main filter fused (gnss / vision / trn)
         # Night (night-nav): downward thermal camera matched against the onboard thermal prior
         self.thermal = thermal_localizer
+        if thermal_localizer is not None and cfg.thermal.ekf_acc_bias_rw is not None:
+            # night: the AHRS tilt drifts faster than the day-tuned bias random walk lets the EKF follow (see
+            # ThermalConfig.ekf_acc_bias_rw); a flight-local copy, the shared config stays as it is
+            self.ekf.cfg = dataclasses.replace(self.ekf.cfg, acc_bias_rw=cfg.thermal.ekf_acc_bias_rw)
         self.thermal_frames = 0
         self.thermal_fixes = 0  # fixes the thermal localizer returned
         self.thermal_accepted = 0  # ... fused into the main filter
@@ -381,9 +386,9 @@ class Autopilot:
         self._thermal_pending = (fix.t, innov)
         return False
 
-    @staticmethod
-    def _thermal_visual_fix(tf: Any, frame: ThermalFrame) -> VisualFix:
-        return VisualFix(frame.t, np.asarray(tf.xy, float).copy(), np.asarray(tf.cov, float).copy(), f"thermal-{tf.method}",
+    def _thermal_visual_fix(self, tf: Any, frame: ThermalFrame) -> VisualFix:
+        cov = np.asarray(tf.cov, float) * self.cfg.thermal.fix_cov_scale
+        return VisualFix(frame.t, np.asarray(tf.xy, float).copy(), cov, f"thermal-{tf.method}",
                          n_inliers=int(round(100 * tf.quality)), proc_ms=tf.proc_ms, frame_seq=frame.seq,
                          quality=float(tf.quality))
 

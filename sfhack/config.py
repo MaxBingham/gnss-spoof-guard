@@ -163,6 +163,10 @@ class AhrsConfig:
     yaw_gain: float = 1.0  # 1/s, compass yaw correction
     accel_gate: float = 0.05  # m/s^2, use accel for tilt only when | |a| - g | < gate (~1 m/s^2 horizontal)
     rate_gate: float = 0.1  # rad/s, ... and only while not rotating (steady thrust direction)
+    # Night-nav: integral term of the EKF's tilt corrections (correct_tilt_world) into the roll / pitch gyro bias,
+    # 1/s. Without GNSS the residual gyro bias tilts the AHRS ~1 deg per 10-20 s, which only position fixes can
+    # see; across a 30 s blind stretch (forest) the gravity leak then grew the error by tens of m. 0 = off.
+    tilt_bias_ki: float = 0.0
 
 
 @dataclass
@@ -276,6 +280,16 @@ class ThermalConfig:
     # direction (8 m/s x 1.5 deg = 0.2 m/s cross-track drift). With yaw_feedback the yaw corrections of accepted
     # thermal fixes (yaw search of the template) teach the autopilot the compass bias, slowly.
     yaw_feedback: bool = False
+    # EKF accel-bias random walk while flying on thermal fixes (None = EkfConfig.acc_bias_rw, 0.01). With GNSS off
+    # the AHRS tilt drifted ~1 deg in 10-20 s (0.2 m/s^2 of gravity leak); at 0.01 m/s^2/sqrt(s) the bias states
+    # could not follow, the filter stayed confident (2-sigma 2.5 m) while the true error grew to 14 m, and then
+    # rejected the correct thermal fixes (m-c804bb84 seed 0 ran away).
+    ekf_acc_bias_rw: float | None = None
+    # Thermal fixes arrive at 5 Hz with errors correlated over seconds (same map region, same prior bias); fused as
+    # independent they collapse the EKF covariance (formal 2-sigma ~0.6 m vs ~2-3 m true). Scale their covariance.
+    fix_cov_scale: float = 1.0
+    # FlightSystem(night=True) sets ahrs.tilt_bias_ki to this unless it is set explicitly (0 = leave it off)
+    night_tilt_bias_ki: float = 0.05  # ukraine-1: runaways after a 30 s forest stretch gone (docs/NIGHT_NAV.md)
     confirm_jump_m: float = 5.0  # a fix moving the estimate more than this needs a second, consistent fix (0 = off)
     confirm_window_s: float = 2.0
     confirm_tol_m: float = 3.0

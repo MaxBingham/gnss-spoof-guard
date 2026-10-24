@@ -2,35 +2,37 @@
 
 GNSS-free quadcopter navigation in MuJoCo (hackathon prototype). Full setup instructions follow in milestone M6.
 
-## Current idea: acoustic cue -> autonomous night recon quadcopter (no GNSS, no data link)
+## Current idea: acoustic cue -> autonomous recon quadcopter without GNSS
 
-**Problem.** A base in Ukraine at night. Movement outside the perimeter (e.g. vehicles or troops 2-3 km
-away) cannot be seen in the dark, but it can be heard. GNSS is jammed, and there is **no data link** between
-the base and the drone at any time: whatever the drone does after takeoff, it does on its own.
+**Problem.** A base in Ukraine. Movement outside the perimeter (e.g. vehicles or troops 1-3 km away) is often
+not visible, but it can be heard. **GNSS is jammed** (in the demo we switch it off ourselves with a key, to show
+the drift). The radio link between base and drone works **about 80 % of the time** and drops out
+unpredictably the rest of the time.
 
 **Setup.**
 - **Base:** one miniDSP UMA-16 v2 microphone array (16 MEMS mics, 4 x 4, 42 mm pitch) in the middle of the
-  base listens and gives the direction (azimuth, rough elevation, with uncertainty) a sound comes from. A fence
-  and a landing pad.
-- **Drone: a quadcopter (reconnaissance only).** IMU, compass, barometer, GNSS (only for the first 50 m in the
-  GNSS-denied version), cameras. No lidar. No microphone array on the drone (maybe later).
+  base forecourt. It gives the direction (azimuth, rough elevation, with uncertainty) of a sound, and it also
+  hears our own drone while it is close enough. A landing pad with a surveyed position and orientation.
+- **Drone: a quadcopter (reconnaissance).** IMU, compass, barometer, cameras (front and down), GNSS (lost when
+  jammed; key N in the demo). No lidar, no microphone array on the drone (maybe later).
 
-**MVP (what we build first).** Someone claps next to the real UMA-16 (on a Linux PC). Its bearing goes over UDP
-to the simulation laptop. The drone in the sim takes off from the base, flies out along that bearing, looks,
-comes back and lands. Daytime, GNSS on.
+**Mission.**
+1. The UMA-16 hears a source and estimates its bearing; the base sends it to the drone and launches it.
+2. The drone starts from the surveyed pad (known start position and heading) and flies out along the bearing.
+   Once GNSS is gone it flies on its own estimate (IMU + compass + baro + optical flow).
+3. **While the link is up**, the base helps: new bearings to the source (it may move), and the UMA-16's
+   bearing + elevation to OUR drone (plus the drone's barometric altitude -> position) as a navigation fix
+   that bounds the drift near the base. The drone sends telemetry and camera snapshots back.
+4. **While the link is down**, the drone continues on its own: same route, growing uncertainty, data buffered
+   and sent when the link returns.
+5. It searches along the bearing, observes what it finds, flies home and lands on the pad.
 
-3D view of the MVP: `uv run python demos/50_base_3d.py` (bearing from the arrow keys or UDP 5005; `--headless
---bearing 60` flies once without a window). Default world `--world farm`: a fictional, procedurally generated 4 x 4 km
-rural area (no real place or map data, `demos/base3d_farm.py`): storage hall with the UMA-16 mast in the middle of its
-forecourt, HESCO wall, rolling fields with windbreaks, farmsteads, a village on a paved road; the drone holds 30 m
-above the terrain, default range 1200 m. `--world simple` is the old flat compound. Renders: `docs/base3d/`
-(`--shots docs/base3d` regenerates them and prints the render frame rate).
+**MVP.** Someone claps next to the real UMA-16 (on a Linux PC); the bearing goes over UDP to the simulation
+laptop; the drone takes off from the base in the sim, flies that way, looks, returns, lands.
 
-**Next steps after the MVP.**
-1. GNSS off after 50 m: show the drift and keep it small (preflight alignment, optical flow, compass).
-2. A search pattern that widens with distance (bearing uncertainty + own drift).
-3. Night: thermal camera to find vehicles / people along the bearing.
-4. Return and report: no data link, so the drone flies back and hands over what it found on the pad.
+**Next steps.** Drift without GNSS shown live (ideal vs estimated vs true path); acoustic position fixes of
+our drone from the base over the intermittent link; a search pattern that widens with distance; night with a
+thermal camera.
 
 UMA-16 geometry, real recordings and open drone-audio datasets: https://github.com/JLrobot/Mic-Challenge
 

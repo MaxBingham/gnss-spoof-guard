@@ -10,6 +10,7 @@ PKG = Path(__file__).resolve().parents[1] / "sfhack"
 ALLOWED = {
     "perception/mock_localizer.py",  # SIMULATION OF PERCEPTION - uses ground truth
     "runner.py", "server.py", "recorder.py",  # harness: display / scoring only
+    "recon_runner.py",  # harness: recon flight, GNSS switch, scoring
 }
 TRUTH_PATTERNS = [  # imports of the simulator / truth, and calls of its private truth accessors
     r"^\s*(from|import)\s+[\w.]*\bsim\b",
@@ -44,7 +45,7 @@ THERMAL_TRUTH_PATTERNS = [
 ]
 
 
-ONBOARD = ("autopilot.py", "estimation/", "control/", "planning/", "perception/", "world/onboard_map.py")
+ONBOARD = ("autopilot.py", "estimation/", "control/", "planning/", "perception/", "world/onboard_map.py", "mission/")
 LEVER_PATTERNS = [  # the degradation levers are simulated reality: the drone must not know it is spoofed
     r"\bdegradation\b", r"\bConditions(Msg)?\b", r"\bCONDITIONS\b", r"\.conditions\b",
 ]

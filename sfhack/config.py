@@ -338,6 +338,53 @@ class DisturbanceConfig:
 
 
 @dataclass
+class ReconConfig:
+    """Recon mission (sfhack/mission/recon.py): acoustic bearing -> search cone -> thermal find -> orbit -> home."""
+
+    battery_s: float = 1200.0  # whole mission (takeoff to touchdown) <= 20 min
+    reserve_s: float = 60.0  # kept when deciding to turn back
+    land_allow_s: float = 90.0  # HOME approach + precision landing (incl. waiting for a light fix)
+    cruise_agl: float = 90.0  # m above the onboard DTM (thermal footprint ~84 x 66 m, 13 cm per pixel)
+    takeoff_agl: float = 20.0  # vertical climb on the pad, then climb on along the bearing
+    climb_speed: float = 4.0
+    descent_speed: float = 3.0
+    search_speed: float = 10.0  # m/s outbound and in the search pattern
+    return_speed: float = 12.0
+    terrain_lookahead_m: float = 120.0  # terrain following: highest DTM within this distance ahead
+    lead_max_m: float = 25.0  # the setpoint waits when the drone lags behind it by more than this
+    # Search: zigzag across the bearing, from search_start_m out to search_max_m (or the map edge), half-width
+    # cone_k * sqrt((r tan sigma_bearing)^2 + (pos_drift_frac r)^2) minus half a swath; the along-track step per
+    # crossing is chosen so the pattern fits the battery.
+    search_start_m: float = 700.0
+    search_max_m: float = 3200.0
+    cone_k: float = 1.5  # 1.5 sigma: 87 % of the bearing distribution
+    pos_drift_frac: float = 0.03  # own position sigma grows ~3 % of the distance flown (IMU + flow)
+    swath_frac: float = 0.8  # usable fraction of the across-track footprint
+    map_margin_m: float = 60.0  # stay this far inside the onboard map (terrain following needs the DTM)
+    # Finds: a track of detections at one place (in the estimate frame)
+    assoc_radius_m: float = 8.0
+    confirm_hits: int = 3
+    confirm_window_s: float = 4.0
+    confirm_min_conf: float = 0.45
+    moving_speed: float = 1.5  # m/s: faster tracks are traffic (logged as sightings, not orbited)
+    # Observe: orbit the find, relative to it (centre = the track's position, updated by every re-detection)
+    observe_s: float = 30.0
+    orbit_radius_m: float = 30.0
+    orbit_speed: float = 6.0
+    snapshot_every_s: float = 3.0
+    max_snapshots: int = 8
+    continue_after_find: bool = False  # True: resume the search after the orbit if the battery allows
+    # Home + landing on the pad (the waypoint Mission's precision landing: WAIT_FOR_FIX, RECENTER, touchdown)
+    home_radius_m: float = 300.0  # HOME: within this, descend to home_agl and slow down
+    home_agl: float = 35.0
+    home_speed: float = 6.0
+    precision_sigma2: float = 4.0  # m, 2-sigma needed above the pad before descending
+    precision_wait_s: float = 25.0
+    clock_start_h: float = 23.0  # local time at takeoff (report timestamps)
+    coverage_cell_m: float = 10.0
+
+
+@dataclass
 class Config:
     sim: SimConfig = field(default_factory=SimConfig)
     noise: SensorNoise = field(default_factory=SensorNoise)
@@ -351,6 +398,7 @@ class Config:
     trn: TrnConfig = field(default_factory=TrnConfig)
     thermal: ThermalConfig = field(default_factory=ThermalConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
+    recon: ReconConfig = field(default_factory=ReconConfig)
     # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
     conditions: Conditions = field(default_factory=Conditions)
 

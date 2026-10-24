@@ -140,6 +140,13 @@ class Autopilot:
     def set_localizer(self, localizer: Localizer | None) -> None:
         self.localizer = localizer
 
+    def attach_mission(self, mission: Any) -> None:
+        """Replace the waypoint Mission (before takeoff) with another one of the same interface, e.g. the recon
+        mission (sfhack/mission/recon.py). A mission with `on_thermal(frame, pose)` gets every thermal frame."""
+        self.mission = mission
+        if hasattr(mission, "on_thermal"):
+            self.bus.subscribe(topics.THERMAL, lambda f: mission.on_thermal(f, self.pose(report=False)))
+
     def log_decision(self, t: float, text: str) -> None:
         self.decisions.append((t, text))
         self.bus.publish(topics.DECISION, Decision(t, text))
@@ -451,7 +458,7 @@ class Autopilot:
         self.setpoint = sp
         while self.mission.events:
             self.log_decision(*self.mission.events.pop(0))
-        if self.mission.phase in ("PREFLIGHT", "LANDED"):
+        if self.mission.phase == "PREFLIGHT" or self.mission.done:
             motors = np.zeros(4)
         elif self.mission.ground_contact and self.pose_source == "ekf":
             motors = np.full(4, self.cfg.mission.ground_idle * self.controller.mass * self.controller.g / 4)

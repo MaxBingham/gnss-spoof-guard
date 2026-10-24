@@ -104,7 +104,7 @@ def main() -> int:
     lo, hi = np.percentile(prior.temp_K[::4, ::4], [1, 99])
     prior_img = colorize_prior(prior.temp_K, lo, hi)
     print(f"{args.mission}: thermal at hour {truth.meta.get('hour')} (air {truth.air_K - 273.15:.1f} C), "
-          f"route {len(fs.mission.plan) if hasattr(fs.mission, 'plan') else '?'} legs, pose {args.pose}")
+          f"pose {args.pose}")
 
     out_dir = Path(args.snap_dir)
     video = None

@@ -32,6 +32,7 @@ import mujoco
 import numpy as np
 
 from ..missionprep.geometry import Grid
+from .materials import CLS
 
 SURFACE, WALL, OBJECT, AIR = 0, 1, 2, 3
 
@@ -44,6 +45,8 @@ class ThermalTruth:
     air_K: float
     meta: dict[str, Any] = field(default_factory=dict)
     object_K: dict[str, float] = field(default_factory=dict)  # geom name ("target<k>") -> K
+    cls: np.ndarray | None = None  # truth material class (uint8), same grid
+    roads: list[dict[str, Any]] = field(default_factory=list)  # paved vehicle roads (traffic)
 
     def sample(self, xy: np.ndarray) -> np.ndarray:
         """Bilinear lookup at ENU points (..., 2) with cv2.remap (fast for whole images)."""
@@ -67,6 +70,8 @@ def load_truth(path: str | Path, contrast: float = 1.0, soften_m: float = 0.3) -
         meta = json.loads(str(z["meta"]))
         temp = np.ascontiguousarray(z["temp_K"], np.float32)
         wall, air = float(z["wall_K"]), float(z["air_K"])
+        cls = np.asarray(z["cls"], np.uint8) if "cls" in z else None
+        roads = json.loads(str(z["roads_json"])) if "roads_json" in z else []
     if soften_m > 0:
         temp = cv2.GaussianBlur(temp, (0, 0), soften_m / float(meta["res_m"]))
     if contrast != 1.0:
@@ -83,18 +88,20 @@ def load_truth(path: str | Path, contrast: float = 1.0, soften_m: float = 0.3) -
                 objects[f"target{k}"] = float(ob.get("temp_K", air - 1.0))
         except (ValueError, OSError):
             pass
-    return ThermalTruth(temp, grid, wall, air, meta, objects)
+    return ThermalTruth(temp, grid, wall, air, meta, objects, cls, roads)
 
 
 class ThermalCamera:
     def __init__(self, model: mujoco.MjModel, name: str = "thermal", width: int = 640, height: int = 512,
                  hfov_deg: float = 50.0, render_scale: float = 0.5, netd_K: float = 0.05, seed: int = 0,
                  ffc_period_s: float = 180.0, renderer: mujoco.Renderer | None = None,
-                 abs_error_K: float = 2.0, gain_error: float = 0.03) -> None:
+                 abs_error_K: float = 2.0, gain_error: float = 0.03, traffic: int = 6) -> None:
         """`renderer`: an existing mujoco.Renderer of the same model to draw into (e.g. MujocoSim.renderer, at
         least 300 x 240): one GL context instead of two; switching contexts costs ~50 ms per frame on Windows.
         The internal render then uses a viewport of that renderer."""
         self.model = model
+        self.traffic = traffic
+        self.vehicles: list[dict[str, Any]] | None = None  # created on the first frame (needs the truth roads)
         self.shared = renderer is not None
         if renderer is not None:
             render_scale = min(renderer.width / width, renderer.height / height)
@@ -222,6 +229,69 @@ class ThermalCamera:
                 off[i] = -1.0
         return kind, off
 
+    # ------------------------------------------------------------------ traffic (per flight, not in any map)
+
+    _PAVED = tuple(CLS[n] for n in ("asphalt", "asphalt_minor", "concrete", "pavers", "parking"))
+
+    def _spawn_vehicles(self, truth: ThermalTruth) -> None:
+        r = np.random.default_rng(int(self.rng.integers(1 << 31)))
+        segs = []
+        for w in truth.roads:
+            p = np.asarray(w["pts_enu"], float)
+            if len(p) >= 2:
+                L = float(np.hypot(*np.diff(p, axis=0).T).sum())
+                if L > 30:
+                    segs.append((p, L, float(w["width_m"])))
+        self.vehicles = []
+        if not segs:
+            return
+        lens = np.array([s[1] for s in segs])
+        for _ in range(self.traffic):
+            p, L, width = segs[int(r.choice(len(segs), p=lens / lens.sum()))]
+            self.vehicles.append({"pts": p, "cum": np.concatenate([[0], np.cumsum(np.hypot(*np.diff(p, axis=0).T))]),
+                                  "s": float(r.uniform(0, L)), "dir": float(r.choice([-1.0, 1.0])),
+                                  "speed": float(r.uniform(6, 12)), "lane": max(width / 4, 1.0),
+                                  "hood_K": float(r.uniform(14, 25)), "body_K": float(r.normal(-1.0, 0.7)), "t": None})
+
+    def _paint_traffic(self, out: np.ndarray, pts: np.ndarray, kind: np.ndarray, truth: ThermalTruth,
+                       t: float) -> np.ndarray:
+        """Moving cars on paved vehicle roads: warm body, hot engine hood, cold windscreen (reflects the sky)."""
+        if self.vehicles is None:
+            self._spawn_vehicles(truth)
+        on_paved = None
+        cam_xy = pts[pts.shape[0] // 2, pts.shape[1] // 2, :2]
+        for v in self.vehicles or []:
+            dt = 0.0 if v["t"] is None else max(t - v["t"], 0.0)
+            v["t"] = t
+            v["s"] += v["dir"] * v["speed"] * dt
+            if not 0.0 <= v["s"] <= v["cum"][-1]:  # end of the road: turn around
+                v["s"] = float(np.clip(v["s"], 0.0, v["cum"][-1]))
+                v["dir"] = -v["dir"]
+            i = int(np.clip(np.searchsorted(v["cum"], v["s"]) - 1, 0, len(v["pts"]) - 2))
+            a, b = v["pts"][i], v["pts"][i + 1]
+            seg = b - a
+            u = seg / max(float(np.hypot(*seg)), 1e-6) * v["dir"]
+            n = np.array([u[1], -u[0]])  # right of the driving direction
+            c = a + (b - a) * ((v["s"] - v["cum"][i]) / max(v["cum"][i + 1] - v["cum"][i], 1e-6)) + n * v["lane"]
+            if np.hypot(*(c - cam_xy)) > 80.0:
+                continue
+            d = pts[..., :2] - c
+            lx, ly = d @ u, d @ n
+            car = (np.abs(lx) < 2.25) & (np.abs(ly) < 0.9) & (kind == SURFACE)
+            if not car.any():
+                continue
+            if on_paved is None and truth.cls is not None:
+                uv = truth.grid.to_px(pts[..., :2]).astype(np.float32)
+                cl = cv2.remap(truth.cls, uv[..., 0], uv[..., 1], cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
+                on_paved = np.isin(cl, self._PAVED)
+            if on_paved is not None:
+                car &= on_paved  # hidden under crowns and bridges
+            temp = np.full(out.shape, truth.air_K + v["body_K"], np.float32)
+            temp = np.where(lx > 1.2, truth.air_K + v["hood_K"], temp)  # engine bay
+            temp = np.where((lx > 0.5) & (lx <= 1.2), truth.air_K - 4.0, temp)  # windscreen: cold sky
+            out = np.where(car, temp, out)
+        return out
+
     def _advance_drift(self, t: float) -> None:
         if self.last_t is None or t < self.last_t:
             self.last_t, self.last_ffc, self.drift = t, t, 0.0
@@ -310,6 +380,8 @@ class ThermalCamera:
                              np.float32)
             out = np.where(kind == OBJECT, obj_t[gidx], out)
         out = np.where(gid < 0, truth.air_K - 30.0, out)  # sky
+        if self.traffic and truth.roads:
+            out = self._paint_traffic(out, pts, kind, truth, float(data.time))
         rng_m = depth * self.ray_len
         tau = np.exp(-rng_m / 8000.0)
         return (tau * out + (1 - tau) * truth.air_K).astype(np.float32)

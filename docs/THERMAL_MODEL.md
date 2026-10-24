@@ -86,7 +86,11 @@ clear spring / autumn nights) found road-dense cells only +0.1..+0.7 K warmer at
 road contrast on *mild* nights, against 5-10 K after a hot summer day. `build_thermal(contrast=0.4)` /
 `--contrast 0.4` scales the truth around the air temperature; `load_truth(mission, contrast=0.4)` does the same
 at load time without rebuilding. The prior always stays on the model, as it would in reality. Use it for a
-robustness row in the nav eval.
+robustness row in the nav eval. On hot summer nights (ASTER over Fresno and Davis, ~23 h) the paved grid is
+plainly visible: road-dense 90 m cells are +1.0..+1.9 K above road-free cells, which implies +2-4 K pure road
+contrast against the mixed urban surroundings. That is consistent with the hot-day default (`contrast = 1`).
+Unpaved roads are 0..0.9 K *cooler* than road-free cells (Davis, Vinnytsia), so the model keeps dirt roads
+slightly cool (night-research, NIGHT_NOTES section 7).
 
 ## Calibration (23:00 local, summer, clear, calm)
 
@@ -100,7 +104,8 @@ night-research's `docs/NIGHT_NOTES_FOR_TEAM.md` (literature ranges):
 | irrigated grass | -4.0 | -5..-2 |
 | tree canopy | -1.9 | -2..0 (warmer than lawn) |
 | water | +3.8 | about the daily mean air (warm) |
-| dirt / gravel road | +1.2 | -2..+2 |
+| dirt / gravel road | -2.1 | -2..+2; ASTER: unpaved roads 0..0.9 K cooler than their surroundings |
+| bare soil | -2.7 | -4..+1 |
 | roof, insulated dark | -3.8 | -5..-3 |
 | roof, insulated light (aged membrane) | -6.6 | -6..-4 typical (Khedari 2000: 1-6 K), -11 extreme |
 | roof, heavy / ballasted | +3.8 | +2..+5 |
@@ -112,16 +117,18 @@ night-research's `docs/NIGHT_NOTES_FOR_TEAM.md` (literature ranges):
 
 Built missions (23:00, seed 0):
 
-| Mission | Air | Road median | Vegetation median | Road - veg | Prior vs truth RMSE (corr) | Roads RMSE | Cars (hot) | Build |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| berkeley (NAIP + LiDAR) | 21.8 C | 26.5 C | 19.9 C | 6.6 K | 3.95 K (0.62) | 2.97 K | 226 (32) | 22 s |
-| m-c804bb84 (hill) | 21.8 C | 25.9 C | 19.4 C | 6.5 K | 3.07 K (0.75) | 2.50 K | 319 (40) | 28 s |
-| ukraine-1 (Sentinel-2, GLO-30, no LiDAR) | 22.7 C | 27.9 C | 20.2 C | 7.7 K | 2.00 K (0.75) | 2.39 K | 484 (75) | 127 s |
+| Mission | Air | Road median | Vegetation median | Road - veg | Prior vs truth RMSE (corr) | Roads RMSE | Within 1 / 2 sigma | Cars (hot) | Build |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| berkeley (NAIP + LiDAR) | 21.8 C | 27.4 C | 20.1 C | 7.3 K | 3.51 K (0.72) | 3.01 K | 71 / 87 % | 207 (23) | 9 s |
+| m-c804bb84 (hill) | 21.8 C | 25.9 C | 19.4 C | 6.4 K | 3.08 K (0.74) | 2.59 K | 76 / 90 % | 319 (40) | 12 s |
+| ukraine-1 (Sentinel-2, GLO-30, no LiDAR) | 22.7 C | 28.0 C | 20.6 C | 7.4 K | 2.24 K (0.67) | 2.47 K | 74 / 94 % | 484 (75) | 42 s |
 
 Most of Berkeley's prior error is roofs (a third of the area; construction unknown to the prior). Prior
-residuals are heavy-tailed, not Gaussian: 77-85 % of pixels are within 1 sigma (Gaussian 68 %), but only
-86-96 % within 2 sigma (Gaussian 95 %), and on roads 89-92 %. Cars, HVAC units and roof-type swaps are
-outliers, so **match robustly** (NCC on gradients, Huber, or sigma-weighted with outlier rejection).
+residuals are heavy-tailed, not Gaussian: 71-76 % of pixels are within 1 sigma (Gaussian 68 %), but only
+87-95 % within 2 sigma (Gaussian 95 %). Cars, HVAC units, roof-type swaps and the low-frequency field are
+outliers or biases, so **match robustly** (NCC on gradients, Huber, or sigma-weighted with outlier rejection).
+Underground structures in OSM (`building=underground`, garages at `layer=-1`; 2 in Berkeley) are not roofs:
+the plaza or lawn on top shows through. Where the LiDAR crown stands > 2 m above a roof, the crown wins.
 
 ![berkeley](figures/thermal_maps_berkeley.png)
 ![berkeley histogram](figures/thermal_hist_berkeley.png)
@@ -137,7 +144,10 @@ Ground sample distance 8.7 cm at 60 m, footprint 56 x 45 m.
 Per frame: one GL pass gives depth **and** segmentation (MuJoCo's Renderer needs two) at 320 x 256 (or 300 x 240
 inside the simulator's renderer); every pixel is back-projected to world xyz; ground, roof slabs and tree crowns
 sample the truth raster (bilinear, softened by sigma 0.3 m so class edges are edges, not 0.5 m stair steps), walls get `wall_K` (air + 1.5 K, +-1 K per building), trunks ~air, objects
-from `world/target_scene.json` their `temp_K` (default air - 1 K), the drone itself air, sky air - 30 K; a
+from `world/target_scene.json` their `temp_K` (default air - 1 K), the drone itself air, sky air - 30 K; **moving traffic** (`traffic=6` vehicles per camera seed, 6-12 m/s
+along the truth's paved vehicle roads, right lane, U-turn at the road end): body ~air - 1 K, engine hood
++14..+25 K, windscreen air - 4 K (reflects the sky), drawn only on paved pixels (hidden under crowns). No map
+knows it; a
 world-fixed 0.25 m texture (0.2 K) breaks up the 0.5 m raster; air path tau = exp(-range / 8 km). Then upsample
 to 640 x 512, optics blur (sigma 0.8 px), vignetting (-0.15 K at the corners), fixed-pattern noise (80 mK pixel,
 40 mK column, 0.5 % gain), an absolute calibration error per camera (offset 2 K, gain 3 % (1 std): uncooled
@@ -163,7 +173,7 @@ per frame); pass `renderer=sim.renderer` to draw into the simulator's context (6
   other than summer are rough presets.
 - Sentinel-2 (10 m) makes the off-road prior blurry. OSM geometry keeps the roads sharp, but untagged village
   lanes are a coin flip.
-- Cars and wet patches are static per build (`--seed`), not per flight.
+- Parked cars and wet patches are static per build (`--seed`). Moving traffic is per flight (camera side, below).
 
 Sources: Oke, *Boundary Layer Climates*; Parton & Logan 1981 (air temperature model); Berdahl & Fromberg 1982
 (clear-sky emissivity); Meinel 1976 (clear-sky beam); material properties: Hendel et al. 2016 and textbook

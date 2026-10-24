@@ -254,6 +254,10 @@ def test_fly_endpoint_launches_one_viewer(mission: str, monkeypatch: pytest.Monk
     s = c.get("/api/fly/status").json()
     assert s["state"] == "stopped" and "log_tail" not in s
 
+    r = c.post("/api/fly", json={"mission_id": mission, "night": True}).json()  # planner "Night" checkbox
+    assert FakeViewer.instances[-1].args[-1] == "--night" and r["night"] and r["command"].endswith("--night")
+    c.post("/api/fly/stop")
+
 
 def test_utm_projection_basics() -> None:
     from sfhack.missionprep.sentinel import latlon_to_utm, utm_zone

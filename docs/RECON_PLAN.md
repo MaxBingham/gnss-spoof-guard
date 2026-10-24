@@ -15,7 +15,8 @@ what you reuse in your report under "Disclosure").
   (`$SFHACK_DATA\missions\ukraine-1`), thermal model + thermal camera (`sfhack/thermal/`), EKF / AHRS / autopilot,
   night viewer (`demos/liveview/night.py`), eval harness style (`demos/30_night_eval.py`).
 - Never push (I push). Commit at every working step. Do not touch main or other branches.
-- Fetch others: `git fetch C:\dev\<folder> <branch>`, merge FETCH_HEAD. Never edit another agent's folder.
+- All agent folders live in `C:\Users\jean-\OneDrive\Dokumente\5 Claude Projects\14 Mic Challenge` (paths have spaces: always quote them). Fetch others:
+  `git fetch "C:\Users\jean-\OneDrive\Dokumente\5 Claude Projects\14 Mic Challenge\<branch>" <branch>`, merge FETCH_HEAD. Never edit another agent's folder. OneDrive: `git config gc.auto 0` is set, never run git gc.
 - Truth separation stays (CLAUDE.md HARD RULE): onboard code never imports sim / truth / degradation. Tests green.
 - Max 6 parallel sim workers per agent. Evaluate on Ukraine (`ukraine-1`) only.
 - Every ~90 min update `STATUS_<branch>.md` (what works, numbers, blockers) and commit it.
@@ -78,10 +79,10 @@ in the searched area" with the area covered.
 ## Agents
 | Folder | Branch | Owner of |
 |---|---|---|
-| C:\dev\recon-acoustic | recon-acoustic | real UMA-16 live path: capture, DOA, detection, bearing.json |
-| C:\dev\recon-world | recon-world | base + fence + lights, targets, simulated array bearing, rear NIR camera |
-| C:\dev\recon-nav | recon-nav | optical flow, light localizer, EKF fusion, 3-config drift eval |
-| C:\dev\recon-mission | recon-mission | recon state machine, thermal detection, return + landing, report, viewer, integration |
+| C:\Users\jean-\OneDrive\Dokumente\5 Claude Projects\14 Mic Challenge\recon-acoustic | recon-acoustic | real UMA-16 live path: capture, DOA, detection, bearing.json |
+| C:\Users\jean-\OneDrive\Dokumente\5 Claude Projects\14 Mic Challenge\recon-world | recon-world | base + fence + lights, targets, simulated array bearing, rear NIR camera |
+| C:\Users\jean-\OneDrive\Dokumente\5 Claude Projects\14 Mic Challenge\recon-nav | recon-nav | optical flow, light localizer, EKF fusion, 3-config drift eval |
+| C:\Users\jean-\OneDrive\Dokumente\5 Claude Projects\14 Mic Challenge\recon-mission | recon-mission | recon state machine, thermal detection, return + landing, report, viewer, integration |
 
 ### recon-acoustic (real hardware; may be handed to Max)
 1. Geometry: copy `hardware/uma16/geometry/` from https://github.com/JLrobot/Mic-Challenge (BSD-3, keep the

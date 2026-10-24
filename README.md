@@ -19,6 +19,13 @@ the base and the drone at any time: whatever the drone does after takeoff, it do
 to the simulation laptop. The drone in the sim takes off from the base, flies out along that bearing, looks,
 comes back and lands. Daytime, GNSS on.
 
+3D view of the MVP: `uv run python demos/50_base_3d.py` (bearing from the arrow keys or UDP 5005; `--headless
+--bearing 60` flies once without a window). Default world `--world farm`: a fictional, procedurally generated 4 x 4 km
+rural area (no real place or map data, `demos/base3d_farm.py`): storage hall with the UMA-16 mast in the middle of its
+forecourt, HESCO wall, rolling fields with windbreaks, farmsteads, a village on a paved road; the drone holds 30 m
+above the terrain, default range 1200 m. `--world simple` is the old flat compound. Renders: `docs/base3d/`
+(`--shots docs/base3d` regenerates them and prints the render frame rate).
+
 **Next steps after the MVP.**
 1. GNSS off after 50 m: show the drift and keep it small (preflight alignment, optical flow, compass).
 2. A search pattern that widens with distance (bearing uncertainty + own drift).

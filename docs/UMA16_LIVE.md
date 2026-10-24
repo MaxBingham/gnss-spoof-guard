@@ -17,6 +17,23 @@ Geometry `sfhack/acoustic/geometry/` from https://github.com/JLrobot/Mic-Challen
    ASIO PortAudio DLL). If auto-detect picks the wrong entry: `--device <index>`.
 3. Without the driver Windows usually exposes only 2 channels: then use the fallback below.
 
+Linux needs no driver (USB Audio Class 2, ALSA `hw:UMA16v2,0`), but the array offers 44.1 kHz only: the
+scripts open it at the rate it accepts (console: `@ 44100 Hz`) and run the pipeline at that rate.
+
+## Stage: clap instead of an engine
+
+The engine tracker needs ~3 s of steady harmonics; a clap is a 10 ms burst. `demos/44_uma16_clap.py`
+(`sfhack/acoustic/clap.py`) detects claps (1-3.5 kHz onset), runs the same SRP-PHAT on each and writes
+`bearing.json` (label `clap`) after every clap: circular mean of the last 20 s, sigma from the spread.
+
+```
+python demos/44_uma16_clap.py --north 0 --truth-az <sim bearing of B>   # calibrate: 3-5 claps from the B corner
+python demos/44_uma16_clap.py --north <suggested_north>                 # demo: clap 2-3 times, then take off
+```
+
+The sim sets point B's compass bearing from the base; clapping from the stage corner that stands for B with
+`--truth-az` gives `suggested_north`, which maps that corner onto B.
+
 ## Mounting and north
 
 Flat on the table, mics up (default). In the geometry file the array's +x axis points from channels
@@ -37,7 +54,7 @@ tap a mic and see which square lights up to confirm the orientation.
 ```
 python demos/40_uma16_live.py --north 0                    # live, viewer; quiet for the first 10 s (noise floor)
 python demos/40_uma16_live.py --north 0 --truth-az 66      # accuracy test: speaker at measured bearing 66
-python demos/40_uma16_live.py --file <16ch_48k.wav>        # fallback: any 16-ch recording, same pipeline
+python demos/40_uma16_live.py --file <16ch.wav>            # fallback: any 16-ch recording, same pipeline
 python demos/40_uma16_live.py --make-demo-wav --demo-az 66 # synthetic vehicle WAV (source at compass 66)
 python demos/40_uma16_live.py --file $SFHACK_DATA/acoustic/demo_vehicle_066.wav     # always works
 python demos/42_doa_eval.py                                # offline accuracy (recordings + synthetic truth)

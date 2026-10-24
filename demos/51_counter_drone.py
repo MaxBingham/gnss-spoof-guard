@@ -33,9 +33,8 @@ occlude), and then with probability 0 at 3 px rising to 0.9 at 8 px of apparent 
 ~280 m). Range from the apparent size (+-5 %), direction from the pixel (+-0.3 deg).
 
 Keys: LEFT / RIGHT move a manual sound bearing by 5 deg and count as hearing it (no array needed), S silences the
-manual sound, C overview / chase camera (during the intercept this lets go of the automatic close-up), V hides
-the camera picture, 1 / 2 / 4 sim speed, BACKSPACE resets. On camera lock the view frames both drones until
-a few seconds after the hit.
+manual sound, C global view / chase camera, V hides the camera picture, 1 / 2 / 4 sim speed, BACKSPACE resets.
+The global view keeps the base and both drones in the picture.
 """
 from __future__ import annotations
 
@@ -715,12 +714,12 @@ class Demo:
             hearing = a.hearing(t)
             length = max(it.r_cur + 200.0, 700.0)
             w = float(np.clip(0.0012 * np.linalg.norm(eye), 0.05, 0.8))
-            col = [1.0, 0.45, 0.1, 0.9] if hearing else [0.6, 0.6, 0.6, 0.5]
-            for s, width, c in ((0.0, w, col), (-2 * a.sigma, w / 3, [1.0, 0.6, 0.2, 0.35]),
-                                (2 * a.sigma, w / 3, [1.0, 0.6, 0.2, 0.35])):
+            col = [0.95, 0.12, 0.08, 0.9] if hearing else [0.6, 0.6, 0.6, 0.5]
+            for s, width, c in ((0.0, w, col), (-2 * a.sigma, w / 3, [1.0, 0.35, 0.3, 0.3]),
+                                (2 * a.sigma, w / 3, [1.0, 0.35, 0.3, 0.3])):
                 pts = base.terrain_path(g, (a.line if a.line is not None else a.az) + s, length,
                                         25.0 if s == 0 else 50.0, 4.0)
-                pts[0] = [0, 0, 3.3]
+                pts[0] = [0.0, 0.0, float(g(0.0, 0.0)) + 3.3]   # anchored on the array at the base origin
                 for p0, p1 in zip(pts[:-1], pts[1:]):
                     add_line(scn, p0, p1, width, c)
             for tk, az, ok in a.history:   # raw bearings of the last 30 s, fading, on a 150 m ring; gated grey
@@ -735,16 +734,16 @@ class Demo:
         quad_marker(scn, p, quat_yaw(self.d.qpos[3:7]), t, eye, GREEN_BODY, GREEN_ROTOR, "X2", min_dist=25.0)
         self._draw_intercept(scn, p, it, h, t)
         for p0, p1 in zip(self.trail[:-1], self.trail[1:]):
-            add_line(scn, p0, p1, 0.25, [0.2, 0.9, 1.0, 0.8])
+            add_line(scn, p0, p1, 0.18, [0.55, 0.95, 0.65, 0.35])
         for p0, p1 in zip(self.intruder_trail[:-1], self.intruder_trail[1:]):
-            add_line(scn, p0, p1, 0.2, [0.9, 0.15, 0.12, 0.75])
+            add_line(scn, p0, p1, 0.15, [1.0, 0.6, 0.55, 0.35])
         if h.state not in ("WAIT", "LANDED"):
             locked = h.state == "STRIKE"
             c = self.cam.pos()
             fwd, right, up = cam_axes(self.cam.yaw, self.cam.pitch)
             L = float(self.cam.last.get("dist", 300.0)) if locked else 300.0
             th, tv = math.tan(math.radians(FOV_H / 2)), math.tan(math.radians(FOV_V / 2))
-            col = [0.2, 1.0, 0.3, 0.7] if locked else [1.0, 1.0, 1.0, 0.35]
+            col = [0.2, 1.0, 0.3, 0.45] if locked else [1.0, 1.0, 1.0, 0.2]
             for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1)):
                 add_line(scn, c, c + L * (fwd + sx * th * right + sy * tv * up), 0.15, col)
             if locked and h.est is not None:
@@ -759,13 +758,8 @@ class Demo:
         """The run-in: X2 trail is cyan, intruder trail is red, and while locked a line joins them."""
         if it.pos is None or not self.showing_intercept():
             return
-        gap = float(np.linalg.norm(it.pos - p))
-        col = [0.25, 1.0, 0.35, 0.95] if h.struck else [1.0, 0.25, 0.15, 0.95]
-        add_line(scn, p, it.pos, float(np.clip(0.004 * gap, 0.35, 2.5)), col)
-        mid = 0.5 * (np.asarray(p, float) + it.pos)
-        add_label(scn, mid + [0, 0, max(6.0, 0.04 * gap)], "HIT" if h.struck else f"gap {gap:.0f} m", col)
-        if h.est is not None and not h.struck:
-            add_line(scn, p, h.est, 0.2, [0.3, 1.0, 0.45, 0.55])
+        if h.struck:
+            add_label(scn, it.pos + [0, 0, 8.0], "HIT", [0.25, 1.0, 0.35, 0.95])
             add_sphere(scn, h.est, STRIKE_M, [0.2, 1.0, 0.35, 0.12])
 
     def banner(self) -> str:
@@ -932,6 +926,18 @@ def apply_intercept_camera(cam, a, b) -> None:
     cam.distance, cam.azimuth, cam.elevation = dist, az, el
 
 
+def apply_global_camera(cam, info, pts, k: float = 0.05) -> None:
+    """The overview angle, pulled back (smoothly) so the base and both drones stay in the picture."""
+    P = np.asarray(pts, float)
+    o = info.overview
+    lo, hi = P.min(axis=0), P.max(axis=0)
+    want = float(max(o["distance"], 1.25 * np.linalg.norm(hi[:2] - lo[:2]) + 150.0))
+    cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    cam.lookat[:] += k * (0.5 * (lo + hi) - cam.lookat)
+    cam.distance += k * (want - cam.distance)
+    cam.elevation, cam.azimuth = o["elevation"], o["azimuth"]
+
+
 def banner_image(text: str, color: tuple[int, int, int], w: int, h: int) -> np.ndarray:
     """The state banner: white bold text centred on a coloured bar (RGB)."""
     import cv2  # noqa: PLC0415
@@ -953,7 +959,6 @@ def run_viewer(m, d, info, args) -> None:
     feed = Feed(load_replay(args.replay), "replay") if args.replay else None
     keys: list[int] = []
     speed, chase, show_cam = 1, False, not args.no_camera_view
-    cam_hold, framed = False, False   # C during the close-up keeps the manual view; framed = we took the camera
     manual_az, manual_on, manual_next = 0.0, False, 0.0
     view = None
     if show_cam:
@@ -981,14 +986,12 @@ def run_viewer(m, d, info, args) -> None:
                 elif k in (ord("1"), ord("2"), ord("4")):
                     speed = int(chr(k))
                 elif k == ord("C"):
-                    cam_hold = demo.showing_intercept()
                     chase = not chase
                     base.set_chase(viewer.cam, m) if chase else base.set_overview(viewer.cam, info)
-                    framed = False
                 elif k == ord("V"):
                     show_cam = not show_cam
                 elif k == 259:
-                    cam_hold, framed, chase = False, False, False
+                    chase = False
                     base.set_overview(viewer.cam, info)
                     with viewer.lock():
                         demo.reset()
@@ -1005,15 +1008,9 @@ def run_viewer(m, d, info, args) -> None:
                         manual_next = d.time + MSG_DT
                         demo.hear(manual_az + demo.rng.normal(0, 2.0), 5.0)
                     demo.step()
-                want = demo.showing_intercept()
-                target = demo.intruder.pos if demo.intruder.pos is not None else demo.hunter.est
-                if want and not cam_hold and target is not None:
-                    apply_intercept_camera(viewer.cam, d.qpos[0:3], target)
-                    framed = True
-                elif not want:
-                    if framed:
-                        base.set_chase(viewer.cam, m) if chase else base.set_overview(viewer.cam, info)
-                    framed, cam_hold = False, False
+                if not chase:
+                    pts = [np.zeros(3), d.qpos[0:3]] + ([demo.intruder.pos] if demo.intruder.pos is not None else [])
+                    apply_global_camera(viewer.cam, info, pts)
                 demo.draw(viewer.user_scn, base.cam_pos(viewer.cam))
                 banner, small = demo.banner(), demo.hud_short()
             # set_texts / set_images take the viewer's lock themselves: never inside `with viewer.lock()`

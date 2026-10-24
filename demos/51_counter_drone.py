@@ -65,6 +65,8 @@ MAX_OUT = 1500.0
 LEAD_S = 4.0               # aim where the bearing will be in this many seconds
 FOV_H, FOV_V = 20.0, 15.0
 CAM_W, CAM_H = 640, 480
+PIC_W, PIC_H = 1280, 960     # the camera picture in the viewer corner (render size)
+PIC_FRAC = 0.45            # ... drawn this fraction of the window width
 FRAME_DT = 0.2
 SPAN = 1.2                 # intruder size for the pixel count (m)
 PX_MIN, PX_FULL, P_MAX = 3.0, 8.0, 0.9
@@ -798,10 +800,12 @@ def pin(scn, p, eye, rgba, text, ground) -> None:
 class CameraView:
     """Offscreen render of the gimbal camera (zoomed to FOV_V), box + text overlay, for the viewer corner."""
 
-    def __init__(self, m, info):
+    def __init__(self, m, info, w: int = PIC_W, h: int = PIC_H):
         import cv2  # noqa: PLC0415
-        self.cv2, self.info = cv2, info
-        self.r = mujoco.Renderer(m, CAM_H, CAM_W, max_geom=20000)
+        self.cv2, self.info, self.w, self.h = cv2, info, w, h
+        g = m.vis.global_
+        g.offwidth, g.offheight = max(g.offwidth, w), max(g.offheight, h)
+        self.r = mujoco.Renderer(m, h, w, max_geom=20000)
         self.scale = math.tan(math.radians(FOV_V / 2)) / math.tan(math.radians(m.vis.global_.fovy / 2))
         self.vcam = mujoco.MjvCamera()
         self.vcam.type = mujoco.mjtCamera.mjCAMERA_FREE
@@ -823,18 +827,21 @@ class CameraView:
             draw_quad(scn, demo.intruder.pos, demo.intruder.yaw, d.time)
         img = np.ascontiguousarray(self.r.render())
         r, h = cam.last, demo.hunter
+        W, H = self.w, self.h
+        k = W / CAM_W
+        lw = max(1, round(k))
         if r.get("in_view") and not r.get("occluded"):
             th, tv = math.tan(math.radians(FOV_H / 2)), math.tan(math.radians(FOV_V / 2))
-            x = int(CAM_W / 2 + math.tan(math.radians(r["ah"])) / th * CAM_W / 2)
-            y = int(CAM_H / 2 - math.tan(math.radians(r["av"])) / tv * CAM_H / 2)
-            s = max(int(r["px"]), 8)
+            x = int(W / 2 + math.tan(math.radians(r["ah"])) / th * W / 2)
+            y = int(H / 2 - math.tan(math.radians(r["av"])) / tv * H / 2)
+            s = int(max(r["px"], 8) * k)
             col = (40, 255, 80) if h.state == "STRIKE" else (255, 220, 0) if r["hit"] else (200, 200, 200)
-            cv2.rectangle(img, (x - s, y - s), (x + s, y + s), col, 2 if h.state == "STRIKE" else 1)
-        cv2.drawMarker(img, (CAM_W // 2, CAM_H // 2), (255, 255, 255), cv2.MARKER_CROSS, 14, 1)
+            cv2.rectangle(img, (x - s, y - s), (x + s, y + s), col, 2 * lw if h.state == "STRIKE" else lw)
+        cv2.drawMarker(img, (W // 2, H // 2), (255, 255, 255), cv2.MARKER_CROSS, int(14 * k), lw)
         label = "STRIKE" if h.state == "STRIKE" else "SEARCH" if h.state in ("INTERCEPT", "LOST") else h.state
-        cv2.putText(img, f"X2 CAM {FOV_H:.0f} deg  {label}", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.rectangle(img, (0, 0), (CAM_W - 1, CAM_H - 1), (255, 255, 255), 1)
+        cv2.putText(img, f"X2 CAM {FOV_H:.0f} deg  {label}", (int(8 * k), int(22 * k)), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55 * k, (255, 255, 255), lw, cv2.LINE_AA)
+        cv2.rectangle(img, (0, 0), (W - 1, H - 1), (255, 255, 255), lw)
         return img
 
 
@@ -852,7 +859,8 @@ def run_viewer(m, d, info, args) -> None:
         except Exception as e:  # noqa: BLE001  (no offscreen GL next to the viewer: run without the picture)
             print(f"camera picture off: {e}")
     last_log, next_pic = "", 0.0
-    with mujoco.viewer.launch_passive(m, d, key_callback=keys.append) as viewer:
+    with mujoco.viewer.launch_passive(m, d, key_callback=keys.append, show_left_ui=False,
+                                      show_right_ui=False) as viewer:
         base.set_overview(viewer.cam, info)
         viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_FOG] = info.name == "farm"
         while viewer.is_running():
@@ -899,7 +907,11 @@ def run_viewer(m, d, info, args) -> None:
                 next_pic = time.time() + 0.1
                 img = view.render(demo) if show_cam else np.zeros((1, 1, 3), np.uint8)
                 vp = viewer.viewport
-                rect = mujoco.MjrRect(vp.left + vp.width - CAM_W - 12, vp.bottom + 12, CAM_W, CAM_H)
+                dw = min(int(vp.width * PIC_FRAC), img.shape[1])
+                dh = dw * img.shape[0] // max(img.shape[1], 1)
+                if show_cam and dw != img.shape[1]:
+                    img = view.cv2.resize(img, (dw, dh), interpolation=view.cv2.INTER_AREA)
+                rect = mujoco.MjrRect(vp.left + vp.width - dw - 12, vp.bottom + 12, dw, dh)
                 viewer.set_images([(rect, img)] if show_cam else [])
             log = demo.hunter.log[-1] if demo.hunter.log else ""
             if log != last_log:

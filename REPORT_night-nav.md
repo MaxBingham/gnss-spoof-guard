@@ -92,9 +92,13 @@ fine with thermal fixes, then below the thermal working height (min 10 m above t
 the drone hovers in LAND / RECENTER without touchdown and the estimate runs away (true error 10 m at t = 139 s,
 max 1659 m by t = 329 s, "landed" 6.7 m from B). The same seed before the gyro-bias fix (4904433) landed 1.38 m off;
 ukraine-1 with the final build landed 1.43 m. Log / video: `$SFHACK_DATA/night/demo/berkeley_night_final.{log,mp4}`.
-Not analysed tonight. First things to check tomorrow: whether `ahrs.tilt_bias_ki` keeps integrating tilt corrections
-in the low hover without position fixes (freeze it below the thermal working height / without recent fixes), and
-whether the thermal minimum height (10 m) should drop for the final approach.
+Quick look at 05:50 (my copy of the data, same seed, flown through the landing): with the fix it landed 6.0 m off,
+with `night_tilt_bias_ki = 0` 0.9 m. But freezing the gyro-bias integral from the start of the descent did NOT
+change it (5.9 m): the velocity error jumps from 0.07 to 0.43 m/s at ~19 m AGL (last thermal fixes, frames with
+"footprint (tilt)" during the descent manoeuvre) and below the thermal minimum height (10 m) nothing corrects it
+for the last ~10 s. So the landing needs (a) fixes down to a few metres (lower `thermal.min_alt`, smaller template
+at low height) and (b) stricter gating of fixes during the descent; whether the gyro-bias learning contributes is
+not shown (one seed each way, trajectories diverge chaotically). The freeze experiment was reverted.
 
 ## Next steps
 

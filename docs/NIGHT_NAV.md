@@ -97,7 +97,16 @@ crosses a ~250 m forest, x = -150..+100 m, where the prior is uniform: ~30 s wit
 
 ### Final configuration (night defaults: `grad` + gyro-bias learning)
 
-FINAL_TABLE_PLACEHOLDER
+| mission | route | within 5 m | 95 % Wilson CI | error at B mean / median / max (m) | runaways (> 50 m) | max est. error over the flight, worst seed (m) | thermal fixes accepted / flight |
+|---|---|---|---|---|---|---|---|
+| berkeley | 569 m | **20/20** | 84-100 % | 0.5 / 0.4 / 2.2 | 0 | 23.7 | 318 |
+| m-c804bb84 (hill) | 923 m | **20/20** | 84-100 % | 0.9 / 0.7 / 1.6 | 0 | 21.4 | 513 |
+| ukraine-1 | 1870 m | **18/20** | 70-97 % | 236 / 1.2 / 4143 | 2 (seeds 5, 9) | 8446 | 912 |
+| all three | | **58/60** | 89-99 % | | 2 | | |
+
+The compass yaw error stays at its per-flight bias (mean |yaw error| 0.78 deg, no drift). Thermal processing 30-70 ms
+per frame on berkeley / hill, 130-180 ms on ukraine-1 (larger search windows), at 5 Hz.
+Rows LOW_CONTRAST_PLACEHOLDER
 
 ### Stage 1: method comparison (before the gyro-bias fix)
 

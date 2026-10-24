@@ -9,7 +9,15 @@ thermal camera matched against a thermal prior predicted from daytime imagery. S
 Night 23:00, 60 m AGL, GNSS completely off from 20 % of the route, 20 seeds each, frozen mission data (see
 "Data versions"), default night configuration (gradient-orientation matching + gyro-bias learning):
 
-FINAL_HEADLINE_PLACEHOLDER
+| mission | within 5 m | 95 % Wilson CI | median / max error at B (m) | same without gyro-bias learning | IMU + TRN only |
+|---|---|---|---|---|---|
+| berkeley (569 m) | **20/20** | 84-100 % | 0.4 / 2.2 | 20/20 | 10/20 |
+| m-c804bb84, hill (923 m) | **20/20** | 84-100 % | 0.7 / 1.6 | 19/20 | 0/20 |
+| ukraine-1 (1870 m) | **18/20** | 70-97 % | 1.2 / 4143 (2 runaways) | 12/20 | 0/20 |
+| all | **58/60** | 89-99 % | | 51/60 | 10/60 |
+
+Default = `grad` (gradient-orientation NCC of the rectified thermal frame vs the predicted thermal map) +
+`ahrs.tilt_bias_ki` 0.05 in night mode (commit 651b398). Plots: `docs/night_nav/night_error_<mission>.png`.
 
 ## What works
 

@@ -2,6 +2,52 @@
 
 GNSS-free quadcopter navigation in MuJoCo (hackathon prototype). Full setup instructions follow in milestone M6.
 
+## Current idea: acoustic cue -> autonomous night recon drone (no GNSS, no data link)
+
+**Problem.** A base in Ukraine at night. Movement outside the perimeter (e.g. vehicles or troops 2-3 km
+away) cannot be seen in the dark, but it can be heard. GNSS is jammed, and there is **no data link** between
+the base and the drone at any time: whatever the drone does after takeoff, it does on its own.
+
+**Setup.**
+- **Base:** one miniDSP UMA-16 v2 microphone array (16 MEMS mics, 4 x 4, 42 mm pitch) listens and gives the
+  direction (azimuth, rough elevation, with uncertainty) a sound comes from.
+- **Drone (reconnaissance only, it does not land out there):** IMU, compass, barometer, GNSS only for the first
+  50 m (then switched off with a key, to show the drift), a downward thermal camera, a rear-facing narrow-FOV
+  camera. No lidar. No microphone array on the drone (maybe later).
+
+**Mission.**
+1. The UMA-16 hears a source and estimates its bearing. Before takeoff the drone gets that bearing.
+2. The drone takes off, flies 50 m with GNSS, then GNSS is gone.
+3. It flies out along the bearing line on its own estimate.
+4. It does not know how far away the source is or what it is, so it flies a search pattern that widens with
+   distance (a cone sized from the array's bearing uncertainty plus its own drift) and looks for warm objects
+   (vehicles, people) in the thermal image. The thermal camera is used to find things, not to navigate on
+   landmarks.
+5. When it finds something it circles over it and keeps it in view (relative to the target, no absolute
+   position needed), stores image + estimated position, and brings it back.
+
+**Keeping the drift small without GNSS and without a link.**
+- **Preflight alignment:** gyro bias at rest, compass calibration, takeoff pad with a surveyed orientation;
+  the first 50 m of GNSS check heading and velocity.
+- **Optical flow (downward thermal camera + barometer):** ground speed without any map or landmark, like an
+  optical mouse. Typical drift ~1-3 % of the distance instead of hundreds of metres from the IMU alone.
+- **Leading lights at the base (range lights, as used by ships in harbour entrances):** two infrared / thermal
+  lights stand one behind the other on the bearing line (one at the base, one a few hundred metres further
+  along it). The drone's rear camera keeps them exactly aligned: aligned = on the line, apart = off the line,
+  **independent of the compass**. The elevation angle to the base plus the drone's altitude gives the distance.
+  Fully passive for the drone: nothing to jam. Narrow beam, only switched on during the mission.
+
+Rough budget over 3 km: IMU + compass only: 100 m to several 100 m off the line; + optical flow: ~100 m
+sideways (compass) and 30-90 m along the line; + leading lights: a few 10 m sideways. The array's bearing
+error (about +-5-10 deg, i.e. +-170-350 m at 2 km) is larger than that, which is why the search widens.
+
+**Demo.** Live: the real UMA-16 on the table hears a sound (speaker with a vehicle recording) and its bearing
+becomes the drone's mission. Simulation (MuJoCo, Ukraine mission from `night-demo`): the drone flies out,
+GNSS off after 50 m; three tracks side by side: IMU only (drifts away), + optical flow, + leading lights
+(stays on the line); the widening search cone; the thermal find.
+
+UMA-16 geometry, real recordings and open drone-audio datasets: https://github.com/JLrobot/Mic-Challenge
+
 ## Disclosure
 
 Prior work, built before the hackathon: the MuJoCo Skydio X2 simulation, the AHRS and EKF state estimation, the vision map-localizer, the Berkeley world, the autopilot and landing logic, the degradation levers, and the live viewer. Built on Saturday: detection, trust ranking, and the decision policy.

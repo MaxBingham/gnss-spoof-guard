@@ -82,6 +82,9 @@ gyro-bias fix). Open-loop bench: grad 66-79 % fix rate, median 0.5-0.65 m; road 
   commit, so edits during the night did not leak into running evaluations): stage 1 at 883bd03 (+ the resilient
   harness, behaviour-identical), final rows at 651b398. Eight ukraine-1 seeds of the final grad row (0-7) were
   flown in the selection run with `--set ahrs.tilt_bias_ki=0.05`, which is the identical configuration, and reused.
+- **Folders**: all work is in `C:\dev
+ight-nav` (branch `night-nav`, not pushed), as the plan says. The OneDrive clone
+  that this session was started in (also on a `night-nav` branch) was not touched and is still at 28962ad.
 - **Machine**: the Windows commit charge ran out (~80 GB with ~27 sim workers across agents, ~2-3 GB commit each);
   worker processes died (BrokenProcessPool). Agreed with night-demo: night-nav <= 9 workers, night-demo 6.
 

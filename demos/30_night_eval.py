@@ -7,7 +7,7 @@ Rows (onboard configuration, everything else equal):
   thermal   FlightSystem(night=True): thermal localizer (cfg.thermal.method default) + TRN + IMU / baro
   imu_trn   same with cfg.thermal.method = "off" (baseline: IMU + baro + TRN only)
   straight  thermal, but the planner's straight route instead of the night route choice (night_route=False)
-  low_contrast  thermal, but the TRUE scene's contrast is compressed to 0.4x about its median (harness edits the
+  low_contrast  thermal, but the TRUE scene's contrast is scaled by 0.4 (night-nav's thermal_contrast lever; else the harness edits the
             simulator's truth raster; the onboard prior still predicts the full contrast). night-research: ASTER
             night scenes over Berkeley show only ~1-3 K road contrast on mild nights vs the 5-10 K hot-day model.
 
@@ -97,13 +97,16 @@ def fly(job: dict) -> dict:
             notes.append("no cfg.thermal")
     if "night_route" in row and "night_route" in params:
         kw["night_route"] = row["night_route"]
+    if "contrast" in row and "thermal_contrast" in params:  # night-nav's sim-side lever (same idea as below)
+        kw["thermal_contrast"] = row["contrast"]
     if job.get("cruise_agl") and "cruise_agl" in params:
         kw["cruise_agl"] = job["cruise_agl"]
     cond = Conditions().update(gnss__mode="ok")
     localizer = "off" if row.get("night") else "vision"
-    fs = FlightSystem(cfg=cfg, pose_source="ekf", localizer=localizer, seed=job["seed"], mission=job["mission"],
+    mission = str(Path(job["mission_root"]) / job["mission"]) if job.get("mission_root") else job["mission"]
+    fs = FlightSystem(cfg=cfg, pose_source="ekf", localizer=localizer, seed=job["seed"], mission=mission,
                       conditions=cond, **kw)
-    if "contrast" in row:  # simulated reality: a milder night than the prior predicts
+    if "contrast" in row and "thermal_contrast" not in kw:  # simulated reality: a milder night than the prior predicts
         truth = getattr(getattr(fs, "thermal_sensor", None), "truth", None)
         temp = getattr(truth, "temp_K", getattr(truth, "temp", None))  # camera model | stub raster
         if temp is None:
@@ -249,18 +252,20 @@ def main() -> None:
     ap.add_argument("--to-landing", action="store_true", help="fly on after arrival and record the landed error")
     ap.add_argument("--abort-err", type=float, default=500.0, help="stop a flight once |estimate - truth| exceeds "
                     "this (m) before arrival: scored as a failure (DIVERGED)")
+    ap.add_argument("--mission-root", default="", help="read missions from this folder (a frozen copy of the data)")
     ap.add_argument("--only", default="", help="restrict to mission:row pairs, comma separated")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     out = Path(args.out) if args.out else data_dir() / "night" / "eval" / datetime.now().strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
     jobs = [{"mission": m, "row": row, "seed": s, "gnss_off_frac": args.gnss_off_frac, "cruise_agl": args.cruise_agl,
-             "to_landing": args.to_landing, "abort_err": args.abort_err}
+             "to_landing": args.to_landing, "abort_err": args.abort_err, "mission_root": args.mission_root}
             for m in args.missions.split(",") for row in args.rows.split(",") for s in range(args.seed0, args.seed0 + args.seeds)]
     if args.only:  # "mission:row" pairs, e.g. ukraine-1:straight
         keep = set(args.only.split(","))
         jobs = [j for j in jobs if f"{j['mission']}:{j['row']}" in keep]
-    jobs.sort(key=lambda j: -ROUGH_COST.get(j["mission"], 1.0))  # longest flights first: better packing
+    # headline rows first (if time runs out the main table is complete), longest flights first within them
+    jobs.sort(key=lambda j: (j["row"] not in ("thermal", "imu_trn"), -ROUGH_COST.get(j["mission"], 1.0)))
     print(f"{len(jobs)} flights on {args.workers} workers -> {out}", flush=True)
     results, t0 = [], time.time()
     with ProcessPoolExecutor(args.workers) as ex:

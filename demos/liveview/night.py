@@ -236,6 +236,19 @@ class NightState:
             grid = (float(bbox["min_x"]), float(bbox["max_y"]), float(meta.get("res_m", 0.5)))
         return temp, roads, grid
 
+    def prior_rgb(self) -> np.ndarray:
+        """The prior as an RGB image (inferno, paved roads tinted orange), colored once per flight."""
+        if getattr(self, "_prior_rgb", None) is None:
+            t = self.prior_temp
+            lo, hi = np.percentile(t, [2, 98])
+            g8 = np.clip((t - lo) / max(hi - lo, 0.1) * 255, 0, 255).astype(np.uint8)
+            rgb = cv2.cvtColor(cv2.applyColorMap(g8, cv2.COLORMAP_INFERNO), cv2.COLOR_BGR2RGB)
+            if self.prior_roads is not None and self.prior_roads.shape == t.shape:
+                m = self.prior_roads > 0
+                rgb[m] = (0.55 * rgb[m] + 0.45 * np.array([255, 150, 40])).astype(np.uint8)
+            self._prior_rgb = rgb
+        return self._prior_rgb
+
     def _on_fix(self, fix: Any) -> None:
         src = _src(fix)
         if getattr(fix, "accepted", True):
@@ -455,26 +468,22 @@ class NightComposer:
 
         ogrid = (om.min_x, om.max_y, om.mpp_x)
         if ns.prior_temp is not None and ns.prior_grid is not None:
-            t = warp(ns.prior_temp, ns.prior_grid, border=float(np.median(ns.prior_temp)))
-            lo, hi = np.percentile(ns.prior_temp, [2, 98])
-            g8 = np.clip((t - lo) / max(hi - lo, 0.1) * 255, 0, 255).astype(np.uint8)
-            img = cv2.cvtColor(cv2.applyColorMap(g8, cv2.COLORMAP_INFERNO), cv2.COLOR_BGR2RGB)
+            img = warp(ns.prior_rgb(), ns.prior_grid, cv2.INTER_LINEAR, border=(20, 10, 40))
             title = "ONBOARD MAP  (predicted night temperature)"
         else:
             img = (warp(om.ortho, ogrid, border=(40, 40, 40)) * 0.45).astype(np.uint8)
             title = "ONBOARD MAP  (orthophoto)"
-        if ns.prior_roads is not None and ns.prior_grid is not None:
+        fix = ns.last_fix
+        if (ns.prior_roads is not None and ns.prior_grid is not None and fix is not None and _src(fix) == "thermal"
+                and demo.t - float(fix.t) < 1.0):
+            # matched roads: the prior road pixels inside the camera footprint around the fix
             roads = warp(ns.prior_roads, ns.prior_grid, cv2.INTER_NEAREST)
-            img[roads > 0] = (0.55 * img[roads > 0] + 0.45 * np.array([255, 150, 40])).astype(np.uint8)
-            fix = ns.last_fix
-            if fix is not None and _src(fix) == "thermal" and demo.t - float(fix.t) < 1.0:
-                # matched roads: the prior road pixels inside the camera footprint around the fix
-                agl = max(5.0, float(est.pos[2] - om.ground_z(est.pos[:2])))
-                r_fp = agl * math.tan(math.radians(THERMAL_HFOV_DEG) / 2)
-                fp = np.zeros((size, size), np.uint8)
-                cv2.circle(fp, px(fix.pos), int(r_fp * k), 1, -1)
-                hit = (roads > 0) & (fp > 0)
-                img[hit] = (255, 235, 60) if getattr(fix, "accepted", True) else (255, 70, 60)
+            agl = max(5.0, float(est.pos[2] - om.ground_z(est.pos[:2])))
+            r_fp = agl * math.tan(math.radians(THERMAL_HFOV_DEG) / 2)
+            fp = np.zeros((size, size), np.uint8)
+            cv2.circle(fp, px(fix.pos), int(r_fp * k), 1, -1)
+            hit = (roads > 0) & (fp > 0)
+            img[hit] = (255, 235, 60) if getattr(fix, "accepted", True) else (255, 70, 60)
         lw = max(1, size // 160)
         route = getattr(demo, "route", None)
         if route is not None and len(route) > 1:

@@ -173,6 +173,12 @@ class MujocoSim:
         tilt = math.radians(15.0)  # front camera pitched 15 deg down
         drone.add_camera(name="front", pos=[0.12, 0, 0.03], fovy=cam.front_fovy_deg,
                          quat=_quat_from_axes([0, -1, 0], [math.sin(tilt), 0, math.cos(tilt)]))
+        # Rear NIR camera (sim/rear_camera.py): optical axis body -x, pitched down; image right = body +y (left side).
+        rp = math.radians(cam.rear_pitch_down_deg)
+        rear_vfov = math.degrees(2 * math.atan(math.tan(math.radians(cam.rear_hfov_deg) / 2)
+                                               * cam.rear_height / cam.rear_width))
+        drone.add_camera(name="rear", pos=[-0.12, 0, 0.03], fovy=rear_vfov,
+                         quat=_quat_from_axes([0, 1, 0], [-math.sin(rp), 0, math.cos(rp)]))
         spec.visual.global_.offwidth = max(cam.down_width, cam.front_width, 1280)  # 1280x720: demo video
         spec.visual.global_.offheight = max(cam.down_height, cam.front_height, 720)
         # Large outdoor scene: near/far planes are fractions of stat.extent.

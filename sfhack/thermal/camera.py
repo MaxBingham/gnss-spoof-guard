@@ -54,11 +54,13 @@ class ThermalTruth:
         return cv2.remap(self.temp_K, uv[..., 0], uv[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
-def load_truth(path: str | Path, contrast: float = 1.0, soften_m: float = 0.3) -> ThermalTruth:
+def load_truth(path: str | Path, contrast: float = 1.0, soften_m: float = 0.3,
+               target_scene: str | Path | None = None) -> ThermalTruth:
     """Mission directory (or id) or the npz itself. `contrast` < 1 scales the scene around the air temperature
     (a milder night than the model: robustness runs without rebuilding; the onboard prior is unchanged).
     `soften_m`: Gaussian sigma applied to the 0.5 m raster, so class edges look like edges and not like 0.5 m
-    stair steps at the camera's 6-9 cm ground resolution."""
+    stair steps at the camera's 6-9 cm ground resolution. `target_scene`: objects from another target_scene.json
+    (default: the one next to the npz; use the file the MuJoCo world was built with)."""
     p = Path(path)
     if not p.exists() and not p.suffix:
         from ..missionprep.build import mission_dir
@@ -81,11 +83,13 @@ def load_truth(path: str | Path, contrast: float = 1.0, soften_m: float = 0.3) -
     e = meta["extent_enu"]
     grid = Grid(e["min_x"], e["max_y"], float(meta["res_m"]), temp.shape[0], temp.shape[1])
     objects: dict[str, float] = {}
-    ts = p.parent / "target_scene.json"
+    ts = Path(target_scene) if target_scene is not None else p.parent / "target_scene.json"
     if ts.exists():
         try:
             for k, ob in enumerate(json.loads(ts.read_text(encoding="utf-8")).get("objects", [])):
                 objects[f"target{k}"] = float(ob.get("temp_K", air - 1.0))
+                for j, part in enumerate(ob.get("parts", [])):  # recon objects: one geom per part
+                    objects[f"target{k}_{j}"] = float(part.get("temp_K", ob.get("temp_K", air - 1.0)))
         except (ValueError, OSError):
             pass
     return ThermalTruth(temp, grid, wall, air, meta, objects, cls, roads)

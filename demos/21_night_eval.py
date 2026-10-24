@@ -75,7 +75,7 @@ def fly(job: dict) -> dict:
     cond = Conditions().update({"gnss.mode": "ok"})
     t_wall = time.time()
     fs = FlightSystem(cfg=cfg, mission=job["mission"], seed=job["seed"], conditions=cond, night=True,
-                      cruise_agl=job["agl"], thermal_renderer=job["renderer"])
+                      cruise_agl=job["agl"], thermal_renderer=job["renderer"], thermal_contrast=job.get("contrast", 1.0))
     ap = fs.autopilot
     wps = [w for w in fs.mission.waypoints if w.phase in ("TAKEOFF", "CRUISE")]
     pts = np.array([w.pos[:2] for w in wps])
@@ -168,6 +168,7 @@ def main() -> None:
     ap.add_argument("--agl", type=float, default=60.0)
     ap.add_argument("--gnss-off-frac", type=float, default=0.2)
     ap.add_argument("--renderer", default="auto", help="auto | full | stub")
+    ap.add_argument("--contrast", type=float, default=1.0, help="scale the TRUE scene contrast around air (mild night)")
     ap.add_argument("--max-t", type=float, default=400.0)
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--radius", type=float, default=5.0)
@@ -178,7 +179,7 @@ def main() -> None:
     args = ap.parse_args()
     sets = dict(s.split("=", 1) for s in args.set)
     jobs = [dict(mission=m, method=meth, seed=s, agl=args.agl, gnss_off_frac=args.gnss_off_frac, renderer=args.renderer,
-                 max_t=args.max_t, out=args.out, set=sets, tag=(args.tag + "_" + meth.replace("+", "_")) if args.tag else "")
+                 max_t=args.max_t, out=args.out, set=sets, contrast=args.contrast, tag=(args.tag + "_" + meth.replace("+", "_")) if args.tag else "")
             for m in args.mission.split(",") for meth in args.methods.split(",")
             for s in range(args.seed0, args.seed0 + args.seeds)]
     t0 = time.time()

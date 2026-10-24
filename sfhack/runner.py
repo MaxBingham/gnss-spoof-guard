@@ -90,6 +90,7 @@ class FlightSystem:
         night: bool = False,
         cruise_agl: float | None = None,
         thermal_renderer: str = "auto",
+        thermal_contrast: float = 1.0,
     ) -> None:
         """`conditions`: initial degradation levers (default `cfg.conditions`). `schedule`: lever changes
         at sim times, [(t, {'gnss': 'drag:1.5@90', 'wind.speed': 6}), ...] (see sfhack.degradation.cli).
@@ -162,7 +163,7 @@ class FlightSystem:
             from .perception.thermal_localizer import ThermalLocalizer
             from .sim.thermal_sensor import ThermalSensor
             self.thermal_sensor = ThermalSensor(self.sim, self.bus, self.mission_dir, world, hz=self.cfg.thermal.camera_hz,
-                                                seed=seed, renderer=thermal_renderer)
+                                                seed=seed, renderer=thermal_renderer, contrast=thermal_contrast)
             prior = self.onboard_dir / "thermal_prior.npz"
             if not prior.exists():  # uploaded before the thermal prior was built: use the built package's
                 prior = self.mission_dir / "onboard" / "thermal_prior.npz"

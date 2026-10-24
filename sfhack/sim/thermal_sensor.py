@@ -80,7 +80,10 @@ class ThermalSensor:
     """Publishes a ThermalFrame at `hz` from the simulator's current state (call `step()` after each sim step)."""
 
     def __init__(self, sim: Any, bus: Any, mission_dir: Path, world: Any, hz: float = 5.0, seed: int = 0,
-                 renderer: str = "auto") -> None:
+                 renderer: str = "auto", contrast: float = 1.0) -> None:
+        """`contrast`: scale the TRUE scene's temperatures around the air temperature (0.4 = a mild night: real
+        ASTER night scenes over Berkeley suggest 1-3 K road contrast instead of the model's 5-10 K). The onboard
+        prior is not changed, so this is also a prior-vs-reality contrast mismatch."""
         self.sim, self.bus, self.hz = sim, bus, hz
         self.next_t = 0.0
         self.seq = 0
@@ -89,21 +92,46 @@ class ThermalSensor:
         if not truth_path.exists():
             raise FileNotFoundError(f"{truth_path} missing: build it with `python -m sfhack.thermal build`")
         cam = None
+        self._make_full = None
         if renderer in ("auto", "full"):
             try:
                 from ..thermal.camera import ThermalCamera, load_truth  # night-thermal's renderer
 
-                cam, self.truth = ThermalCamera(sim.model, name="thermal"), load_truth(truth_path)
+                self.truth = load_truth(truth_path)
                 self.kind = "full"
+                # Created at the first frame: it draws into the simulator's GL context (one context; switching
+                # between two costs ~50 ms per frame on Windows). The camera's calibration error is per seed.
+                self._make_full = lambda: ThermalCamera(sim.model, name="thermal", seed=seed, renderer=sim.renderer)
+                cam = ThermalCamera(sim.model, name="thermal", seed=seed) if not hasattr(sim, "renderer") else None
             except ImportError:
                 if renderer == "full":
                     raise
-        if cam is None:
+        if cam is None and self._make_full is None:
             cam = StubThermalCamera(sim.model, world.ground_z, seed=seed)
             self.truth = _TruthRaster(truth_path)
+        if contrast != 1.0:
+            if isinstance(self.truth, _TruthRaster):
+                air = float(np.median(self.truth.temp))
+                self.truth.temp = (air + contrast * (self.truth.temp - air)).astype(np.float32)
+            else:
+                air = float(self.truth.air_K)
+                self.truth.temp_K = (air + contrast * (self.truth.temp_K - air)).astype(np.float32)
+                self.truth.wall_K = air + contrast * (self.truth.wall_K - air)
         self.camera = cam
-        self.intrinsics = {k: float(v) for k, v in cam.intrinsics.items()}
+        self.intrinsics = {k: float(v) for k, v in cam.intrinsics.items()} if cam is not None else {}
         self.last: ThermalFrame | None = None
+
+    def _ensure_camera(self) -> None:
+        if self.camera is not None:
+            return
+        if self.sim.renderer is None:
+            self.sim.render("down")  # creates the simulator's renderer (GL context)
+        try:
+            self.camera = self._make_full()
+        except TypeError:  # older renderer without the shared-context argument
+            from ..thermal.camera import ThermalCamera
+            self.camera = ThermalCamera(self.sim.model, name="thermal")
+        self.intrinsics = {k: float(v) for k, v in self.camera.intrinsics.items()}
 
     def step(self) -> None:
         t = self.sim.time
@@ -111,6 +139,7 @@ class ThermalSensor:
             return
         self.next_t = t + 1.0 / self.hz
         self.seq += 1
+        self._ensure_camera()
         img = self.camera.render(self.sim.data, self.truth)
         self.last = ThermalFrame(t, self.seq, img, self.intrinsics)
         self.bus.publish(topics.THERMAL, self.last)

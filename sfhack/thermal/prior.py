@@ -42,7 +42,7 @@ class ThermalPrior:
     def ground_points(self, pos_xy: np.ndarray, agl_m: float, intrinsics: dict[str, float],
                       yaw: float | None = None, R: np.ndarray | None = None, step: int = 1) -> np.ndarray:
         """ENU (h // step, w // step, 2) where each camera pixel's ray meets flat ground agl_m below.
-        Camera convention = sfhack.thermal.camera / MuJoCo "down": image top = forward, right = right.
+        Camera convention = the simulated thermal camera / MuJoCo "down": image top = forward, right = right.
         Either `yaw` (nadir camera, level drone) or `R` (3x3 camera-to-world, columns = camera x (right),
         y (image up), z (backward), the MuJoCo cam_xmat convention, e.g. from the AHRS attitude)."""
         k = intrinsics

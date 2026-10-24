@@ -85,7 +85,7 @@ class BaseDesign:
     pad_yaw_deg: float = 0.0  # takeoff heading, cw from north
     uma16_offset: tuple[float, float] = (-12.0, 8.0)  # mast position relative to A (m E, m N)
     uma16_h: float = 6.0
-    uma16_x_axis_az_deg: float = 90.0  # array x axis points east (array frame = ENU-aligned)
+    uma16_x_axis_az_deg: float = 0.0  # array x axis points north (= AcousticConfig.x_axis_bearing_deg default)
     survey_sigma_m: float = 0.05  # RTK survey of the posts (1 sigma per axis)
     survey_yaw_sigma_deg: float = 0.2
 

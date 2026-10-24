@@ -10,7 +10,8 @@ continue: `RESUME.md`. Saturday demo script: `DEMO_NIGHT.md`.
 
 **Final build (night-demo b5409f4: night route choice + night-nav 651b398 tilt-bias learning): berkeley 20/20,
 m-c804bb84 20/20, ukraine-1 20/20 within 5 m of B** (95 % Wilson interval 84-100 % each; mean arrival error
-0.4 / 0.9 / 1.9 m, worst 0.9 / 2.0 / 2.5 m). IMU + TRN alone (no thermal): 19/20, 11/20, 0/20.
+0.4 / 0.9 / 1.9 m, worst 0.9 / 2.0 / 2.5 m). IMU + TRN alone (no thermal; measured on the pre-fix build d2405bc):
+19/20, 11/20, 0/20.
 
 Harness `demos/30_night_eval.py` (truth-scored): GNSS ok at first, `gnss.mode = off` (no signal at all) when the
 TRUE along-route progress passes 20 %; ARRIVAL error = |truth - B| (horizontal) at the moment the drone decides
@@ -55,7 +56,7 @@ spring / autumn night) while the onboard prior still predicts the hot-day contra
 ![error over time](docs/night_eval/error_over_time.png)
 
 Reading it:
-- With the final build every flight on all three missions ends within 2.5 m of B.
+- With the final build (rows `thermal+tiltfix`) all 60 flights on the three missions end within 2.5 m of B.
 - Before the tilt fix, ukraine-1 had 3/20 runaways right after GNSS off and two flights at 17 / 25 m (15/20):
   the estimate drifted in the stretches without thermal fixes, then accepted along-track-wrong road fixes
   (overconfident). night-nav found the root cause from these traces (roll / pitch gyro bias, gravity leak).

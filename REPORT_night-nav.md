@@ -45,7 +45,7 @@ Default = `grad` (gradient-orientation NCC of the rectified thermal frame vs the
   thermal fix, `--mission-root` for frozen data, `--resume`, survives a broken process pool),
   `demos/22_bench_thermal.py` (open-loop localizer bench), `demos/23_night_plots.py`.
 - **HUD helpers for night-demo**: `Autopilot.night_nav_source(t)` -> (GNSS | THERMAL | TRN | INS, fix ages).
-- **Tests**: 68/68 green (incl. truth separation); new `tests/test_thermal_nav.py` (7 tests: localizer on a synthetic
+- **Tests**: 71/71 green at the final commit (incl. truth separation); new `tests/test_thermal_nav.py` (7 tests: localizer on a synthetic
   field for ncc / grad / road / ncc+road, uniform-image rejection, 60 m AGL route, keep-route health).
 
 ## Method comparison (closed loop, before the gyro-bias fix)

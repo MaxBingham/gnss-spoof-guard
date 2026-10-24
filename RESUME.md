@@ -16,7 +16,7 @@ ukraine-1 18/20 within 5 m of B (58/60, Wilson 95 % 89-99 %).
 . scripts\env.ps1                                                 # sets the V5 venv; override it:
 $env:UV_PROJECT_ENVIRONMENT = "$HOME\.venvs\sf-hack-night-nav"
 uv sync
-uv run python -m pytest tests -q                                  # 68 tests (truth separation included)
+uv run python -m pytest tests -q                                  # 71 tests (truth separation included)
 ```
 
 ## Night flight (GNSS off at 20 % of the route, thermal + TRN + IMU)

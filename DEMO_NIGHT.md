@@ -14,7 +14,11 @@ uv run python -m sfhack.missionprep list   # berkeley, m-c804bb84, ukraine-1 mus
 Missions need `world/thermal_truth.npz` + `onboard/thermal_prior.npz`; if missing:
 `uv run python -m sfhack.thermal build --mission ukraine-1`.
 
-Backup videos (if the live sim misbehaves): `$env:SFHACK_DATA\night\demo\` (berkeley_night.mp4, ukraine-1_night.mp4).
+Backup videos (if the live sim misbehaves), in `$env:SFHACK_DATA\night\demo\`: `berkeley_night_v2.mp4` (77 s,
+2x, N at 40 s) and `ukraine-1_night_v2.mp4` (80 s, 4x, N at 76 s, ends "ABOVE B 3.8 m from B"); 1920x1080, mp4v
+codec (no ffmpeg on this machine: play with VLC or a browser). The files without `_v2` are the same flights but end
+on the landing-outcome banner (landing is not part of tonight's scenario): prefer v2. Both were recorded before
+night-nav's tilt-bias fix (651b398), on code night-demo 9141527.
 
 ## Live, option A: straight from the terminal
 

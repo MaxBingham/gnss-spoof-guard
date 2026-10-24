@@ -76,7 +76,7 @@ class CameraConfig:
     rear_width: int = 640
     rear_height: int = 480
     rear_hfov_deg: float = 20.0
-    rear_pitch_down_deg: float = 6.0  # below body -x (cruise pitches the nose down, which tilts this camera up)
+    rear_pitch_down_deg: float = 10.0  # initial gimbal tilt below body -x (cruise nose-down pitch tilts it up)
     rear_hz: float = 20.0  # >= 2x the 10 Hz blink bit rate
 
 

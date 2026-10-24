@@ -85,6 +85,17 @@ gyro-bias fix). Open-loop bench: grad 66-79 % fix rate, median 0.5-0.65 m; road 
 - **Machine**: the Windows commit charge ran out (~80 GB with ~27 sim workers across agents, ~2-3 GB commit each);
   worker processes died (BrokenProcessPool). Agreed with night-demo: night-nav <= 9 workers, night-demo 6.
 
+## Open issue reported by night-demo (landing, outside tonight's scope)
+
+night-demo recorded berkeley seed 0 with the final build (651b398) through the landing: ABOVE_B at 0.7 m, descent
+fine with thermal fixes, then below the thermal working height (min 10 m above the surface; flare at 4 m) no fixes,
+the drone hovers in LAND / RECENTER without touchdown and the estimate runs away (true error 10 m at t = 139 s,
+max 1659 m by t = 329 s, "landed" 6.7 m from B). The same seed before the gyro-bias fix (4904433) landed 1.38 m off;
+ukraine-1 with the final build landed 1.43 m. Log / video: `$SFHACK_DATA/night/demo/berkeley_night_final.{log,mp4}`.
+Not analysed tonight. First things to check tomorrow: whether `ahrs.tilt_bias_ki` keeps integrating tilt corrections
+in the low hover without position fixes (freeze it below the thermal working height / without recent fixes), and
+whether the thermal minimum height (10 m) should drop for the final approach.
+
 ## Next steps
 
 1. For the demo: fly ukraine-1 on night-demo's ROADS route (20/20 in their run with this fix) - the straight

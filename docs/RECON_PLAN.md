@@ -11,7 +11,7 @@ what you reuse in your report under "Disclosure").
 - Windows, PowerShell, uv. Own venv: `$env:UV_PROJECT_ENVIRONMENT = "$HOME\.venvs\sf-hack-<your branch>"`, then
   `scripts\setup.ps1`, then `. scripts\env.ps1`. Add dependencies with `uv add` (they land in pyproject/uv.lock;
   say so in your report so the integrator can merge them).
-- Base branch: `origin/acoustic-recon` (= night-demo + this plan). Reuse what exists: Ukraine mission `ukraine-1`
+- Base branch: `origin/main` (acoustic-recon = night-demo + this plan was merged into main; if your branch was made from origin/acoustic-recon that is the same code). Reuse what exists: Ukraine mission `ukraine-1`
   (`$SFHACK_DATA\missions\ukraine-1`), thermal model + thermal camera (`sfhack/thermal/`), EKF / AHRS / autopilot,
   night viewer (`demos/liveview/night.py`), eval harness style (`demos/30_night_eval.py`).
 - Never push (I push). Commit at every working step. Do not touch main or other branches.

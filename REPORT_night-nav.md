@@ -2,59 +2,125 @@
 
 Goal (NIGHT_PLAN): the drone reaches B at night with GNSS completely off, on IMU + baro + lidar TRN + a downward
 thermal camera matched against a thermal prior predicted from daytime imagery. Success = within 5 m of B, 20 seeds,
-95 % Wilson interval. Landing not tonight.
+95 % Wilson interval. Landing not tonight. Details, tables and plots: `docs/NIGHT_NAV.md`.
 
-STATUS: DRAFT - final numbers are filled in when the evaluation queue finishes.
+## Headline numbers
+
+Night 23:00, 60 m AGL, GNSS completely off from 20 % of the route, 20 seeds each, frozen mission data (see
+"Data versions"), default night configuration (gradient-orientation matching + gyro-bias learning):
+
+| mission | within 5 m | 95 % Wilson CI | median / max error at B (m) | same without gyro-bias learning | IMU + TRN only |
+|---|---|---|---|---|---|
+| berkeley (569 m) | **20/20** | 84-100 % | 0.4 / 2.2 | 20/20 | 10/20 |
+| m-c804bb84, hill (923 m) | **20/20** | 84-100 % | 0.7 / 1.6 | 19/20 | 0/20 |
+| ukraine-1 (1870 m) | **18/20** | 70-97 % | 1.2 / 4143 (2 runaways) | 12/20 | 0/20 |
+| all | **58/60** | 89-99 % | | 51/60 | 10/60 |
+
+IMU + TRN with the same gyro-bias learning: 11/20, 3/20, 0/20 (no km runaways on berkeley / hill any more, median
+3 km on ukraine-1).
+
+Sanity check on night-thermal's final data (traffic, contrast 0.7), 2 seeds each: berkeley 2/2, hill 2/2,
+ukraine-1 1/2. night-demo's independent 20-seed run of this fix on the final data (their numbers): berkeley 20/20,
+hill 20/20, ukraine-1 with their ROADS route 20/20 (15/20 without the fix).
+
+Mild night (true scene contrast 0.4x, prior unchanged): berkeley 20/20, m-c804bb84 20/20 (median 0.6 / 0.8 m).
+
+Default = `grad` (gradient-orientation NCC of the rectified thermal frame vs the predicted thermal map) +
+`ahrs.tilt_bias_ki` 0.05 in night mode (commit 651b398). Plots: `docs/night_nav/night_error_<mission>.png`.
 
 ## What works
 
-- **V3.2 merged** (`origin/v3.2-gnss-free` -> night-nav): GNSS-free track + handover, capped bias step, re-localization,
-  TRN. Kept all mission-planner features; env.ps1 / env.sh keep the V5 venv lines. TRN now uses the mission's
+- **V3.2 merged** (`origin/v3.2-gnss-free`): GNSS-free track + handover, capped bias step, re-localization, TRN.
+  All mission-planner features kept; env.ps1 / env.sh keep the V5 venv lines. TRN uses the mission's
   `onboard/dsm.npz` when the package has one (`world/onboard_dsm.build_dsm`).
-- **No HOLD mid-route** (`health.keep_route_when_blind`, default on): blind = DEGRADED "BLIND, keep route", full speed,
-  the 2-sigma keeps growing in the HUD. V3.2 rule available with the flag off.
-- **Night mode**: `FlightSystem(night=True, cruise_agl=60)` - RGB vision off, thermal camera (night-thermal's renderer,
-  in the simulator's GL context, per-seed camera errors) on the `camera/thermal` topic, `ThermalLocalizer` onboard,
-  fixes fused like vision (NIS gate) into the main filter and the GNSS-free track. 60 m AGL route re-planned over the
-  onboard DTM (`planning.mission.cruise_at_agl`).
+- **No HOLD mid-route** (`health.keep_route_when_blind`, default on): blind = DEGRADED "BLIND, keep route", full
+  speed, the 2-sigma keeps growing in the HUD. The V3.2 rule is the flag off.
+- **Night mode** `FlightSystem(night=True, cruise_agl=60)`: RGB vision off, thermal camera (night-thermal's
+  renderer in the simulator's GL context, per-seed camera errors) on `camera/thermal`, `ThermalLocalizer` onboard,
+  fixes fused like vision (NIS gate, big-jump confirmation) into the main filter and the GNSS-free track; 60 m AGL
+  route re-planned over the onboard DTM; gyro-bias learning on (`ahrs.tilt_bias_ki` 0.05).
 - **ThermalLocalizer** (`sfhack/perception/thermal_localizer.py`): ncc, grad (default), road, junction and
-  combinations; peak-region covariance (ridge = 1-D fix), second-peak test, yaw search, big-jump confirmation.
-- **Harness**: `demos/21_night_eval.py` (closed loop, GNSS off at 20 % of the route, Wilson CI, per-flight JSON with
-  per-second trace, resumable, survives a broken process pool), `demos/22_bench_thermal.py` (open-loop localizer
-  bench), `demos/23_night_plots.py`.
-- Tests: 63 green before the last commits (incl. truth separation; `tests/test_thermal_nav.py` new: 7 tests).
+  combinations; template on the optical axis, peak-region covariance (ridge = 1-D fix), second-peak test, yaw search.
+- **Harness**: `demos/21_night_eval.py` (closed loop, Wilson CI, per-flight JSON incl. per-second trace and every
+  thermal fix, `--mission-root` for frozen data, `--resume`, survives a broken process pool),
+  `demos/22_bench_thermal.py` (open-loop localizer bench), `demos/23_night_plots.py`.
+- **HUD helpers for night-demo**: `Autopilot.night_nav_source(t)` -> (GNSS | THERMAL | TRN | INS, fix ages).
+- **Tests**: 71/71 green at the final commit (incl. truth separation); new `tests/test_thermal_nav.py` (7 tests: localizer on a synthetic
+  field for ncc / grad / road / ncc+road, uniform-image rejection, 60 m AGL route, keep-route health).
 
-## Numbers
+## Method comparison (closed loop, before the gyro-bias fix)
 
-(final table below when complete; see docs/NIGHT_NAV.md for the method details and the open-loop bench)
+grad 20/20 (berkeley), 19/20 (hill), 12/20 (ukraine-1); ncc 16/20, 15/20; ncc+grad 18/20, 19/20;
+IMU + TRN 10/20, 0/20, 0/20; road alone 2/10, 1/10 and junction alone 6/10, 0/10 (berkeley, hill; with the
+gyro-bias fix). Open-loop bench: grad 66-79 % fix rate, median 0.5-0.65 m; road 35-47 % with median
+5-9 m; junction 15-23 %. Full tables in `docs/NIGHT_NAV.md`.
 
 ## What failed / caveats
 
-- **IMU + TRN alone is not enough in this simulator.** Calm air has no airframe drag, so the accelerometer sees neither
-  velocity nor the AHRS tilt error in closed loop; after GNSS loss the tilt drifts ~1 deg per 10-20 s, the gravity
-  leak grows the error quadratically and the controller flies the real drone after the wrong estimate (km-level
-  runaways, ukraine-1 always). TRN helps over the berkeley buildings, not on GLO-30 terrain (all 35 TRN fixes on
-  ukraine-1 seed 0 were 100-900 m off and NIS-rejected).
-- **ncc alone / ncc+grad**: occasional wrong fixes -> runaways (berkeley 4/20 resp. 2/20).
-- **grad**: one runaway on m-c804bb84 (seed 0): EKF overconfident (claimed 2-sigma 2.5 m) while the AHRS tilt drifted,
-  velocity error 0.4 -> 3 m/s in 10 s with thermal fixes accepted at small gain, then TRN fixes 8-14 m off passed
-  the gate and correct thermal fixes were rejected. Candidate fix: `thermal.ekf_acc_bias_rw = 0.04` (being evaluated).
-- **road / junction** alone are weak in these worlds (see the bench): campus and village roads are short, partly
-  under trees, plazas / parking are as warm as roads.
-- Data versions: night-thermal rebuilt the thermal files in place several times tonight. The final table runs on a
-  frozen copy (`$SFHACK_DATA/night/nav_snap`, taken 00:55 after night-thermal 3e692ed: cold-air pooling, per-camera
-  offset / gain, BEFORE the moving-traffic commit 40f5393 and the final 0.7 contrast rebuild at 01:17).
-  night-demo's final eval uses the later data (traffic, contrast 0.7) with this branch at 4904433.
-- Machine: the Windows commit charge ran out (~80 GB with ~27 sim workers across agents); worker processes died
-  (BrokenProcessPool). The harness now resubmits; flights are resumable.
+- **IMU + TRN alone is not enough in this simulator.** No airframe drag in calm air: the accelerometer sees neither
+  velocity nor the AHRS tilt error in closed loop; after GNSS loss the tilt drifts ~1 deg per 10-20 s and the error
+  grows quadratically (km-level runaways; ukraine-1 always). TRN helps over berkeley buildings only.
+- **Blind stretches are the real risk**: the ukraine-1 straight route crosses a ~250 m forest with a uniform prior
+  (~30 s without information). Before the gyro-bias fix 8/20 ukraine flights ran away there; after it 2/20 still do
+  (seeds 5 and 9; seed 9 had arrived without the fix, so the gain is not uniform). Seed 5: a wrong forced
+  re-localization before the forest, then a wrong match after it; it also descends to 26 m AGL because terrain
+  following uses the wrong position - a real safety issue for terrain-following at night.
+- **Tried and rejected**: re-localization guard (`thermal.reloc_min_span_s` 3 s; ukraine seeds 5 and 9 still run
+  away), EKF accel-bias random walk x4 (wobble, flights stalled at waypoints), thermal fix
+  covariance x4 (neutral).
+- **`yaw_feedback`** (thermal yaw corrections learn the compass bias): berkeley 10/10, hill 10/10, mean |yaw error|
+  0.78 -> 0.32 / 0.76 -> 0.54 deg; ukraine-1: 6/9 vs 8/9 without it on the same seeds. Off by default (not run with 20 seeds).
+- **road / junction alone** are weak in these worlds: short campus / village roads, trees over roads, plazas and
+  parking lots as warm as roads. Kept as options.
+- **Data versions**: night-thermal rebuilt the thermal files in place several times tonight. All my tables run on a
+  frozen copy `$SFHACK_DATA/night/nav_snap` (taken ~00:55 after night-thermal 3e692ed: cold-air pooling, per-camera
+  offset / gain; BEFORE moving traffic 40f5393 and the final 0.7 contrast rebuild at 01:17). night-demo's final eval
+  uses the later data with this branch at 4904433 (without the gyro-bias fix; they got the fix commit 651b398).
+  Note: in the first runs (before 3e692ed was merged) the thermal camera seed was not passed, so all seeds shared
+  the seed-0 camera noise; the final tables do not have that problem.
+- **Frozen code**: evaluations ran from a separate worktree `C:\dev\night-nav-evalsnap` (detached at the evaluated
+  commit, so edits during the night did not leak into running evaluations): stage 1 at 883bd03 (+ the resilient
+  harness, behaviour-identical), final rows at 651b398. Eight ukraine-1 seeds of the final grad row (0-7) were
+  flown in the selection run with `--set ahrs.tilt_bias_ki=0.05`, which is the identical configuration, and reused.
+- **Folders**: all work is in `C:\dev\night-nav` (branch `night-nav`, not pushed), as the plan says. The OneDrive clone
+  that this session was started in (also on a `night-nav` branch) was not touched and is still at 28962ad.
+- **Machine**: the Windows commit charge ran out (~80 GB with ~27 sim workers across agents, ~2-3 GB commit each);
+  worker processes died (BrokenProcessPool). Agreed with night-demo: night-nav <= 9 workers, night-demo 6.
+
+## Open issue reported by night-demo (landing, outside tonight's scope)
+
+night-demo recorded berkeley seed 0 with the final build (651b398) through the landing: ABOVE_B at 0.7 m, descent
+fine with thermal fixes, then below the thermal working height (min 10 m above the surface; flare at 4 m) no fixes,
+the drone hovers in LAND / RECENTER without touchdown and the estimate runs away (true error 10 m at t = 139 s,
+max 1659 m by t = 329 s, "landed" 6.7 m from B). The same seed before the gyro-bias fix (4904433) landed 1.38 m off;
+ukraine-1 with the final build landed 1.43 m. Log / video: `$SFHACK_DATA/night/demo/berkeley_night_final.{log,mp4}`.
+Quick look at 05:50 (my copy of the data, same seed, flown through the landing): with the fix it landed 6.0 m off,
+with `night_tilt_bias_ki = 0` 0.9 m. But freezing the gyro-bias integral from the start of the descent did NOT
+change it (5.9 m): the velocity error jumps from 0.07 to 0.43 m/s at ~19 m AGL (last thermal fixes, frames with
+"footprint (tilt)" during the descent manoeuvre) and below the thermal minimum height (10 m) nothing corrects it
+for the last ~10 s. So the landing needs (a) fixes down to a few metres (lower `thermal.min_alt`, smaller template
+at low height) and (b) stricter gating of fixes during the descent; whether the gyro-bias learning contributes is
+not shown (one seed each way, trajectories diverge chaotically). The freeze experiment was reverted.
 
 ## Next steps
 
-(filled in at the end)
+1. For the demo: fly ukraine-1 on night-demo's ROADS route (20/20 in their run with this fix) - the straight
+   route's forest is the remaining failure case.
+2. Blind-stretch recovery (ukraine-1 seeds 5, 9): search window from the distance flown blind x the velocity
+   uncertainty, and a slower handover from the INS after a blind stretch (accept only fixes that agree over several
+   seconds). The simple re-localization guard was not enough.
+3. Terrain following on the estimate is unsafe when the estimate runs away (seed 5 went down to 26 m AGL): use the
+   lidar height above ground as a floor for the altitude command.
+4. Rotor-drag model + drag-velocity fusion (death-v3) would let IMU + TRN degrade gracefully; needs a team
+   decision (changes baseline physics).
+5. `yaw_feedback`: halves the yaw error on berkeley / hill, but ukraine-1 got worse (6/9 vs 8/9); needs a look before
+   it becomes a default.
+6. Full 20-seed rows of this branch on night-thermal's final data are in night-demo's eval; mine has 2 seeds each.
 
 ## Disclosure (pre-hackathon work)
 
 Everything on this branch since `28962ad` was built tonight (2026-10-23 23:30 -> 2026-10-24 07:00) by an AI agent
-(Claude Code, agent "night-nav") before the hackathon: the V3.2 merge, night mode, thermal sensor wiring, the thermal
-localizer, the eval / bench / plot scripts, the tests and the docs. The thermal world model and camera
-(`sfhack/thermal/`) are night-thermal's work (merged), research notes are night-research's.
+(Claude Code, agent "night-nav"), before the hackathon: the V3.2 merge, night mode, thermal sensor wiring, the
+thermal localizer, the gyro-bias learning, the eval / bench / plot scripts, the tests and the docs. The thermal
+world model and camera (`sfhack/thermal/`) are night-thermal's work (merged in), the research notes
+night-research's. V3.2 itself (`origin/v3.2-gnss-free`) predates tonight.

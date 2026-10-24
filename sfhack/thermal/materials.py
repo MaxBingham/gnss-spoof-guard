@@ -37,7 +37,7 @@ MATERIALS: list[Material] = [
     Material("dry_grass", ((0.03, 0.07, 0.3e6), (0.6, 0.35, 1.3e6)), 0.26, 0.96, evap=0.08, h_mult=1.3,
              prior_sigma_K=2.0),
     Material("tree", ((0.01, 0.5, 1.5e6),), 0.15, 0.97, evap=0.7, h_mult=20.0, bottom="adiabatic", prior_sigma_K=1.2),
-    Material("water", ((1.0, 30.0, 4.18e6),), 0.06, 0.98, evap=0.5, prior_sigma_K=1.5),
+    Material("water", ((1.0, 30.0, 4.18e6),), 0.06, 0.98, evap=0.5, prior_sigma_K=3.0),
     Material("dirt_road", ((0.03, 0.25, 1.2e6), (0.6, 0.5, 1.5e6)), 0.28, 0.93, evap=0.12, prior_sigma_K=2.5),
     # flat roofs: membrane over insulation over the deck (most commercial roofs: little mass above the
     # insulation, so they cool below air at night), ballasted / concrete-topped roofs keep their heat

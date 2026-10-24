@@ -86,7 +86,8 @@ class Autopilot:
         self.thermal_log: list[tuple[float, str, float, float, bool, float]] = []  # t, method, x, y, accepted, yaw_corr
         self.lidar_agl: float | None = None  # nadir lidar: camera height above the surface below
         self._thermal_pending: tuple[float, np.ndarray] | None = None  # (t, innovation) of a held big-jump fix
-        self.thermal_held = 0  # big-jump fixes held for confirmation (and not confirmed)
+        self.thermal_held = 0
+        self._thermal_rejects: list[tuple[float, np.ndarray]] = []  # (t, innovation) of consecutive NIS rejections  # big-jump fixes held for confirmation (and not confirmed)
         self.mag_bias_est = 0.0  # rad, compass heading bias learned from thermal yaw corrections (yaw_feedback)
         self._lidar_t = -1.0
         self.health = HealthMonitor(cfg.health)
@@ -331,7 +332,8 @@ class Autopilot:
         self.thermal_fixes += 1
         stats = self.thermal_by_method.setdefault(tf.method, [0, 0])
         stats[0] += 1
-        accepted = self.ekf.update_fix(fix)
+        accepted = self.ekf.update_fix(fix, allow_reloc=self._thermal_reloc_allowed(fix))
+        self._note_thermal_result(fix, accepted)
         if accepted:
             self.thermal_accepted += 1
             stats[1] += 1
@@ -364,6 +366,27 @@ class Autopilot:
             return "GNSS", detail
         fresh = [(a, k) for k, a in ages.items() if k != "GNSS" and a is not None and a < 3.0]
         return (min(fresh)[1] if fresh else "INS"), detail
+
+    def _thermal_reloc_allowed(self, fix: VisualFix) -> bool:
+        """Forced re-localization (accepting a fix after repeated NIS rejections) from thermal fixes only when the
+        rejections span reloc_min_span_s and the current innovation agrees with them (thermal.reloc_min_span_s,
+        0 = the EKF's plain rule: 5 rejections, only 1 s at 5 Hz)."""
+        tc = self.cfg.thermal
+        if tc.reloc_min_span_s <= 0:
+            return True
+        rej = self._thermal_rejects
+        if not rej or fix.t - rej[0][0] < tc.reloc_min_span_s:
+            return False
+        innov = fix.pos - self.ekf.x[:2]
+        recent = np.array([r[1] for r in rej[-5:]])
+        return bool(np.all(np.linalg.norm(recent - innov, axis=1) <= tc.confirm_tol_m * 2))
+
+    def _note_thermal_result(self, fix: VisualFix, accepted: bool) -> None:
+        if accepted:
+            self._thermal_rejects = []
+        else:
+            self._thermal_rejects.append((fix.t, fix.pos - self.ekf.x[:2]))
+            self._thermal_rejects = self._thermal_rejects[-50:]
 
     def _thermal_confirmed(self, fix: VisualFix) -> bool:
         """A thermal fix that would move the estimate by more than confirm_jump_m is held until a second fix

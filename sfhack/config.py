@@ -289,6 +289,7 @@ class ThermalConfig:
     # independent they collapse the EKF covariance (formal 2-sigma ~0.6 m vs ~2-3 m true). Scale their covariance.
     fix_cov_scale: float = 1.0
     # FlightSystem(night=True) sets ahrs.tilt_bias_ki to this unless it is set explicitly (0 = leave it off)
+    reloc_min_span_s: float = 0.0  # forced re-localization from thermal only after rejections spanning this (0 = off)
     night_tilt_bias_ki: float = 0.05  # ukraine-1: runaways after a 30 s forest stretch gone (docs/NIGHT_NAV.md)
     confirm_jump_m: float = 5.0  # a fix moving the estimate more than this needs a second, consistent fix (0 = off)
     confirm_window_s: float = 2.0

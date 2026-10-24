@@ -81,16 +81,23 @@ references `thermal_truth`, `thermal.model` / `thermal.camera`, `ThermalCamera`,
 5. **Prior sigma**: per-class sigma (asphalt 1.5 K ... roofs 3.5 K, bare metal 6 K), +1.5 K within 1 m of a
    class edge (misregistration), +2 K in deep ortho shadow or on roads of unknown surface, +0.6 K model error.
 
+**Default contrast 0.7.** The energy balance (table below) gives asphalt - grass ~10 K, the top of the
+literature range; measurements on clear calm nights give ~5 K. The truth is therefore scaled around the air
+temperature by `DEFAULT_CONTRAST = 0.7` (road - vegetation medians 4.5-5.2 K in the built missions), while the
+prior keeps the full model: an amplitude error the matcher has to absorb. night-demo's "low_contrast" eval row
+scales the true scene by another 0.4 at load time (0.28 effective, ~2-3 K: the mild-night end of ASTER).
+
 **Contrast knob.** night-research's check against real ASTER night scenes over Berkeley (90 m, 23:15 PDT, four
 clear spring / autumn nights) found road-dense cells only +0.1..+0.7 K warmer at 90 m, which suggests 1-3 K pure
 road contrast on *mild* nights, against 5-10 K after a hot summer day. `build_thermal(contrast=0.4)` /
 `--contrast 0.4` scales the truth around the air temperature; `load_truth(mission, contrast=0.4)` does the same
 at load time without rebuilding. The prior always stays on the model, as it would in reality. Use it for a
 robustness row in the nav eval. On hot summer nights (ASTER over Fresno and Davis, ~23 h) the paved grid is
-plainly visible: road-dense 90 m cells are +1.0..+1.9 K above road-free cells, which implies +2-4 K pure road
-contrast against the mixed urban surroundings. That is consistent with the hot-day default (`contrast = 1`).
-Unpaved roads are 0..0.9 K *cooler* than road-free cells (Davis, Vinnytsia), so the model keeps dirt roads
-slightly cool (night-research, NIGHT_NOTES section 7).
+plainly visible. Regression coefficients per 100 % paved share are Fresno +0.4..+3.9 K and Davis +3.2 K: lower
+bounds because of 90 m pixel mixing, and confounded with town vs fields. Unpaved roads are 0..0.9 K *cooler*
+than road-free cells (Davis, Vinnytsia), so the model keeps dirt roads slightly cool. Measured asphalt - grass
+at 22-24 h is ~5 K (Erzurum 5.4 K at 22:00, a midnight UAV survey 4.7 K); the model's 9.9 K is the upper end
+(hot day, calm, clear), and `contrast = 0.5` reproduces the measured value (night-research NIGHT_NOTES v4).
 
 ## Calibration (23:00 local, summer, clear, calm)
 
@@ -103,14 +110,14 @@ night-research's `docs/NIGHT_NOTES_FOR_TEAM.md` (literature ranges):
 | concrete | +3.1 | +3..+6 |
 | irrigated grass | -4.0 | -5..-2 |
 | tree canopy | -1.9 | -2..0 (warmer than lawn) |
-| water | +3.8 | about the daily mean air (warm) |
+| water | +3.8 | not cool; large spread (Fresno canals ~ town on half the nights): prior sigma 3 K |
 | dirt / gravel road | -2.1 | -2..+2; ASTER: unpaved roads 0..0.9 K cooler than their surroundings |
 | bare soil | -2.7 | -4..+1 |
 | roof, insulated dark | -3.8 | -5..-3 |
 | roof, insulated light (aged membrane) | -6.6 | -6..-4 typical (Khedari 2000: 1-6 K), -11 extreme |
 | roof, heavy / ballasted | +3.8 | +2..+5 |
 | roof, bare metal | -13.8 | very cold (low emissivity reflects the sky) |
-| asphalt - grass | 9.9 K | 5-10 K (5.4 K measured at 22 h; 9.8 K night-research's own model) |
+| asphalt - grass | 9.9 K | ~5 K measured (5.4 K at 22 h, 4.7 K at midnight); up to ~10 K modelled: our default is the upper end |
 | asphalt cooling | 2.6 K/h until 22 h, then 1.5 K/h | ~2 K/h, then ~1.4 K/h |
 
 ![diurnal](figures/thermal_diurnal.png)
@@ -119,9 +126,11 @@ Built missions (23:00, seed 0):
 
 | Mission | Air | Road median | Vegetation median | Road - veg | Prior vs truth RMSE (corr) | Roads RMSE | Within 1 / 2 sigma | Cars (hot) | Build |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| berkeley (NAIP + LiDAR) | 21.8 C | 27.4 C | 20.1 C | 7.3 K | 3.51 K (0.72) | 3.01 K | 71 / 87 % | 207 (23) | 9 s |
-| m-c804bb84 (hill) | 21.8 C | 25.9 C | 19.4 C | 6.4 K | 3.08 K (0.74) | 2.59 K | 76 / 90 % | 319 (40) | 12 s |
-| ukraine-1 (Sentinel-2, GLO-30, no LiDAR) | 22.7 C | 28.0 C | 20.6 C | 7.4 K | 2.24 K (0.67) | 2.47 K | 74 / 94 % | 484 (75) | 42 s |
+| berkeley (NAIP + LiDAR) | 21.8 C | 25.7 C | 20.6 C | 5.1 K | 3.02 K (0.72) | 2.47 K | 80 / 90 % | 207 (23) | 11 s |
+| m-c804bb84 (hill) | 21.8 C | 24.6 C | 20.1 C | 4.5 K | 2.76 K (0.74) | 2.70 K | 75 / 92 % | 319 (40) | 14 s |
+| ukraine-1 (Sentinel-2, GLO-30, no LiDAR) | 22.7 C | 26.4 C | 21.2 C | 5.2 K | 1.94 K (0.67) | 2.50 K | 74 / 97 % | 484 (75) | 33 s |
+
+Truth at the default contrast 0.7 (see below); built 2026-10-24 ~01:17 and frozen for night-demo's final eval.
 
 Most of Berkeley's prior error is roofs (a third of the area; construction unknown to the prior). Prior
 residuals are heavy-tailed, not Gaussian: 71-76 % of pixels are within 1 sigma (Gaussian 68 %), but only
@@ -134,6 +143,24 @@ the plaza or lawn on top shows through. Where the LiDAR crown stands > 2 m above
 ![berkeley histogram](figures/thermal_hist_berkeley.png)
 ![ukraine](figures/thermal_maps_ukraine-1.png)
 ![ukraine histogram](figures/thermal_hist_ukraine-1.png)
+
+## Is there enough signal? (`demos/22_thermal_matchability.py`)
+
+An offline check of the model, not a localizer. Frames every 50 m along each route at 60 m AGL (level, yaw along
+the route, traffic and all sensor effects on), compared with `prior.predict_view` over a +-15 m grid of position
+offsets (yaw known, 1 m steps, 160 x 128 px), using zero-mean NCC of the raw images and of gradient magnitudes. A
+frame "localizes" when the NCC peak is within 2 m of the truth. Run before the 0.7 default (contrast 1.0 and 0.4):
+
+| Mission | Frames | Raw NCC: within 2 m / 5 m | Gradient NCC: within 2 m / 5 m | NCC at truth raw / grad |
+| --- | --- | --- | --- | --- |
+| berkeley | 15 | 87 / 93 % | 60 / 93 % | 0.74 / 0.26 |
+| m-c804bb84 | 24 | 83 / 96 % | 67 / 79 % | 0.82 / 0.36 |
+| ukraine-1 | 51 | 69 / 82 % | 80 / 94 % | 0.71 / 0.26 |
+
+At contrast 0.4 the numbers are within one frame of these. Zero-mean NCC is scale-invariant, and even a 2 K scene
+is 40x NETD, so the *structure* decides, not the amplitude. Failures are frames over big roofs or forest with no
+road in view (a correct "no fix"). The signal is there but not trivially perfect, which is what the contract asked
+for. Results: `$SFHACK_DATA/night/thermal/matchability_*.json`.
 
 ## Camera (`camera.py`)
 
@@ -158,9 +185,13 @@ white-hot. `intrinsics`: {fx, fy, cx, cy, w, h, hfov_deg, vfov_deg}, pinhole, no
 Speed (this laptop, while 3 other agents ran evals): 58-73 ms per frame (14-17 Hz) with its own GL context.
 Interleaved with the simulator's down camera, a second GL context costs ~50 ms per switch on Windows (129 ms
 per frame); pass `renderer=sim.renderer` to draw into the simulator's context (69 ms, same image within
-0.01 K). Use that for flights.
+0.01 K). Use that for flights. In flight (demo 20, 5 frames per sim second): berkeley 70-89 ms median, ukraine-1
+108 ms (2016 x 980 m world: 1 M-triangle height field, 1614 geoms). The profile shows the GPU is the limit:
+`mjr_render` and `mjr_readPixels` take ~42 ms each, and the GPU was shared with a detector training all night.
+Python (back-projection, sampling, noise) is ~15 ms of the frame.
 
-![sample](figures/thermal_berkeley_t030.0.png)
+![sample over a road](figures/thermal_berkeley_t086.0.png)
+![sample over a big roof](figures/thermal_berkeley_t030.2.png)
 
 ## Limits and next steps
 

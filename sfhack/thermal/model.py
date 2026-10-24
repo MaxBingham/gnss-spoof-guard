@@ -43,6 +43,11 @@ from .shading import sky_view, sun_exposure
 
 RES = 0.5
 FORMAT = "sfhack-thermal/1"
+# Truth contrast around the air temperature. The energy balance gives asphalt - grass ~10 K at 23 h after a hot
+# day (the top of the literature range); measurements on clear calm nights say ~5 K (night-research NIGHT_NOTES
+# v4). 0.7 puts the truth at ~7 K. The prior keeps the full model: an amplitude error the matcher must absorb
+# (zero-mean NCC is scale-invariant, so localization barely depends on it; demos/22_thermal_matchability.py).
+DEFAULT_CONTRAST = 0.7
 UNTAGGED_PAVED_P = 0.4  # outside the US: share of minor roads without a surface tag that are paved (truth draw)
 
 
@@ -330,7 +335,7 @@ def _save_npz(path: Path, **arrays: Any) -> None:
 
 def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "summer", seed: int = 0,
                   climate: Climate | None = None, log: Any = print, write: bool = True,
-                  contrast: float = 1.0, inversion_K_per_100m: float = 1.4) -> dict[str, Any]:
+                  contrast: float = DEFAULT_CONTRAST, inversion_K_per_100m: float = 1.4) -> dict[str, Any]:
     """Build and write the truth + prior. `write=False`: write nothing, return the info dict plus
     "arrays": {truth, prior, sigma, cls_truth, cls_prior, roads, air_K} (figures at other hours)."""
     t0 = time.time()

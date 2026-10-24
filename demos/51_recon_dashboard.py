@@ -21,7 +21,8 @@ Bearing input (compass degrees, same as demos/50_base_3d.py):
 Keys: N GNSS off / on   V record on / off (MP4 under $SFHACK_DATA/demo)   C chase / overview camera
       1 2 4 sim speed   SPACE pause   BACKSPACE reset   O reset camera   Z screenshot   Tab fullscreen   Q quit
 Mouse: drag to orbit, wheel to zoom.
-World: --world base (demos/50_base_3d.py) or farm (demos/base3d_farm.py, default when it is there).
+World: --world farm (default: the procedural 4 x 4 km farmland of demos/base3d_farm.py, terrain following at 30 m
+AGL on the onboard terrain map) or simple (the flat compound); both from demos/50_base_3d.py build_model().
 """
 
 from __future__ import annotations
@@ -49,20 +50,30 @@ from sfhack.mission.bearing_pilot import BearingPilot, BearingPlan
 from sfhack.sim.sensor_rig import SensorRig
 
 DEMOS = Path(__file__).resolve().parent
-WORLDS = {"base": "50_base_3d", "farm": "base3d_farm"}
-DEFAULT_WORLD = "farm" if (DEMOS / "base3d_farm.py").exists() else "base"
+WORLDS = ("farm", "simple")  # demos/50_base_3d.py build_model(world)
 SETTLE_S = 1.0  # the X2 drops onto the pad at spawn: settle before the IMU calibration starts
 TRAIL_DT = 0.25
 RELAUNCH_S = 3.0  # on the pad before a queued bearing launches
+HARD_TOUCHDOWN = 3.0  # m/s horizontal at ground contact: beyond this a real airframe would likely not survive
 VIEW_SIZE, RECORD_SIZE = (1280, 720), (1920, 1080)
 WINDOW = "UMA-16 recon dashboard"
 KEYS = {2424832: "LEFT", 65361: "LEFT", 2555904: "RIGHT", 65363: "RIGHT", 13: "ENTER", 10: "ENTER",
         8: "BACKSPACE", 9: "TAB", 32: "SPACE", 27: "Q"}
 
 
-def load_world(name: str):
-    """The world builder module: build_model(), PAD, CRUISE_AGL, ... and UdpBearings (demos/50_base_3d.py API)."""
-    return importlib.import_module(WORLDS[name])
+class World:
+    """A demos/50_base_3d.py world, compiled once: the model, `info` (name, ground(x, y), default_range) and the
+    module (PAD, CRUISE_AGL, ... and UdpBearings). The terrain heights double as the drone's onboard terrain map."""
+
+    def __init__(self, name: str) -> None:
+        self.mod = importlib.import_module("50_base_3d")
+        self.model, self.info = self.mod.build_model(name)
+        self.name = name
+        self.ground = self.info.ground
+
+
+def load_world(name: str) -> World:
+    return World(name)
 
 
 # ---------------------------------------------------------------------------------------- the scenario (harness)
@@ -71,10 +82,11 @@ class ReconScenario:
     """World + sensor rig (simulator) + BearingPilot (onboard), and what the harness measures. The pilot gets sensor
     messages on the bus and the launch command; everything true here is for display and scoring."""
 
-    def __init__(self, world, args: argparse.Namespace, model: mujoco.MjModel | None = None) -> None:
+    def __init__(self, world: World, args: argparse.Namespace) -> None:
         self.world, self.args = world, args
-        self.world_name = args.world
-        self.model = model if model is not None else world.build_model()
+        self.world_name = world.name
+        self.ground = world.ground  # true terrain (display); the pilot gets the same heights as its onboard map
+        self.model = world.model
         self.data = mujoco.MjData(self.model)
         m, d = self.model, self.data
         mujoco.mj_forward(m, d)
@@ -82,14 +94,17 @@ class ReconScenario:
             mujoco.mj_step(m, d)
         self.body = m.body("x2").id
         self.z0 = float(d.qpos[2])  # display datum: the X2 resting on the pad (onboard z = 0 there)
-        self.pad = np.asarray(world.PAD, float)[:2].copy()
+        W = world.mod
+        self.pad = np.asarray(W.PAD, float)[:2].copy()
         self.mast = np.zeros(2)
-        self.plan = BearingPlan(range_m=args.range, cruise_agl=world.CRUISE_AGL, out_speed=world.OUT_SPEED,
-                                climb=world.CLIMB, descent=world.DESCENT, orbit_r=world.ORBIT_R, orbit_s=world.ORBIT_S)
+        self.plan = BearingPlan(range_m=args.range, cruise_agl=W.CRUISE_AGL, out_speed=W.OUT_SPEED, climb=W.CLIMB,
+                                sink=getattr(W, "SINK", 1.5), descent=W.DESCENT, orbit_r=W.ORBIT_R, orbit_s=W.ORBIT_S)
         cfg = default_config()
         self.bus = Bus()
         self.rig = SensorRig(cfg, self.bus, m, d, seed=args.seed)
-        self.pilot = BearingPilot(cfg, self.bus, self.rig.vehicle_params(), self.pad, self.plan, self.mast)
+        z0, ground = self.z0, world.ground
+        self.pilot = BearingPilot(cfg, self.bus, self.rig.vehicle_params(), self.pad, self.plan, self.mast,
+                                  terrain=lambda x, y: ground(x, y) - z0)  # onboard map, z above the takeoff point
         self.dt = float(m.opt.timestep)
         # base side
         self.pending = float(args.bearing) if args.bearing is not None else 0.0
@@ -223,6 +238,15 @@ class ReconScenario:
             self.banner = (self.t, f"LANDED where it thinks the pad is: {self.land_err:.1f} m from the real pad",
                            GREEN if self.land_err < 5.0 else RED)
 
+    def tilt_deg(self) -> float:
+        return math.degrees(math.acos(float(np.clip(self.true_R[2, 2], -1.0, 1.0))))
+
+    def tipped_over(self) -> bool:
+        return self.pilot.state == "LANDED" and self.tilt_deg() > 45.0
+
+    def agl(self) -> float:
+        return max(0.0, float(self.true_pos[2] - self.ground(self.true_pos[0], self.true_pos[1])))
+
     def err_now(self) -> float:
         return float(np.linalg.norm(self.est.pos[:2] - self.true_pos[:2]))
 
@@ -245,12 +269,18 @@ class ReconScenario:
         else:
             since = f"{self.t - self.gnss_off_t:.1f} s  ·  {self.flown - self.gnss_off_flown:.0f} m flown"
         dpad = float(np.linalg.norm(self.est.pos[:2] - self.pad))
+        h_map = max(0.0, self.est.pos[2] + self.z0 - float(self.ground(*self.est.pos[:2])))
         believes = (f"on the pad ({dpad:.1f} m off by its own estimate)" if p.state == "LANDED"
-                    else f"{dpad:.0f} m from the pad, height {self.est.pos[2]:.0f} m")
+                    else f"{dpad:.0f} m from the pad, {h_map:.0f} m AGL on its map")
         result = None
         if self.land_err is not None and p.state == "LANDED":
             col = GREEN if self.land_err < 5.0 else (AMBER if self.land_err < 15.0 else RED)
-            result = (f"LANDED  {self.land_err:.1f} m from the pad  (the drone thinks {self.land_claim:.1f} m)", col)
+            text = f"LANDED  {self.land_err:.1f} m from the pad  (the drone thinks {self.land_claim:.1f} m)"
+            if self.tipped_over():
+                text, col = f"{text}  \u00b7  TIPPED OVER at {self.touch_v:.0f} m/s", RED
+            elif (self.touch_v or 0.0) > HARD_TOUCHDOWN:
+                text, col = f"{text}  \u00b7  touched down at {self.touch_v:.0f} m/s", RED
+            result = (text, col)
         banner = None
         if self.banner is not None:
             banner = (self.banner[1], self.t - self.banner[0], self.banner[2])
@@ -263,7 +293,7 @@ class ReconScenario:
             "gnss_on": self.rig.gnss_on, "err": self.err_now(), "sigma2": self.est.sigma2_horizontal(),
             "max_err": self.max_err if self.launch_t is not None else None, "err_target": self.err_target,
             "land_err": self.land_err, "since_off": since,
-            "from_base": f"{np.linalg.norm(self.true_pos[:2] - self.mast):.0f} m, height {self.true_pos[2] - self.z0:.0f} m",
+            "from_base": f"{np.linalg.norm(self.true_pos[:2] - self.mast):.0f} m, {self.agl():.0f} m above ground",
             "believes": believes, "result": result, "banner": banner,
         }
 
@@ -274,11 +304,13 @@ class ReconScenario:
                f"{(self.landed_t or self.t) - self.gnss_off_t:.1f} s / {self.flown - self.gnss_off_flown:.0f} m")
         tgt = "-" if self.err_target is None else f"{self.err_target:.1f} m"
         land = "-" if self.land_err is None else f"{self.land_err:.2f} m (drone thinks {self.land_claim:.2f} m)"
-        tilt = math.degrees(math.acos(float(np.clip(self.true_R[2, 2], -1.0, 1.0))))
         touch = "-" if self.touch_v is None else f"{self.touch_v:.1f} m/s"
+        verdict = ("TIPPED OVER" if self.tipped_over() else
+                   "hard touchdown" if (self.touch_v or 0.0) > HARD_TOUCHDOWN else "upright")
         return (f"RESULT state={p.state} t={self.t:.1f}s bearing={self.bearing}  max error {self.max_err:.1f} m  "
                 f"error at target {tgt}  landing error {land}  flown {self.flown:.0f} m  {off}\n"
-                f"       touchdown horizontal speed {touch}, attitude on the ground {tilt:.0f} deg from level")
+                f"       touchdown horizontal speed {touch}, attitude on the ground {self.tilt_deg():.0f} deg from level "
+                f"({verdict})")
 
 
 # ---------------------------------------------------------------------------------------- headless
@@ -292,7 +324,7 @@ def run_headless(world, args: argparse.Namespace) -> int:
         if sc.t >= nxt:
             nxt += 10.0
             print(f"t={sc.t:6.1f}s {sc.pilot.state:9s} GNSS {'on ' if sc.rig.gnss_on else 'OFF'} "
-                  f"true ({sc.true_pos[0]:7.1f},{sc.true_pos[1]:7.1f},{sc.true_pos[2] - sc.z0:5.1f})  "
+                  f"true ({sc.true_pos[0]:7.1f},{sc.true_pos[1]:7.1f}) {sc.agl():5.1f} m AGL  "
                   f"err {sc.err_now():6.1f} m  2-sigma {sc.est.sigma2_horizontal():6.1f} m  flown {sc.flown:5.0f} m",
                   flush=True)
     for t, text in sc.pilot.decisions:
@@ -351,11 +383,10 @@ def key_of(code: int) -> str:
 
 def run_viewer(world, args: argparse.Namespace) -> None:
     W, H = args.size
-    model = world.build_model()
-    sc = ReconScenario(world, args, model)
+    sc = ReconScenario(world, args)
     comp = DashComposer(sc, W, H, map_half(args))
     comp.overview = args.overview
-    udp = world.UdpBearings(args.udp_port)
+    udp = world.mod.UdpBearings(args.udp_port)
     if args.bearing is not None:
         print(f"t={sc.t:6.1f}s {sc.base_bearing(args.bearing, '--bearing')}")
     keys: deque[str] = deque()
@@ -435,7 +466,7 @@ def run_viewer(world, args: argparse.Namespace) -> None:
                     print(f"t={sc.t:6.1f}s recording stopped: {rec_path} ({rec_n / 30:.1f} s)", flush=True)
             elif k == "BACKSPACE":
                 print(f"t={sc.t:6.1f}s RESET", flush=True)
-                sc = ReconScenario(world, args, model)
+                sc = ReconScenario(world, args)
                 comp.reset(sc)
                 budget, last_dec = 0.0, 0
             elif k == "Q":
@@ -500,8 +531,10 @@ def _size(s: str) -> tuple[int, int]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--world", choices=sorted(WORLDS), default=DEFAULT_WORLD)
+    ap.add_argument("--world", choices=WORLDS, default="farm")
     ap.add_argument("--bearing", type=float, default=None, help="launch right away toward this bearing (deg)")
+    # Not the farm world's 1200 m: with GNSS off that is ~330 s of IMU-only flight, and the drift (~t^3, residual
+    # gyro bias tilting the AHRS) took the drone ~10 km away, off the 4 km map. 400 m: ~150 s blind, ~100 m miss.
     ap.add_argument("--range", type=float, default=400.0, help="how far out along the bearing (m)")
     ap.add_argument("--gnss-off-at", type=float, default=None, metavar="M",
                     help="switch GNSS off after this many metres of (true, horizontal) flight, e.g. 50")

@@ -91,6 +91,8 @@ class BaseSceneRenderer(SceneRenderer):
     """SceneRenderer without the depth readback and the painted sky: the base worlds have their own skybox and no
     weather fog, and reading the depth buffer back was a third of the frame. project() is inherited."""
 
+    fog = False  # MuJoCo's distance fog (the farm world sets its colour and range)
+
     def render(self, data: mujoco.MjData, cam: mujoco.MjvCamera, draw, *_unused) -> np.ndarray:
         t0 = time.perf_counter()
         r = self.r
@@ -98,6 +100,7 @@ class BaseSceneRenderer(SceneRenderer):
         scn = r.scene
         scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
         scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+        scn.flags[mujoco.mjtRndFlag.mjRND_FOG] = int(self.fog)
         draw(scn)
         if r._gl_context:
             r._gl_context.make_current()
@@ -132,6 +135,8 @@ class OnboardCams:
         self.opt.geomgroup[2] = self.opt.geomgroup[3] = 0  # the X2's own visual / collision geoms
         self.img = {"fpv": np.zeros((h, w, 3), np.uint8), "down": np.zeros((h, w, 3), np.uint8)}
         self.t_ms = 0.0
+        self.fog = False
+        self.znear = 0.02 / float(model.stat.extent)  # 2 cm: the cameras sit centimetres above the pad at rest
 
     def render(self, data: mujoco.MjData, kind: str, pos: np.ndarray, R: np.ndarray) -> np.ndarray:
         t0 = time.perf_counter()
@@ -148,13 +153,15 @@ class OnboardCams:
         cam = self.cam
         cam.lookat[:] = p + f
         cam.distance, cam.azimuth, cam.elevation = 1.0, az, el
-        g = self.model.vis.global_
+        g, vm = self.model.vis.global_, self.model.vis.map
         old, g.fovy = g.fovy, fovy
+        old_near, vm.znear = vm.znear, self.znear
         self.r.update_scene(data, camera=cam, scene_option=self.opt)
-        g.fovy = old
+        g.fovy, vm.znear = old, old_near
         scn = self.r.scene
         scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
         scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+        scn.flags[mujoco.mjtRndFlag.mjRND_FOG] = int(self.fog)
         self.img[kind] = self.r.render().copy()
         self.t_ms = 1000.0 * (time.perf_counter() - t0)
         return self.img[kind]
@@ -173,7 +180,8 @@ class TopDownMap:
         self.mpp = 2.0 * half_m / px
         D = 8000.0
         ext = float(model.stat.extent)
-        model.vis.map.zfar = max(float(model.vis.map.zfar), 4.0 * D / ext)
+        zfar = float(model.vis.map.zfar)
+        model.vis.map.zfar = max(zfar, 4.0 * D / ext)
         r = mujoco.Renderer(model, px, px)
         cam = mujoco.MjvCamera()
         cam.type = mujoco.mjtCamera.mjCAMERA_FREE
@@ -187,8 +195,11 @@ class TopDownMap:
         g.fovy = old
         r.scene.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
         r.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+        r.scene.flags[mujoco.mjtRndFlag.mjRND_FOG] = 0
+        r.scene.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
         self.img = (r.render().astype(np.float32) * 0.85).astype(np.uint8)
         r.close()
+        model.vis.map.zfar = zfar
 
     def to_px(self, xy) -> tuple[float, float]:
         return (float(xy[0]) + self.half) / self.mpp, (self.half - float(xy[1])) / self.mpp
@@ -290,7 +301,8 @@ class DashView:
         key = (sc.bearing, sc.z0)
         if key != self._route_key:
             self._route_key = key
-            self.route = None if sc.bearing is None else planned_route(sc.plan, sc.pad, sc.mast, sc.bearing, sc.z0)
+            self.route = None if sc.bearing is None else planned_route(sc.plan, sc.pad, sc.mast, sc.bearing,
+                                                                        terrain=sc.ground, z0=sc.z0)
             self.route_dashes = [] if self.route is None else [
                 seg for key in ("takeoff", "outbound", "orbit", "return")
                 for seg in dash_segments(self.route[key], 3.0 if key == "orbit" else 8.0)]
@@ -315,7 +327,7 @@ class DashView:
             a = math.radians(az + s * sc.plan.bearing_sigma_deg)
             g.line(mast, mast + L * np.array([math.sin(a), math.cos(a), 0.0]), (1.0, 0.6, 0.2), 2.0, 0.6)
         # pad column (green) so the pad reads from far away
-        g.cylinder([sc.pad[0], sc.pad[1], 15.0], 0.3, 15.0, GREEN3, 0.22, emission=0.6)
+        g.cylinder([sc.pad[0], sc.pad[1], sc.ground(*sc.pad) + 15.0], 0.3, 15.0, GREEN3, 0.22, emission=0.6)
         # IDEAL plan
         if self.route is not None:
             r = self.route
@@ -347,9 +359,10 @@ class DashView:
             mat[:, 0] *= -1
         g.ellipsoid(epos, [radii[0], radii[1], rz], mat, CYAN3, 0.13)
         s2 = est.sigma2_horizontal()
-        g.line_ring([epos[0], epos[1], 0.25], float(s2), CYAN3, 0.85, width=4.0, n=32)
-        g.line(epos, [epos[0], epos[1], 0.25], CYAN3, 2.0, 0.6)
-        g.line(tp, [tp[0], tp[1], 0.25], WHITE3, 2.0, 0.5)
+        ge, gt = float(sc.ground(epos[0], epos[1])) + 0.3, float(sc.ground(tp[0], tp[1])) + 0.3
+        g.line_ring([epos[0], epos[1], ge], float(s2), CYAN3, 0.85, width=4.0, n=32)
+        g.line(epos, [epos[0], epos[1], ge], CYAN3, 2.0, 0.6)
+        g.line(tp, [tp[0], tp[1], gt], WHITE3, 2.0, 0.5)
         if np.linalg.norm(epos - tp) > 1.0:
             dashed_stroke(g, np.array([tp, epos]), RED3, 4.0, 0.95, 1.5)
 
@@ -366,8 +379,9 @@ class DashView:
                 out.append((pt, "TRUE", (255, 255, 255, 255)))
             if pe is not None:
                 out.append((pe, "ESTIMATE", (0, 217, 255, 255)))
-        for xyz, text, col in ((np.array([sc.pad[0], sc.pad[1], 31.0]), "PAD", (70, 215, 120, 255)),
-                               (np.array([sc.mast[0], sc.mast[1], 9.0]), "UMA-16", (255, 230, 120, 255))):
+        for xyz, text, col in ((np.array([sc.pad[0], sc.pad[1], sc.ground(*sc.pad) + 31.0]), "PAD", (70, 215, 120, 255)),
+                               (np.array([sc.mast[0], sc.mast[1], sc.ground(*sc.mast) + 9.0]), "UMA-16",
+                                (255, 230, 120, 255))):
             p = project(xyz)
             if p is not None:
                 out.append((p, text, col))
@@ -608,21 +622,21 @@ class DashComposer:
         model = sc.model
         g = model.vis.global_
         g.offwidth, g.offheight = max(g.offwidth, width, 1536), max(g.offheight, height, 1536)
-        model.vis.map.znear = min(float(model.vis.map.znear), 0.02 / float(model.stat.extent))  # cameras near the ground
         self.view = DashView(sc)
         self.map = TopDownMap(model, sc.data, map_half_m)
-        self.sr = BaseSceneRenderer(model, width, height)
-        # SceneRenderer brightens the headlight for the Berkeley ortho; the base world has its own sun
-        model.vis.headlight.ambient[:] = [0.22, 0.22, 0.22]
-        model.vis.headlight.diffuse[:] = [0.42, 0.42, 0.42]
-        self.hud = DashHud(width, height)
         self.cams = OnboardCams(model)
+        hl = model.vis.headlight
+        amb, dif = hl.ambient.copy(), hl.diffuse.copy()
+        self.sr = BaseSceneRenderer(model, width, height)
+        hl.ambient[:], hl.diffuse[:] = amb, dif  # SceneRenderer brightens it for the Berkeley ortho; keep the world's
+        self.sr.fog = self.cams.fog = sc.world_name == "farm"  # farm: distance fog hides the edge of the 4 km map
+        self.hud = DashHud(width, height)
         self.fovy = float(g.fovy)
         self.chase = self._new_chase(sc)
         self.overview = False
         self.ov_cam = mujoco.MjvCamera()
         self.ov_cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-        self.cam_every = 4  # frames between two renders of the same onboard camera (one cam every other frame)
+        self.cam_every = 6  # frames between two renders of the same onboard camera (one cam every third frame)
         self.n = 0
         self.times = {"view": 0.0, "cams": 0.0, "hud": 0.0}
 
@@ -669,7 +683,7 @@ class DashComposer:
         # onboard cameras: alternate, each at half the frame rate (a fresh render per frame of both costs ~2x)
         self.n += 1
         ph = self.n % self.cam_every
-        kinds = ("fpv", "down") if self.n <= 2 else (("fpv",) if ph == 0 else ("down",) if ph == 2 else ())
+        kinds = ("fpv", "down") if self.n <= 2 else (("fpv",) if ph == 0 else ("down",) if ph == 3 else ())
         for k in kinds:
             self.cams.render(sc.data, k, tp, sc.true_R)
         t2 = time.perf_counter()
@@ -699,7 +713,7 @@ class DashComposer:
             c = (w // 2, h // 2)
             cv2.drawMarker(img, c, (255, 230, 60), cv2.MARKER_CROSS, int(26 * fs_), 1, cv2.LINE_AA)
         hdg = (90.0 - math.degrees(math.atan2(sc.true_R[1, 0], sc.true_R[0, 0]))) % 360.0
-        txt = f"alt {sc.true_pos[2] - sc.z0:4.0f} m   hdg {hdg:03.0f}"
+        txt = f"{sc.agl():4.0f} m AGL   hdg {hdg:03.0f}"
         cv2.putText(img, txt, (int(8 * fs_), h - int(10 * fs_)), cv2.FONT_HERSHEY_DUPLEX, 0.5 * fs_ * 1.2,
                     (255, 255, 255), 1, cv2.LINE_AA)
         cv2.rectangle(img, (0, 0), (w - 1, h - 1), (175, 125, 255), max(2, int(2 * fs_)))

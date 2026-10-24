@@ -13,23 +13,24 @@ and match the live thermal image against that prediction.
 - The premise holds, with corrections:
   - **Asphalt is the warmest common surface at night**, about 4-8 K above the air at 23:00.
   - **Grass is the coldest**, about 2-5 K below the air.
-  - The asphalt-grass contrast is **5-10 K after a hot clear day** (model + field measurements). That is
-    100-200 times the camera noise (NETD). On mild nights it can be only ~1-3 K (section 6).
+  - The asphalt-grass contrast is **about 5 K measured** (two studies, 22:00 and midnight), **up to ~10 K in my
+    model**, on clear, calm nights after a hot day. Even 5 K is ~100 times the camera noise (NETD). On mild
+    nights the road signal is much weaker (section 6).
 - Corrections to the plan's assumptions:
-  - **Water is warm, not cool.**
+  - **Water is not a cool class.** At night it sits near its daily-mean temperature, usually warmer than grass.
   - **Trees are warmer than lawns.**
   - **Insulated roofs are cold**, not warm. Only heavy concrete roofs stay warm.
   - **Unpaved roads are unreliable.**
-- Real night thermal satellite scenes (ASTER, 23:00 local, 90 m; section 6) at Berkeley, Fresno, Davis and
-  Vinnytsia confirm the physics:
+- Real night thermal satellite scenes (ASTER, ~23:00 local, 90 m, 2001-2006; section 6) at Berkeley, Fresno, Davis
+  and Vinnytsia are **consistent with** the physics:
   - on hot summer nights the paved road grid is plainly visible even at 90 m;
-  - unpaved roads are not warm;
-  - water is warm;
-  - correlating each night image with the road map recovers the satellite's own 100-300 m geolocation error,
-    which is our method in miniature.
-  On mild spring / autumn nights in Berkeley the signal is weak (+0.1-0.7 K at 90 m). **Test the system at reduced
-  contrast too.**
-- Fielded camera-to-map navigation reaches ~10-30 m (vendor claims). The only public night-thermal flight
+  - no evidence that unpaved roads are warm;
+  - the Bay is warmer than the land;
+  - correlating each night image with the road map converges on a consistent ~150-340 m east / south offset,
+    which fits the known ASTER night geolocation error. That is our method in miniature.
+  On mild spring / autumn nights in Berkeley the 90 m road signal is weak (+0.1-0.7 K). **Test the system at
+  reduced contrast too.**
+- Fielded camera-to-map navigation is quoted at ~10-30 m (vendor claims). The only public night-thermal flight
   with a number is < 15 m RMS. Our 5 m target is feasible in simulation only because we fly low (8.7 cm/px)
   over mapped roads; it is ambitious for real life.
 - Recommended matcher for a one-day build:
@@ -49,17 +50,22 @@ Contents: 1 Physics | 2 Real systems | 3 Matching methods | 4 Ukraine | 5 Camera
 
 A surface's temperature follows its energy balance:
 `absorbed sun + absorbed sky longwave = emitted longwave + convection to air + evaporation + conduction into the ground`.
-After sunset the sun term vanishes. On a clear night the sky radiates like a body ~20-30 K colder than the air
-(clear-sky emissivity ~0.75-0.8, Brutsaert 1975 [P1]). So every surface loses roughly 60-100 W/m^2 net longwave,
-and what it can draw from storage decides how cold it gets.
+After sunset the sun term vanishes.
+- On a clear night the broadband sky radiates like a body ~16-21 K colder than the air (clear-sky emissivity
+  ~0.75-0.8, Brutsaert 1975 [P1]).
+- In the 8-14 um window the camera sees, the sky is much colder still. That matters for reflections off
+  low-emissivity surfaces.
+- So every surface loses roughly 60-100 W/m^2 net longwave, and what it can draw from storage decides how cold it
+  gets.
 
 - **Asphalt:**
   - Low albedo (0.05 new to ~0.15-0.2 aged [P2]), so it absorbs 80-95 % of the sunlight.
   - High thermal inertia, `P = sqrt(k rho c)`, of ~1600 J m^-2 K^-1 s^-1/2 (k ~ 1.2 W/m K, rho c ~ 2.1 MJ/m^3 K).
   - The daily heat wave penetrates a damping depth `sqrt(2 kappa / omega)` of ~12 cm.
   - It therefore stores a large amount of heat during the day and conducts it back to the surface all night.
-  - Asaeda et al. (1996) measured asphalt releasing, at the maximum, an extra 150 W/m^2 of infrared and 200 W/m^2
-    of sensible heat compared with bare soil [P3]. Asphalt stores and re-emits more heat than concrete or bare soil.
+  - Asaeda et al. (1996) found that asphalt stores and re-emits more heat than concrete or bare soil. At the
+    (daytime) maximum it emitted an extra 150 W/m^2 of infrared and 200 W/m^2 of sensible heat compared with bare
+    soil [P3].
   - EPA's cool-pavements compendium: conventional pavements store heat in the subsurface and release it at night,
     driving the nighttime urban heat island [P4].
 - **Concrete:** similar thermal inertia but higher albedo (0.25-0.35), so less stored heat. At night it runs
@@ -67,8 +73,9 @@ and what it can draw from storage decides how cold it gets.
 - **Grass / lawn:**
   - The radiating surface is a layer of thin blades with almost no heat capacity.
   - It is insulated from the soil by the air-filled canopy, and it spends its daytime energy on evapotranspiration.
-  - On clear, calm nights it cools well below the air. The grass-minimum thermometer typically reads ~4-6 K below
-    the screen air temperature (Parana, Brazil, average 5 K [P6]).
+  - On clear, calm nights it cools well below the air. On radiative frost nights the grass minimum read on
+    average 5 K (4.2-6.3 K) below the screen air minimum (Parana, Brazil [P6]). At 23 h, before the minimum,
+    expect less.
   - This is the reason "grass frost" forms while the air stays above 0 C [P7].
 - **Trees:**
   - Leaves have no storage but are well coupled to the air (small leaves, both sides ventilated).
@@ -77,19 +84,27 @@ and what it can draw from storage decides how cold it gets.
     grass at night** [P8].
 - **Water:**
   - Sunlight penetrates metres deep and mixing spreads the heat, so the diurnal amplitude is only ~1-2 K.
-  - At night the water surface sits near the daily-mean temperature, warmer than land. "The LST of water bodies
-    at night is higher than that of the land masses" [P9].
+  - At night the water surface sits near its daily-mean temperature, usually warmer than grass and often warmer
+    than land overall. "The LST of water bodies at night is higher than that of the land masses" [P9].
+  - Not always, though. A cold water body can be cooler than the air at 23 h (my Berkeley model has the ~17 C
+    Bay below the air and trees). In Fresno, water was about equal to the town on half the nights (section 6.1).
+    Treat water as "not cool" with large sigma.
 - **Roofs** depend on construction:
   - **Light-weight roofs over insulation** (shingles, membranes) have no heat store under the skin and radiate
-    to the sky. They run several K **below** the air at night: up to ~11 K below ambient for membranes over
-    insulation (NBS/NIST [P10]). The NRCA field tests also found membranes cooling below ambient [P11].
+    to the sky. They run several K **below** the air at night:
+    - 1-6 K below ambient under clear and cloudy skies (roof radiators, Thailand, Khedari et al. 2000 [P19]);
+    - up to ~11 K below ambient for a membrane over insulation on a clear *winter* night (Cullen 1963, via
+      NBS/NIST [P10]);
+    - the NRCA field tests also found membranes cooling below ambient [P11].
   - **Heavy roofs** (concrete slab, gravel ballast) behave like pavement.
-  - **Bare metal** has a low emissivity (0.2-0.6 [P12]), so a thermal camera mostly sees the reflected cold sky.
-    "Unpainted metal roofs have a very low emissivity, causing extremely low gray values in thermal images" [P13].
+  - **Bare metal** has a low emissivity (new galvanized ~0.2, weathered or painted up to ~0.6-0.9 [P12]), so a
+    thermal camera mostly sees the reflected cold sky. It looks cold whatever its temperature.
 - **Dirt and gravel roads:** compacted dry earth sits thermally between asphalt and loose soil, and moisture
-  changes everything (the thermal inertia of soil rises ~5x from dry to wet [U18]). NASA airborne thermal
-  surveys: "roads surfaced with blacktop ... are generally light (warm), while most graded gravel and dirt roads
-  are not recorded on the image, but a few are moderately dark (cool)" [P13]. **Do not count on them.**
+  changes everything (the thermal inertia of soil rises ~5x from dry to wet [U18]).
+  - Early NASA airborne night thermal surveys reportedly show paved roads as bright (warm) lines, while unpaved
+    roads appear faintly or not at all [P13]. These are scanned reports; I could not verify the exact wording.
+  - Section 6.1 finds no evidence that unpaved roads are warm in satellite night data.
+  - **Do not count on them.**
 
 ### 1.2 Typical apparent temperatures at 21 / 23 / 03 h
 
@@ -131,12 +146,14 @@ Checks against measurements:
   - Ghent heatwave drone survey: at 23:00 pavement had cooled by ~30 K from the day but stayed warmer than
     grass (~20 C) [P16].
   - UAV evening survey (20:30): asphalt 33.3 C, water 29.6 C, grass 25.9 C [S-RS].
-  - **My model gives 9.8 K** at 23 h (Berkeley) and 9.2 K (Ukraine), i.e. on the high side of the measurements.
-  - **Team range: 5-10 K.**
-- **Grass below air:** model 3 K at 23 h, measured typical 4-6 K at the night minimum [P6]. Consistent.
-- **Daytime peaks:** model asphalt 55-58 C and lawn 37 C vs measured asphalt ~57 C and lawn ~40 C maximum in a
-  Paris schoolyard study [P17]. Consistent.
-- **Insulated roofs below air:** model -7 K, measured up to -11 K [P10]. Consistent.
+  - **My model gives 9.8 K** at 23 h (Berkeley) and 9.2 K (Ukraine): roughly twice the two measured values.
+  - **Team range: 5-10 K**, where ~5 K is measured and 10 K is model only.
+- **Grass below air:** model 3 K at 23 h; measured on average 5 K (4.2-6.3 K) at the minimum on radiative frost
+  nights [P6]. Plausible.
+- **Daytime peaks:** model asphalt 55-58 C (curve maximum ~14:30 in the figures) and lawn 37 C, vs measured
+  maxima of asphalt ~57 C and lawn ~40 C in a Paris schoolyard study [P17]. Plausible.
+- **Insulated roofs below air:** model -7 K, vs measured 1-6 K below ambient (Khedari [P19]) and up to 11 K on
+  a clear winter night [P10]. The model is on the cold side.
 
 Model limitations:
 - No anthropogenic heat and no traffic.
@@ -153,12 +170,12 @@ Thermal crossover = the times when two materials have the same apparent temperat
 | | 21 h | 23 h | 03 h | crossover |
 |---|---|---|---|---|
 | asphalt - lawn (Berkeley, model) | 11.4 K | 9.8 K | 7.2 K | none (minimum 2.1 K ~1 h after sunrise) |
-| asphalt - trees | 9.8 K | 8.7 K | 6.4 K | none (minimum 2.9 K) |
+| asphalt - trees | 9.8 K | 8.7 K | 6.5 K | none (minimum 2.9 K) |
 | asphalt - dirt road | 5.5 K | 5.4 K | 4.8 K | none (minimum 0.9 K) |
-| asphalt - water (Ukraine pond 24 C) | 8.1 K | 4.5 K | -1.2 K | **~01:50 and ~07:40**: the pond becomes warmer than asphalt late at night |
+| asphalt - water (Ukraine pond 24 C) | 8.1 K | 4.6 K | -1.2 K | **~01:50 and ~07:40**: the pond becomes warmer than asphalt late at night |
 | trees vs lawn, soil vs grass | | | | around sunset / sunrise (Erzurum: soil = grass at 19:00 [P14]) |
 
-So **23:00 (~2.5 h after sunset) is in the stable night regime.** The road contrast is lower than at 21 h but still
+So **23:00 (~2.5 h after sunset in Berkeley, ~2 h in Ukraine) is in the stable night regime.** The road contrast is lower than at 21 h but still
 large, and it keeps decaying slowly until dawn. The worst time for road-vs-vegetation matching is the morning
 transition (~1-2 h after sunrise), not the night.
 
@@ -171,7 +188,7 @@ All runs are Berkeley at 23 h with the energy balance model.
 | clear, calm (base) | 25.6 | 15.8 | 9.8 K | |
 | clear, breeze ~3 m/s (h = 14 W/m^2 K) | 23.2 | 16.8 | **6.4 K** | wind couples every surface to the air; cuts the contrast by about a third |
 | half cloud after a sunny day | 27.6 | 18.4 | 9.2 K | |
-| overcast after a sunny day | 29.6 | 21.0 | 8.6 K | clouds stop the radiative loss; everything stays warmer, contrast survives |
+| overcast after a sunny day | 29.6 | 21.0 | 8.5 K | clouds stop the radiative loss; everything stays warmer, contrast survives |
 | overcast all day and night | - | - | small (est. 1-3 K) | little heat was stored; not modelled |
 | rain | - | - | ~0-2 K | wet surfaces tend toward the wet-bulb temperature; evaporation dominates; contrast collapses for hours |
 
@@ -188,8 +205,8 @@ Full table with 22 entries and URLs: section A of the agent notes, summarized he
 
 | System | Who | Sensor / method | Reported accuracy | Night? |
 |---|---|---|---|---|
-| Raptor Guide + Inertial Labs VINS | Maxar (Vantor) / Inertial Labs | camera frames vs 3D terrain model, 1 Hz fixes into INS | Raptor "< 10 m RMSE"; **night flight, FLIR Boson+, Cessna, ~58 km: < 15 m RMS** [S1]; 18 flights: mean 16.6 m, IR 15.9 m vs day 18.1 m [S2] | **yes** |
-| Vision Aided Navigation | Honeywell | real-time image correlation vs onboard reference maps, visible or IR | 10 m CEP50 (Embraer demo) [S3] | IR claimed |
+| Raptor Guide + Inertial Labs VINS | Maxar (Vantor) / Inertial Labs | camera frames vs textured 3D terrain model (Precision3D), 1 Hz fixes into INS | Raptor "< 10 m RMSE"; **night flight, FLIR Boson+, Cessna, ~58 km: < 15 m RMS** [S1]; 18 flights: mean 16.6 m, IR 15.9 m vs day 18.1 m [S2] | **yes** |
+| Vision Aided Navigation | Honeywell | real-time image correlation vs onboard reference maps | no published figure; "GPS-like performance" (2022 PR) [S3] | n/r |
 | TERCOM + DSMAC | US Navy (Tomahawk) | radar altimeter vs DEM; nadir image vs reference scene (FFT correlation) | ~80 m / ~10 m CEP (secondary sources) [S4] | DSMAC used a strobe |
 | VNav | Palantir (Red Cat Black Widow) | downward view vs onboard satellite imagery + INS | n/r; flown down to 150 ft AGL [S5] | n/r |
 | VPS | Vermeer (US/Ukraine) | up to 4 EO/IR cameras, AI matching to 2D/3D maps | n/r [S6] | training data includes night |
@@ -227,10 +244,11 @@ Ukraine context:
 
 **Takeaways:**
 - (a) Absolute fixes at ~1 Hz into an INS filter is the standard architecture. It is what we have.
-- (b) Fielded systems quote 10-30 m from 150 ft to 2 km AGL with ~1 m/px maps. We fly at 60 m with 8.7 cm/px
-  frames against a 0.5 m/px prior, so metre-level fixes are plausible in simulation.
-- (c) The one documented night thermal flight matched against **3D structure**, not predicted radiometry. This
-  is a hint to lean on geometry (edges, roads, DSM) more than on absolute temperatures.
+- (b) Fielded systems with published numbers quote ~10-30 m (vendor claims), from 150 ft to 2 km AGL with ~1 m/px
+  maps. We fly at 60 m with 8.7 cm/px frames against a 0.5 m/px prior, so metre-level fixes are plausible in
+  simulation.
+- (c) The one documented night thermal flight matched against a **textured 3D model**, not a predicted thermal
+  image. My guess, not a finding: lean on geometry and edges (roads, DSM) more than on absolute temperatures.
 
 ---
 
@@ -253,7 +271,7 @@ already does), so the remaining problem is mainly a 2-D shift inside the EKF 3-s
    - paved roads and parking (OSM with width, paved surface only) warm;
    - lawn and open vegetation (NDVI high, no DSM height) cold;
    - tree canopy (NDVI high, DSM height) mild;
-   - water warm;
+   - water "not cool", with large sigma;
    - roofs as **edges with unknown sign** (or large sigma).
    night-thermal is building this.
 2. Primary matcher: dense gradient-orientation correlation in the 3-sigma window, with the existing gates
@@ -286,8 +304,9 @@ Full notes with every URL: agent notes in the scratchpad, summarized here.
   - public in `s3://copernicus-dem-30m` (verified for Ukrainian tiles) and on Earth Search as `cop-dem-glo-30`.
 - **ESA WorldCover** 10 m (CC BY 4.0, ~75 % overall accuracy) for tree / crop / built masks [U4].
 - **Microsoft building footprints** cover Ukraine (288 tiles) [U5]. Google Open Buildings does **not** [U6].
-- **Landsat thermal**: 100 m native, and L2 surface temperature exists only for daytime scenes [U7], so it is no
-  night reference.
+- **Landsat thermal**: 100 m native. L2 surface temperature exists only for daytime scenes [U7]; night scenes
+  are Level-1 only. Those could be used like the ASTER L1T brightness temperatures in section 6, but they need a
+  USGS or requester-pays AWS account.
 
 ### 4.2 Roads: paved vs unpaved
 - Official (2015) [U8]:
@@ -302,8 +321,8 @@ Full notes with every URL: agent notes in the scratchpad, summarized here.
   - **46-70 % of mapped road km is `track`**;
   - only **~7-12 % is known or likely asphalt**;
   - some `secondary` roads are tagged gravel.
-- War damage: > 25,000 km of roads and 344 bridges damaged or destroyed nationally; no oblast breakdown found
-  [U11].
+- War damage: >= 23,900 km of roads and 304 bridges damaged, destroyed or seized by June 2022 (KSE via CFTS);
+  Wikipedia cites > 25,000 km and 344 bridges, undated. No oblast breakdown found [U11].
 - **Rule for the prior**, from the shares above:
   - warm = `surface` in {asphalt, concrete, concrete:plates, paved, paving_stones, sett};
   - also warm = no tag AND highway in {motorway, trunk, primary, secondary};
@@ -347,19 +366,19 @@ Full notes with every URL: agent notes in the scratchpad, summarized here.
 | Quantity | Value | Note |
 |---|---|---|
 | Sensor | FLIR Boson 640: 640 x 512, 12 um, 8-14 um [C1] | the obvious real part |
-| HFOV 50 deg | Boson 8.7 mm (9.2 mm compact) lens [C1] | VFOV = 2 atan(tan 25 deg x 512/640) = **40.9 deg** |
-| Footprint at 60 m AGL | **56.0 m x 44.7 m** | 2 x 60 x tan 25 deg; at 30 m: 28 x 22 m |
-| Ground sample distance | **8.7 cm/px**, IFOV 1.36 mrad | our prior is 0.5 m/px: downsample the frame ~6x before matching |
+| HFOV 50 deg | Boson 8.7 mm lens (9.2 mm compact / radiometric) [C1] | VFOV = 2 atan(tan 25 deg x 512/640) = **40.9 deg** |
+| Footprint at 60 m AGL | **56.0 m x 44.8 m** | 2 x 60 x tan 25 deg; at 30 m: 28 x 22 m |
+| Ground sample distance | **8.7 cm/px** on flat ground; IFOV 1.46 mrad (pinhole with exactly 50 deg; the real 8.7 mm lens with 12 um pixels gives 1.38 mrad, ~48 deg nominal "50") | our prior is 0.5 m/px: downsample the frame ~6x before matching |
 | NETD | Boson <= 40 mK (industrial), <= 50 (professional), <= 60 (consumer) [C1] | **50 mK is right** |
-| Scene contrast / NETD | 5-10 K / 0.05 K = **100-200** | noise is irrelevant; prior-vs-reality mismatch dominates |
+| Scene contrast / NETD | 5-10 K / 0.05 K = **100-200** (still ~40 at 2 K) | noise is irrelevant; prior-vs-reality mismatch dominates |
 | Absolute accuracy | uncooled: typ. +-5 K or 5 % (general datasheet figure) | **match normalized images, never Kelvin** |
 | Frame rate | 60 Hz baseline, 30 Hz selectable, 9 Hz variant [C1] | we use ~5 Hz |
 | Latency | < 25 ms with AGC [C1] | |
-| Motion blur | bolometer time constant ~10 ms x 8 m/s = ~8 cm = 1 px | negligible |
+| Motion blur | bolometer time constant ~10 ms (typical for microbolometers; not on the Boson page) x 8 m/s = ~8 cm = 1 px | negligible |
 | Atmospheric path, 60 m | << 0.5 K | ignore |
 | Road width in pixels | 9-12 m residential street = 100-140 px; 1.5 m sidewalk = 17 px | |
 | Rectification error | 1 deg attitude error x 60 m = 1.05 m | larger than the matcher error; AHRS tilt matters |
-| Emissivity | asphalt 0.95, concrete 0.92-0.97, grass 0.98, water 0.98-0.99, black / white rubber roofing 0.91 / 0.97, metal roof 0.2-0.6 [P12] | |
+| Emissivity | asphalt 0.95, concrete 0.92-0.97, grass 0.98, water 0.98-0.99, black / white rubber roofing 0.91 / 0.97; metal: new galvanized ~0.2, polished < 0.1, weathered / painted 0.6-0.9 [P12] | |
 
 Verdict:
 - The geometry is good: a 56 m footprint holds 1-2 street widths in a city.
@@ -391,27 +410,33 @@ USGS / AWS account. I skipped them; the steps are in REPORT_night-research.md.
   - 5 cloud or fog;
   - 1 doubtful;
   - 1 covering only the hills.
-- **No clear June-August night scene exists.** Summer nights in Berkeley are mostly under the marine layer, which
-  is itself a finding. The clear nights followed mild spring / autumn days, not the hot day of our scenario.
+- **No usable clear summer scene over the flats.** The one July scene (2006-07-18) covers only the hills.
+  Berkeley's frequent summer marine layer is a known climatological reason for the gap, but these data do not
+  show it. The clear nights followed mild spring / autumn days, not the hot day of our scenario.
 
 ![ASTER night check](night_research/aster_night_berkeley.png)
 
 **Results (4 clear nights, 23:13-23:18 PDT):**
 
 1. **Matching the night image to a road prior works, even at 90 m.**
-   - The delivered night geolocation is off by **~230 m** (image shifted +200 m east, -110 m south).
-   - Correlating the high-passed night temperature with the high-passed road share over shifts of +-450 m finds
-     the offset: **r = -0.13 as delivered -> +0.26 registered** (per scene +0.10 to +0.29).
+   - Correlating the high-passed night temperature with the high-passed road share over shifts of +-450 m
+     converges on one offset for all 4 nights: the delivered images sit **~200 m east and ~110 m south** of the
+     map (~230 m). This fits the known geolocation weakness of TIR-only night scenes (cf. ECOSTRESS [P9]), though
+     there is no independent truth for the offset.
+   - Correcting it raises the correlation from **r = -0.13 to +0.26** (per scene +0.10 to +0.29).
    - The correlation surface is a **north-south ridge**: Berkeley's north-south arterials constrain east-west
      well and north-south weakly. That is the along-road degeneracy we expect in flight (section 3, point 4).
-2. **Roads are warmer at night, but the 90 m signal is small:**
+2. **Road-dense cells are warmer at night, but the 90 m signal is small:**
    - cells with >= 35 % road are **+0.14 to +0.70 K** warmer than cells with < 5 % road;
-   - major-road corridors are **+0.17 to +0.53 K** warmer than low-road cells (n = 309 vs 1778);
-   - on the regression's per-100 % scale, major roads stand out by +0.7 to +1.6 K over minor roads.
-3. **Land-cover classes within the same elevation band differ by less than ~1 K.** Built-up vs tree vs grass
-   at 90 m mixes warm roads with cold roofs and yards (section 1.1), and the classes largely cancel.
-4. **Water is clearly warm: +3.5 to +5.2 K** over the land flats on every clear night. This confirms the
-   correction in section 1.
+   - major-road corridors are **+0.17 to +0.53 K** warmer than low-road cells (n = 309 vs 1778).
+   - A multiple regression (road, major-road, other built-up, tree, grass shares, elevation) is unstable here: the
+     road coefficient is -0.7..-1.1 K and the major-road extra +0.7..+1.6 K per 100 % share. I rely on the binned
+     numbers above.
+3. **Land-cover classes within the same elevation band differ by at most ~1.3 K, mostly < 1 K.** At 90 m
+   built-up vs tree vs grass mixes warm roads with cold roofs and yards (section 1.1), and the classes largely
+   cancel.
+4. **The Bay is warmer than the land by +3.5 to +5.2 K** on every clear night, consistent with "water is not a
+   cool class".
 5. **Terrain matters as much as cover.** On the inversion night the hills are warm, +1.4 K per 100 m of
    elevation; on the other nights -0.04 to -0.25 K per 100 m. Cold-air drainage and inversions are a real
    "unmodelled" signal.
@@ -451,21 +476,31 @@ Summaries: [fresno](night_research/aster_night_fresno_summary.md), [davis](night
   against the fields.
 - The correlation surface has a clean peak plus **grid side lobes** at the arterial spacing. That is periodic
   ambiguity, the reason for the second-peak test.
-- The ASTER night geolocation error is systematic: always ~80-310 m east and 40-160 m south. The road prior finds
-  it every time.
-- **Unpaved roads are not warm.** In Davis and Vinnytsia, cells with unpaved roads (and no paved road) are equal to
-  or 0.5-0.9 K cooler than road-free cells. This supports the "paved only" rule of section 4.2.
-- A 90 m cell with 35-100 % paved road (median ~45 %) that is +1.0-1.9 K warmer implies a pure paved-road contrast
-  of roughly **+2-4 K** before the ASTER blur, more after correcting for it. This is consistent with the lower half
-  of the 5-10 K the model gives for asphalt vs grass; asphalt vs the mixed urban surroundings is naturally less.
-- The Ukrainian September nights are in between (+0.5-0.9 K).
+- Registration converges on a consistent offset: the delivered images always sit ~80-310 m east and 40-160 m
+  south of the map (|offset| ~150-340 m). That fits an ASTER night geolocation error, though there is no
+  independent truth. At Vinnytsia the correlation is weak (r 0.10-0.11), so that shift is less certain.
+- **No evidence that unpaved roads are warm.** In Davis and Vinnytsia, the binned cells with unpaved roads (and no
+  paved road) are -0.9..+0.2 K relative to road-free cells, mostly cooler. The Davis regression gives unpaved
+  +1.2 K per 100 % share, so this is not airtight. It supports the "paved only" rule of section 4.2.
+- Size of the road effect:
+  - the regression's paved-road coefficient (per 100 % share, holding built-up, vegetation and elevation fixed)
+    is Fresno +0.4..+3.9 K, Davis +3.2 K, Vinnytsia +1.2 / +0.3 K;
+  - that is below the 5-10 K my model gives for asphalt vs grass. Pixel mixing and the ASTER blur make the 90 m
+    numbers lower bounds, but I cannot unmix them reliably.
+  - The bins are confounded with town vs farmland. In Davis the step is already +2.1 K in the 3-10 % bin and then
+    flat. In Fresno the "road-free" cells are mostly urban (two thirds of all cells are >= 70 % built), so +1.0-1.4 K
+    is road vs town, not road vs grass.
+- Ukraine, September: one of two nights shows +0.5-0.9 K for road-dense cells; the colder night (5 C) shows none.
+- Water: in Fresno, water was about equal to or slightly cooler than the town on 3 of 6 nights (only 31 cells;
+  canals and ponds). "Not cool", but not reliably the warmest either.
 
 **What it means for us:**
-- **Confirmed on real data:**
+- **Consistent with the physics, on real data:**
   - paved roads are the warm linear features at 23 h;
-  - unpaved roads are not;
-  - water is warm;
+  - no evidence that unpaved roads are warm;
+  - large water bodies (the Bay, the river at Vinnytsia) are warmer than the land;
   - a road prior registers a night thermal image, with real along-road and grid ambiguities.
+  Caveats: 90 m brightness temperatures from 2001-2006, a few scenes per site.
 - **Magnitude:** strong on hot summer nights, weak on mild spring / autumn nights in a marine climate (Berkeley)
   and modest in Ukrainian September. The scenario ("after a hot day") is the favourable case.
 - **Recommendation:** keep one **contrast-scale robustness row** in the eval (truth contrast ~0.4x of the
@@ -478,8 +513,9 @@ Summaries: [fresno](night_research/aster_night_fresno_summary.md), [davis](night
 **Five sentences for the jury**
 1. When GNSS is jammed at night, a drone has no daylight camera to fall back on. Without a fix it drifts by tens
    of metres per minute.
-2. Physics gives us a free night-time map: asphalt soaks up the sun and stays 5-10 degrees warmer than grass for
-   the whole night, so roads glow in a thermal camera while lawns and fields go dark.
+2. Physics gives us a free night-time map: asphalt soaks up the sun and, on clear calm nights after a hot day,
+   stays several degrees warmer than grass all night, so roads glow in a thermal camera while lawns and fields go
+   dark.
 3. Before take-off we turn open daytime data into a prediction of that night-time picture: OpenStreetMap roads with
    their surface type, aerial or Sentinel-2 imagery with its near-infrared band, and the elevation model.
 4. In flight, the drone matches its thermal camera against that prediction a few times per second. It fuses the
@@ -493,12 +529,13 @@ Summaries: [fresno](night_research/aster_night_fresno_summary.md), [davis](night
   - Clouds after a sunny day keep the pavement warm; the contrast stays ~9 K in our model.
   - Wind cuts it by about a third.
   - Rain or a fully overcast day removes most of it.
+  - Real satellite night data agrees: the road grid is plain on hot summer nights and faint on mild ones.
   - That is why the system never depends on thermal alone. When the matcher has no confident answer it gives
     no fix, and the drone continues on IMU + TRN with a growing, honestly displayed uncertainty.
   - In central Ukraine about 1 in 3 July nights is clear.
 - *"How is this different from what militaries already field?"*
   - Fielded systems (Maxar Raptor, Honeywell VAN, Ukrainian optical-nav modules) match camera images to stored
-    imagery or 3D models and quote 10-30 m.
+    imagery or 3D models. Those that publish numbers quote ~10-30 m (vendor claims).
   - The one published night-thermal flight reports < 15 m RMS.
   - We test a narrower idea that needs no thermal reference map: **predict** the night signature from open
     daytime data. We fly low enough (8.7 cm/px) to aim at metre-level fixes, and we report success rates over
@@ -512,8 +549,9 @@ Summaries: [fresno](night_research/aster_night_fresno_summary.md), [davis](night
 **Honest limits**
 - The thermal world is simulated: our truth raster comes from the same physics as our prior, plus perturbations.
   Real cameras add vignetting, drift, non-uniformity, and unmodelled sources (traffic, AC units, wet patches).
-- Night temperatures come from a calibrated 1-D model plus a handful of measurements. A real night survey would
-  certainly differ in the details.
+- Night temperatures come from a 1-D model checked against a handful of measurements; its 10 K asphalt-grass
+  contrast is about twice the two measured values. Satellite night data (90 m) confirms the signs, not the
+  magnitudes. A real night survey would certainly differ in the details.
 - The 5 m target relies on low altitude and on mapped asphalt. Over parks, big roofs or rural fields between roads
   the camera often sees nothing matchable, and accuracy then rests on IMU + TRN.
 - Vendor accuracy figures we cite are claims, not independent tests.
@@ -545,21 +583,22 @@ Physics
 - [P7] Hong Kong Observatory, grass temperature note: https://www.hko.gov.hk/en/wxinfo/news/2006/pre1201e.htm ; Wisconsin frost explainer: https://wxguys.ssec.wisc.edu/?p=1431
 - [P8] Humboldt State GSP 216, interpreting thermal imagery: https://gsp.humboldt.edu/olm/Courses/GSP_216/lessons/thermal/interpreting-imagery.html
 - [P9] Soszynska et al. (2023), A New and Automated Method for Improving Georeferencing in Nighttime Thermal ECOSTRESS Imagery, Sensors 23(11) 5079: https://pmc.ncbi.nlm.nih.gov/articles/PMC10255925/
-- [P10] NBS / NIST, roof membranes over insulation subcooled up to 20 F below ambient: https://nvlpubs.nist.gov/nistpubs/Legacy/IR/nbsir76-987.pdf ; https://firedoc.nist.gov/article/J3cyXYQBWEcjUZEYfZHY
+- [P10] NBS / NIST, roof membranes over insulation subcooled up to 20 F below ambient (Cullen 1963, winter night): https://nvlpubs.nist.gov/nistpubs/Legacy/IR/nbsir76-987.pdf ; https://firedoc.nist.gov/article/J3cyXYQBWEcjUZEYfZHY
 - [P11] NRCA, Dupuis (2011), roof membranes cooling below ambient: https://www.nrca.net/technical/librarydetail/zL87YPHBYXY=
 - [P12] 8-14 um emissivities from lab spectra (asphalt 0.946, grass 0.983, rubber roofing 0.91 / 0.97, metal roof ~0.62): https://arxiv.org/pdf/2001.09191 ; Engineering Toolbox (galvanized steel new 0.23, old 0.88): https://www.engineeringtoolbox.com/emissivity-coefficients-d_447.html
-- [P13] NASA airborne thermal surveys (1969/70), road surfaces and metal roofs in night imagery: https://ntrs.nasa.gov/api/citations/19700029623/downloads/19700029623.pdf ; https://ntrs.nasa.gov/api/citations/19690019016/downloads/19690019016.pdf
+- [P13] NASA airborne thermal surveys (1969/70), scanned reports; road appearance at night as summarized by search results and a reviewer, exact wording not verified: https://ntrs.nasa.gov/api/citations/19700029623/downloads/19700029623.pdf ; https://ntrs.nasa.gov/api/citations/19690019016/downloads/19690019016.pdf
 - [P14] Temperature differences between asphalt concrete, soil and grass surfaces, Erzurum (Atmosfera 2008): https://www.scielo.org.mx/scielo.php?script=sci_arttext&pid=S0187-62362008000200002
 - [P15] Diurnal UAV thermography of urban land covers, Appl. Sci. 15(7) 3448: https://www.mdpi.com/2076-3417/15/7/3448 (night values as reported in the abstract; full text not accessible to me)
 - [P16] Citymesh / VITO heatwave drone survey, Ghent: https://www.citymesh.com/research/heat-measurement-by-drone-team-during-heatwave/?s_lng=en (via search summary; page refused fetch)
 - [P17] OASIS schoolyard paving materials, Paris: https://arxiv.org/pdf/2408.08317
+- [P19] Khedari, Waewsak, Thepa, Hirunlabh (2000), Field investigation of night radiation cooling under tropical climate, Renewable Energy 20(2) 183-193 (roof surfaces 1-6 C below ambient under clear / cloudy skies): https://ideas.repec.org/a/eee/renene/v20y2000i2p183-193.html
 - [P18] Thermal crossover definition: Target Detection over the Diurnal Cycle Using a Multispectral Infrared Sensor, Sensors 17(1) 56: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5298629/
 - [S-RS] UAV evening survey (preprint): https://www.researchsquare.com/article/rs-9761120/v1
 
 Systems
 - [S1] Inertial Labs, GNSS-denied performance of vision-based positioning (night flight, Boson+): https://inertiallabs.com/gnss-denied-performance-of-vision-based-positioning-apnt-solution/
 - [S2] Inertial Labs, VINS flight test performance (18 flights): https://inertiallabs.com/vins-gnss-denied-navigation-flight-test-performance/ ; Maxar Raptor PR: https://maxar.com/press-releases/maxar-launches-raptor-a-first-of-its-kind-software-that-unlocks-next-gen-gps-resilience-for-autonomous-systems
-- [S3] Honeywell alternative navigation: https://www.honeywellaerospace.com/us/en/pages/alternative-navigation-systems
+- [S3] Honeywell alternative navigation (page 404 at review time) and the 2022 press release ("GPS-like performance", no VAN figure): https://www.honeywellaerospace.com/us/en/company/newsroom/2022/04/honeywell-demonstrates-alternative-navigation-capabilities
 - [S4] TERCOM / DSMAC explainer (secondary): https://migflug.com/afterburner/tercom-dsmac-cruise-missile-navigation-gps-denied/
 - [S5] Palantir, The future of drone navigation: https://blog.palantir.com/the-future-of-drone-navigation-7236075fdedf ; https://www.gpsworld.com/red-cat-proves-drone-software-for-gps-denied-navigation/
 - [S6] Vermeer VPS: https://dronelife.com/2025/10/23/vermeer-secures-10-million-series-a-to-advance-gps-free-drone-navigation-for-defense-and-dual-use-applications/ ; https://dronexl.co/2026/05/29/vermeer-gps-free-drone-navigation-ukraine/
@@ -596,7 +635,7 @@ Ukraine
 - [U4] ESA WorldCover: https://esa-worldcover.org/en/data-access
 - [U5] Microsoft building footprints: https://github.com/microsoft/globalmlbuildingfootprints ; https://minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv
 - [U6] Google Open Buildings coverage: https://source.coop/cholmes/google-open-buildings
-- [U7] Landsat C2 L2 surface temperature, day only: https://docs.sentinel-hub.com/api/latest/data/landsat-8-l2/
+- [U7] Landsat C2 L2 surface temperature, day only (page blocked at review; the USGS Landsat FAQ implies night scenes are Level-1 only): https://docs.sentinel-hub.com/api/latest/data/landsat-8-l2/
 - [U8] Ukraine public roads by surface (2015), MPRA 78299: https://mpra.ub.uni-muenchen.de/78299/1/MPRA_paper_78299.pdf ; https://en.wikipedia.org/wiki/Roads_in_Ukraine
 - [U9] Geofabrik taginfo Ukraine: https://taginfo.geofabrik.de/europe:ukraine/
 - [U10] Overpass (maps.mail.ru mirror) length sums in three boxes (own query, 2026-10-24)

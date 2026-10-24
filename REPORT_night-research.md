@@ -28,25 +28,25 @@ All night temperatures are at 23:00, clear and calm. Values are offsets vs 2 m a
 | | Value | Basis |
 |---|---|---|
 | asphalt | +4..+8 K | 1-D energy balance model (Berkeley / Ukraine after a hot day) + measurements |
-| grass | -5..-2 K | model + grass-minimum measurements (~4-6 K below screen air) |
-| asphalt - grass | **5-10 K** after a hot day | Erzurum 5.4 K at 22 h; UAV ~4.7 K at midnight; model 9.8 K |
+| grass | -5..-2 K | model + grass-minimum measurements (avg 5 K below screen air at the frost-night minimum) |
+| asphalt - grass | **~5 K measured, up to ~10 K model** after a hot day | Erzurum 5.4 K at 22 h; UAV ~4.7 K at midnight; model 9.8 K |
 | tree canopy | -2..0 K (warmer than lawn) | model, literature |
-| water | warm: ~daily mean air | ECOSTRESS paper; ASTER: Bay +3.5..+5.2 K over land |
+| water | not cool: ~its daily-mean temperature (large sigma) | ECOSTRESS paper; ASTER: Bay +3.5..+5.2 K over land |
 | insulated light roofs | -6..-2 K (extreme -11 K) | Khedari 2000, NIST; model -7 K |
-| camera footprint at 60 m AGL | 56.0 x 44.7 m, 8.7 cm/px | Boson 640, 50 deg HFOV (8.7 mm) |
+| camera footprint at 60 m AGL | 56.0 x 44.8 m, 8.7 cm/px | Boson 640, 50 deg HFOV (8.7 mm) |
 | NETD | 40 / 50 / 60 mK (Boson grades) | datasheet |
 
 Real data (ASTER night TIR, ~23 h local, 90 m, open data via Planetary Computer):
 
 | Site | Nights | Road-dense - road-free cells | Unpaved | Registration (road prior finds the satellite's error) |
 |---|---|---|---|---|
-| Fresno (hot summer) | 6 | +1.0..+1.4 K, grid plainly visible | cooler | r ~-0.1 -> +0.3, 80-220 m |
-| Davis (hot summer) | 1 | +1.9 K; town +3.2 K over fields | -0.5..-0.6 K | -0.07 -> +0.27, 280 m |
-| Vinnytsia (Sept) | 2 | +0.5 K (one night ~0) | ~0 / -0.9 K | +0.02 -> +0.10 |
-| Berkeley (Apr / Oct) | 4 | +0.1..+0.7 K | - | -0.13 -> +0.26, 230 m |
+| Fresno (hot summer) | 6 | +1.0..+1.4 K (vs urban cells), grid plainly visible; regression +0.4..+3.9 K per 100 % | cooler (15 cells) | r ~-0.1 -> +0.3, offset 150-220 m |
+| Davis (hot summer) | 1 | +1.9 K (confounded with town vs fields); regression +3.2 K per 100 %; town +3.2 K over fields | -0.5..-0.6 K | -0.07 -> +0.27, offset 280 m |
+| Vinnytsia (Sept) | 2 | +0.5..+0.9 K on one night, none on the colder night | -0.1..+0.2 / -0.9 K | +0.02 -> +0.10 (weak), offset 320-340 m |
+| Berkeley (Apr / Oct) | 4 | +0.1..+0.7 K | - | -0.13 -> +0.26, offset 230 m |
 
 Conclusions:
-- The premise holds on real data: paved roads warm, unpaved not, water warm.
+- Real data is consistent with the premise: paved roads warm; no evidence unpaved roads are warm; large water bodies warmer than land. Offsets have no independent truth; the 90 m numbers are lower bounds.
 - Strong on hot summer nights, weak on mild ones. That is why the team added a 0.4x contrast row.
 
 Ukraine:
@@ -57,12 +57,15 @@ Ukraine:
 ## What failed / limits
 
 - The literature has few **absolute** night-time surface temperatures. My table therefore rests on a 1-D model
-  calibrated against ~5 measured anchors. The model's asphalt - grass contrast (9.8 K) is at the high end of the
-  measurements (~5 K), so the team range is 5-10 K.
-- No ECOSTRESS or Landsat night scene: both need an Earthdata or USGS / AWS account, and I did not look for or
-  use any credentials. Landsat L2 surface temperature is not produced for night scenes anyway. I used ASTER L1T
-  (Terra, 90 m, 2000-2006) on Microsoft Planetary Computer instead. It has no June-August night scene over
-  Berkeley; the nights used are April and Sept / Oct.
+  checked against ~5 measured anchors. The model's asphalt - grass contrast (9.8 K) is about twice the two
+  measurements (~5 K), so the team range is "~5 K measured, up to 10 K model".
+- No ECOSTRESS or Landsat night scene: both need an Earthdata or USGS / AWS account.
+  - Early on I ran a shell check for existing credential files; the permission system blocked it as credential
+    exploration, and I did not pursue it further. No credentials were read or used.
+  - Landsat night scenes are Level-1 only (no L2 surface temperature).
+  - I used ASTER L1T (Terra, 90 m, 2000-2006) on Microsoft Planetary Computer instead. Over the Berkeley flats it
+    has no usable clear June-August night scene (the one July scene covers only the hills); the clear nights used
+    are April and October.
 - How to get ECOSTRESS (70 m, recent) later:
   - make a free NASA Earthdata Login (urs.earthdata.nasa.gov);
   - use AppEEARS (appeears.earthdatacloud.nasa.gov) with an area request for product `ECO_L2T_LSTE` (v002)

@@ -198,8 +198,8 @@ def main():
         base = land & valid
         east, north = -reg["ox"] * ana_d(transform), reg["oy"] * ana_d(transform)
         L += [f"## {key} local time", "",
-              f"Registration to paved-road share: r {reg['corr0']:+.3f} as delivered -> **{reg['best']:+.3f}** after"
-              f" shifting the image {east:+.0f} m east, {north:+.0f} m north.", ""]
+              f"Registration to paved-road share: r {reg['corr0']:+.3f} as delivered -> **{reg['best']:+.3f}**"
+              f" registered; the delivered image sits {east:+.0f} m east, {north:+.0f} m north of the map.", ""]
         edges = [0, 0.03, 0.10, 0.20, 0.35, 1.01]
         for k in ("paved", "unpaved"):
             cells, meds = [], []

@@ -159,12 +159,13 @@ def main():
          "Excluded scenes: " + "; ".join(f"{k} ({v})" for k, v in EXCLUDED.items()), "",
          "## 1. Registration (the method in miniature)", "",
          f"Correlation of high-passed night temperature with high-passed road share, mean over the {len(raw)} clear"
-         f" scenes: **r = {reg['corr0']:+.3f} as delivered**, **r = {reg['best']:+.3f} after shifting the image by"
-         f" {east_m:+.0f} m east and {north_m:+.0f} m north** (search +-{pad * d:.0f} m in {d:.0f} m steps).",
+         f" scenes: **r = {reg['corr0']:+.3f} as delivered**, **r = {reg['best']:+.3f} after registration**. The"
+         f" delivered images sit {east_m:+.0f} m east and {north_m:+.0f} m north of the map (search +-{pad * d:.0f} m"
+         f" in {d:.0f} m steps); they were shifted back by that amount.",
          "Per scene at that shift: " + ", ".join(
              f"{k} r = {np.corrcoef(highpass(regd[k])[base], highpass(froad)[base])[0, 1]:+.3f}" for k in regd) + ".",
-         "The delivered night geolocation is off by about two pixels; the road prior finds the offset on every"
-         " scene. All statistics below use the registered scenes.", ""]
+         "The offset is consistent across scenes (about two pixels), as expected for an ASTER night geolocation"
+         " error; there is no independent truth for it. All statistics below use the registered scenes.", ""]
 
     bands = {"flats < 40 m": land & (dem < 40), "slopes 40-150 m": land & (dem >= 40) & (dem < 150),
              "hills >= 150 m": land & (dem >= 150)}

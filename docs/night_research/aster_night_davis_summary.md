@@ -4,7 +4,7 @@ bbox (-121.81, 38.515, -121.68, 38.575); band 13 brightness temperature, 90 m; r
 
 ## 2006-07-18 23:13 local time
 
-Registration to paved-road share: r -0.072 as delivered -> **+0.274** after shifting the image +260 m east, -100 m north.
+Registration to paved-road share: r -0.072 as delivered -> **+0.274** registered; the delivered image sits +260 m east, -100 m north of the map.
 
 - paved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 22.52 (n=3819) | 24.63 (n=316) | 24.59 (n=715) | 24.86 (n=269) | 24.46 (n=185)
 - unpaved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 22.60 (n=3489) | 22.14 (n=183) | 21.96 (n=145) | - (n=2) | - (n=0)

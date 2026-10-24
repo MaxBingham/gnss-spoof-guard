@@ -6,9 +6,9 @@ Excluded scenes: 2006-07-18 (covers only the hills); 2006-04-04 (broken cloud); 
 
 ## 1. Registration (the method in miniature)
 
-Correlation of high-passed night temperature with high-passed road share, mean over the 4 clear scenes: **r = -0.133 as delivered**, **r = +0.258 after shifting the image by +200 m east and -110 m north** (search +-450 m in 10 m steps).
+Correlation of high-passed night temperature with high-passed road share, mean over the 4 clear scenes: **r = -0.133 as delivered**, **r = +0.258 after registration**. The delivered images sit +200 m east and -110 m north of the map (search +-450 m in 10 m steps); they were shifted back by that amount.
 Per scene at that shift: 2004-04-30 r = +0.288, 2004-04-07 r = +0.242, 2003-10-30 r = +0.103, 2003-10-21 r = +0.249.
-The delivered night geolocation is off by about two pixels; the road prior finds the offset on every scene. All statistics below use the registered scenes.
+The offset is consistent across scenes (about two pixels), as expected for an ASTER night geolocation error; there is no independent truth for it. All statistics below use the registered scenes.
 
 ## 2. Land cover inside elevation bands
 

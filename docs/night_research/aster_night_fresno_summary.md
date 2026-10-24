@@ -4,7 +4,7 @@ bbox (-119.86, 36.7, -119.72, 36.8); band 13 brightness temperature, 90 m; roads
 
 ## 2001-06-11 23:15 local time
 
-Registration to paved-road share: r -0.080 as delivered -> **+0.311** after shifting the image +190 m east, -90 m north.
+Registration to paved-road share: r -0.080 as delivered -> **+0.311** registered; the delivered image sits +190 m east, -90 m north of the map.
 
 - paved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 18.18 (n=10572) | 18.63 (n=584) | 18.67 (n=1807) | 19.13 (n=1165) | 19.57 (n=761)
 - unpaved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 18.18 (n=10555) | 17.47 (n=15) | - (n=2) | - (n=0) | - (n=0)
@@ -13,7 +13,7 @@ Registration to paved-road share: r -0.080 as delivered -> **+0.311** after shif
 
 ## 2002-06-14 23:07 local time
 
-Registration to paved-road share: r -0.073 as delivered -> **+0.293** after shifting the image +190 m east, -80 m north.
+Registration to paved-road share: r -0.073 as delivered -> **+0.293** registered; the delivered image sits +190 m east, -80 m north of the map.
 
 - paved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 20.68 (n=10523) | 21.00 (n=584) | 21.02 (n=1806) | 21.47 (n=1162) | 21.74 (n=761)
 - unpaved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 20.69 (n=10506) | 19.56 (n=15) | - (n=2) | - (n=0) | - (n=0)
@@ -22,7 +22,7 @@ Registration to paved-road share: r -0.073 as delivered -> **+0.293** after shif
 
 ## 2002-07-16 23:07 local time
 
-Registration to paved-road share: r -0.079 as delivered -> **+0.310** after shifting the image +190 m east, -70 m north.
+Registration to paved-road share: r -0.079 as delivered -> **+0.310** registered; the delivered image sits +190 m east, -70 m north of the map.
 
 - paved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 23.68 (n=10522) | 23.98 (n=584) | 24.03 (n=1805) | 24.57 (n=1162) | 24.89 (n=761)
 - unpaved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 23.68 (n=10505) | 21.85 (n=15) | - (n=2) | - (n=0) | - (n=0)
@@ -31,7 +31,7 @@ Registration to paved-road share: r -0.079 as delivered -> **+0.310** after shif
 
 ## 2003-07-28 22:59 local time
 
-Registration to paved-road share: r -0.125 as delivered -> **+0.330** after shifting the image +190 m east, -120 m north.
+Registration to paved-road share: r -0.125 as delivered -> **+0.330** registered; the delivered image sits +190 m east, -120 m north of the map.
 
 - paved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 25.58 (n=10504) | 25.89 (n=583) | 25.92 (n=1805) | 26.33 (n=1161) | 26.66 (n=761)
 - unpaved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 25.58 (n=10487) | 24.14 (n=15) | - (n=2) | - (n=0) | - (n=0)
@@ -40,7 +40,7 @@ Registration to paved-road share: r -0.125 as delivered -> **+0.330** after shif
 
 ## 2005-07-08 23:06 local time
 
-Registration to paved-road share: r -0.019 as delivered -> **+0.333** after shifting the image +220 m east, -40 m north.
+Registration to paved-road share: r -0.019 as delivered -> **+0.333** registered; the delivered image sits +220 m east, -40 m north of the map.
 
 - paved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 22.79 (n=10516) | 23.13 (n=584) | 23.15 (n=1805) | 23.49 (n=1163) | 23.79 (n=761)
 - unpaved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 22.79 (n=10499) | 21.91 (n=15) | - (n=2) | - (n=0) | - (n=0)
@@ -49,7 +49,7 @@ Registration to paved-road share: r -0.019 as delivered -> **+0.333** after shif
 
 ## 2005-07-24 23:06 local time
 
-Registration to paved-road share: r +0.001 as delivered -> **+0.317** after shifting the image +80 m east, -130 m north.
+Registration to paved-road share: r +0.001 as delivered -> **+0.317** registered; the delivered image sits +80 m east, -130 m north of the map.
 
 - paved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 25.27 (n=10549) | 25.70 (n=584) | 25.67 (n=1807) | 26.23 (n=1163) | 26.65 (n=761)
 - unpaved road share bins ['0-3 %', '3-10 %', '10-20 %', '20-35 %', '35-100 %']: 25.27 (n=10532) | 24.35 (n=15) | - (n=2) | - (n=0) | - (n=0)

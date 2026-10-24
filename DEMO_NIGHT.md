@@ -75,7 +75,8 @@ What to point at:
   terrain matching and tells you honestly how uncertain it is."
 - Result (simulation, 20 flights per mission, GNSS off from 20 % of the route): "20 of 20 flights end within 5 m
   of B in Berkeley, 20 of 20 over the hills, 20 of 20 in the Ukraine mission, typically 1-2 m. Without the thermal
-  camera, the same drone gets 0 of 20 in Ukraine." (Table: REPORT_night-demo.md; simulated thermal world.)
+  camera, the same drone got 0 of 20 in Ukraine (measured before the last estimator fix)." (Table:
+  REPORT_night-demo.md; simulated thermal world.)
 
 Real-data backing (night-research NIGHT_NOTES v4, merged here: docs/NIGHT_RESEARCH.md, docs/night_research/): ASTER satellite
 night thermal (90 m, ~23:00) shows the paved road grid on hot summer nights (Fresno, 6 nights Jun-Jul; Davis July

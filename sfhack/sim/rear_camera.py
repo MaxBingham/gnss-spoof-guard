@@ -61,6 +61,7 @@ class RearCameraModel:
     read_noise_dn: float = 1.5
     shot_gain: float = 0.25  # DN per photo-electron (shot noise std = sqrt(signal * gain))
     background_gain: float = 0.05  # MuJoCo RGB -> night NIR DN (0 = no background render)
+    background_every_s: float = 0.5  # the faint background is re-rendered this often (a full-scene render ~50 ms)
     hot_pixels: int = 25
 
 
@@ -89,6 +90,11 @@ class RearCamera:
         self.last_truth: list[dict[str, Any]] = []
         ys, xs = np.mgrid[0:height, 0:width]
         self._grid = (xs.astype(np.float32), ys.astype(np.float32))
+        # temporal noise: a bank of unit-normal frames, picked and shifted at random (fresh draws cost ~8 ms)
+        self.noise_bank = self.rng.normal(0.0, 1.0, (6, height, width)).astype(np.float32)
+        self._bg: np.ndarray | None = None
+        self._bg_t = -math.inf
+        self._occ: dict[str, tuple[np.ndarray, bool]] = {}  # light id -> (camera position, occluded): rays ~0.6 ms
 
     def _model_tilt(self) -> float:
         R = np.zeros(9)
@@ -117,7 +123,10 @@ class RearCamera:
         img = np.full((self.h, self.w), p.dark_dn, np.float32)
         mujoco.mj_camlight(self.model, data)  # the camera pose after a gimbal move (cam_xpos / cam_xmat)
         if renderer is not None and p.background_gain > 0:
-            img += self._background(data, renderer)
+            t = float(data.time)
+            if self._bg is None or not (0.0 <= t - self._bg_t < p.background_every_s):
+                self._bg, self._bg_t = self._background(data, renderer), t
+            img += self._bg
         cam_pos = data.cam_xpos[self.cam_id].copy()
         R_wc = data.cam_xmat[self.cam_id].reshape(3, 3) @ CV_FROM_MJ  # columns: cam axes in world
         K = self.K
@@ -136,7 +145,7 @@ class RearCamera:
             if not (-10 <= u < self.w + 10 and -10 <= v < self.h + 10):
                 continue
             rec["in_view"] = True
-            if self._occluded(data, cam_pos, d, rng):
+            if self._occluded(data, cam_pos, d, rng, e["id"]):
                 rec["occluded"] = True
                 continue
             flux_on = p.flux_1km * e["I_on"] / (rng / 1000.0) ** 2 * math.exp(-3.0 * rng / 1000.0 / p.visibility_km)
@@ -146,9 +155,14 @@ class RearCamera:
             flux = flux_on * e["I"] / max(e["I_on"], 1e-12)
             rec["peak_dn"] = flux / (2 * math.pi * p.psf_sigma_px ** 2)
             self._splat(img, u, v, flux)
-        # noise: shot + read, hot pixels; quantise
-        sig = np.maximum(img, 0.0)
-        img = img + self.rng.normal(0.0, 1.0, img.shape).astype(np.float32) * np.sqrt(sig * p.shot_gain + p.read_noise_dn ** 2)
+        # noise: read + shot (sqrt of the signal; exact in the spots, the dark background's level elsewhere)
+        k = int(self.rng.integers(len(self.noise_bank)))
+        nz = np.roll(self.noise_bank[k], (int(self.rng.integers(self.h)), int(self.rng.integers(self.w))), axis=(0, 1))
+        floor = float(np.sqrt(max(float(img.mean()), 0.0) * p.shot_gain + p.read_noise_dn ** 2))
+        bright = img > 4.0 * p.dark_dn + 20.0
+        img = img + nz * floor
+        if bright.any():
+            img[bright] += nz[bright] * np.sqrt(img[bright] * p.shot_gain)
         img[self.hot[0], self.hot[1]] += self.hot[2]
         return np.clip(img, 0, 255).astype(np.uint8)
 
@@ -166,10 +180,15 @@ class RearCamera:
             xs, ys = self._grid[0][y0:y1, x0:x1], self._grid[1][y0:y1, x0:x1]
             img[y0:y1, x0:x1] += peak * np.exp(-((xs + 0.5 - u) ** 2 + (ys + 0.5 - v) ** 2) / (2 * s * s))
 
-    def _occluded(self, data: mujoco.MjData, cam_pos: np.ndarray, d: np.ndarray, rng: float) -> bool:
+    def _occluded(self, data: mujoco.MjData, cam_pos: np.ndarray, d: np.ndarray, rng: float, key: str) -> bool:
+        c = self._occ.get(key)
+        if c is not None and float(np.linalg.norm(c[0] - cam_pos)) < 1.0:  # re-cast after 1 m of camera motion
+            return c[1]
         geomid = np.zeros(1, np.int32)
         hit = mujoco.mj_ray(self.model, data, cam_pos, d / rng, self.group_mask, 1, self.body_id, geomid)
-        return 0.0 <= hit < rng - 1.0
+        occ = 0.0 <= hit < rng - 1.0
+        self._occ[key] = (cam_pos.copy(), occ)
+        return occ
 
     def _background(self, data: mujoco.MjData, r: mujoco.Renderer) -> np.ndarray:
         r.update_scene(data, camera=self.cam_id, scene_option=self.scene_opt)

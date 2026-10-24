@@ -43,7 +43,7 @@ MATERIALS: list[Material] = [
     # insulation, so they cool below air at night), ballasted / concrete-topped roofs keep their heat
     Material("roof_dark", ((0.01, 0.17, 1.0e6), (0.03, 0.5, 1.5e6), (0.08, 0.04, 4e4), (0.15, 1.4, 2.0e6)), 0.10, 0.93,
              bottom="indoor", prior_sigma_K=3.5),
-    Material("roof_light", ((0.002, 0.2, 1.5e6), (0.015, 0.25, 0.9e6), (0.06, 0.035, 4e4), (0.05, 1.0, 2.0e6)), 0.65, 0.90,
+    Material("roof_light", ((0.002, 0.2, 1.5e6), (0.03, 0.5, 1.5e6), (0.08, 0.04, 4e4), (0.15, 1.4, 2.0e6)), 0.55, 0.90,
              bottom="indoor", prior_sigma_K=3.5),
     Material("roof_gravel", ((0.05, 0.7, 1.6e6), (0.15, 1.4, 2.0e6), (0.08, 0.04, 4e4)), 0.20, 0.93,
              bottom="indoor", prior_sigma_K=3.5),

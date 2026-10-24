@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 
 
@@ -36,6 +37,35 @@ class ThermalPrior:
         """ENU (..., 2) -> continuous (col, row), integer = cell centre."""
         xy = np.asarray(xy, float)
         return np.stack([(xy[..., 0] - self.min_x) / self.res - 0.5, (self.max_y - xy[..., 1]) / self.res - 0.5], -1)
+
+
+    def ground_points(self, pos_xy: np.ndarray, agl_m: float, intrinsics: dict[str, float],
+                      yaw: float | None = None, R: np.ndarray | None = None, step: int = 1) -> np.ndarray:
+        """ENU (h // step, w // step, 2) where each camera pixel's ray meets flat ground agl_m below.
+        Camera convention = sfhack.thermal.camera / MuJoCo "down": image top = forward, right = right.
+        Either `yaw` (nadir camera, level drone) or `R` (3x3 camera-to-world, columns = camera x (right),
+        y (image up), z (backward), the MuJoCo cam_xmat convention, e.g. from the AHRS attitude)."""
+        k = intrinsics
+        u = (np.arange(0, int(k["w"]), step) + 0.5 - k["cx"]) / k["fx"]
+        v = (np.arange(0, int(k["h"]), step) + 0.5 - k["cy"]) / k["fy"]
+        U, V = np.meshgrid(u, v)
+        if R is None:
+            c, s = np.cos(yaw or 0.0), np.sin(yaw or 0.0)
+            R = np.array([[s, c, 0.0], [-c, s, 0.0], [0.0, 0.0, 1.0]])  # x = right, y = forward, z = up
+        rays = np.stack([U, -V, -np.ones_like(U)], -1) @ np.asarray(R, float).T
+        t = agl_m / np.maximum(-rays[..., 2], 1e-6)
+        return np.asarray(pos_xy, float)[:2] + rays[..., :2] * t[..., None]
+
+    def predict_view(self, pos_xy: np.ndarray, agl_m: float, intrinsics: dict[str, float], yaw: float | None = None,
+                     R: np.ndarray | None = None, step: int = 2) -> tuple[np.ndarray, np.ndarray]:
+        """The image the drone expects from this pose (flat-ground projection of the prior): (temp_K, sigma_K),
+        each (h // step, w // step). Outside the map: nan."""
+        uv = self.to_px(self.ground_points(pos_xy, agl_m, intrinsics, yaw, R, step)).astype(np.float32)
+        t = cv2.remap(self.temp_K, uv[..., 0], uv[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                      borderValue=float("nan"))
+        sg = cv2.remap(self.sigma_K, uv[..., 0], uv[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                       borderValue=float("nan"))
+        return t, sg
 
 
 def load_prior(path: str | Path) -> ThermalPrior:

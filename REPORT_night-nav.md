@@ -16,6 +16,9 @@ Night 23:00, 60 m AGL, GNSS completely off from 20 % of the route, 20 seeds each
 | ukraine-1 (1870 m) | **18/20** | 70-97 % | 1.2 / 4143 (2 runaways) | 12/20 | 0/20 |
 | all | **58/60** | 89-99 % | | 51/60 | 10/60 |
 
+Sanity check on night-thermal's final data (traffic, contrast 0.7), 2 seeds each: berkeley 2/2, hill 2/2,
+ukraine-1 1/2.
+
 Mild night (true scene contrast 0.4x, prior unchanged): berkeley 20/20, m-c804bb84 20/20 (median 0.6 / 0.8 m).
 
 Default = `grad` (gradient-orientation NCC of the rectified thermal frame vs the predicted thermal map) +

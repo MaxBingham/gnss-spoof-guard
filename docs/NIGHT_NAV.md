@@ -117,6 +117,12 @@ as in night-research's ASTER notes, while the prior keeps the full model contras
 Normalized gradient matching does not care about the amplitude (NETD 50 mK is far below 2 K); what matters is
 that the structure is where the prior says. (ukraine-1 at 0.4x not run: time.)
 
+Sanity check on night-thermal's FINAL data (moving traffic, truth contrast 0.7, rebuilt 01:17; the live mission
+folders, latest camera code, this branch at 4e2f977), only 2 seeds each: berkeley 2/2 (0.1 / 0.4 m), m-c804bb84
+2/2 (0.8 / 1.4 m), ukraine-1 1/2 (0.8 m; seed 1 ran away). Consistent with the frozen-data table, too few seeds
+for more. night-demo's final eval runs the full 20 seeds on that data (with this branch at 4904433, i.e. before
+the gyro-bias fix).
+
 ### Stage 1: method comparison (before the gyro-bias fix)
 
 | mission | row | within 5 m | 95 % Wilson CI | error at B median / max (m) | runaways | thermal fixes accepted / flight |

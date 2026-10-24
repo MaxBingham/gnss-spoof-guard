@@ -3,6 +3,21 @@
 Agent night-thermal, night of 2026-10-23 -> 24. Task: thermal world model (truth + onboard prior) and the
 simulated downward LWIR camera, per the interface contract in NIGHT_PLAN.md. Details: `docs/THERMAL_MODEL.md`.
 
+## Team result that uses this work (from night-demo's REPORT_night-demo.md, branch night-demo 52621e3)
+
+Final 20-seed eval: night 23:00, 60 m AGL, GNSS completely off from 20 % of the route. It ran on a frozen copy
+of my final thermal build (01:17; moving traffic on, truth contrast 0.7).
+
+| Mission | Thermal + IMU + TRN (final build): within 5 m of B | IMU + TRN only (no thermal) |
+| --- | --- | --- |
+| berkeley | 20/20 (Wilson 95 % CI 84-100 %), mean 0.4 m | 19/20 |
+| m-c804bb84 | 20/20 (84-100 %), mean 0.9 m | 11/20 |
+| ukraine-1 | 20/20 (84-100 %), mean 1.9 m | 0/20 |
+
+Mild night: their "low_contrast" row is 0.4 x my 0.7, i.e. 0.28 effective. Final build: berkeley 18/20,
+ukraine-1 19/20. The berkeley losses were overconfident fixes; night-demo's next step is a contrast-aware fix
+covariance. Numbers and caveats are night-demo's; see their report.
+
 ## What works
 
 - `python -m sfhack.thermal build --mission <id> [--hour 23] [--season summer] [--seed 0] [--contrast 0.7]`

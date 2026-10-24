@@ -68,6 +68,22 @@ crosswind with gusts; +24 s camera lost; +34 s camera back and weather clears wh
 dragging. From t = 25 s (seed 0) the naive baseline lands about 120 m from B with 2σ near 1.2 m and health
 NOMINAL throughout.
 
+## Night flight (GNSS off, thermal camera)
+
+Built the night before the hackathon (see the disclosure in REPORT_night-demo.md). 23:00, clear summer night:
+the X2 flies A -> B at 60 m AGL, key N removes GNSS completely, and it navigates on IMU, baro, rangefinder,
+TRN and a downward thermal camera matched against a thermal map predicted from daytime data.
+
+```
+uv run python demos/demo_live.py --mission ukraine-1 --night                 # N = GNSS off / on
+uv run python demos/demo_live.py --mission berkeley --night --cruise-agl 60
+uv run python demos/30_night_eval.py --seeds 20                              # % within 5 m of B, Wilson 95 % CI
+```
+
+Details: [docs/NIGHT_DEMO.md](docs/NIGHT_DEMO.md) (viewer, route choice), [DEMO_NIGHT.md](DEMO_NIGHT.md)
+(what to click and say), docs/THERMAL_MODEL.md (night-thermal), docs/NIGHT_NAV.md (night-nav). Missions outside
+the US (Sentinel-2 + Copernicus DEM): docs/MAP_PACKAGE.md, "Outside the US".
+
 ## Mission planner (any A / B)
 
 Pick A and B on a map, download open data, build the simulated world and the onboard map package,

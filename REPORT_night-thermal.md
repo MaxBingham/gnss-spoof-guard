@@ -40,6 +40,12 @@ simulated downward LWIR camera, per the interface contract in NIGHT_PLAN.md. Det
   view over +-15 m at 60 m AGL. Zero-mean NCC peak within 2 m: 87 % (berkeley), 83 % (hill), 69 % (ukraine-1)
   of frames. With gradient magnitudes: 60 / 67 / 80 %. The numbers are unchanged at contrast 0.4. Failures are
   over big roofs and forest.
+- **Integration QA (01:25)**: a scratch merge of night-thermal daf5917 + night-nav 4904433 passes all 71 tests;
+  one berkeley night flight through `demos/21_night_eval.py --renderer full` (GNSS off at 20 %, 60 m AGL, seed 0):
+  - method grad: thermal 48 ms per frame, 340 / 346 fixes accepted, error at B 0.3 m (estimate error mean 0.9 m,
+    max 3.1 m);
+  - IMU + TRN only: 0.7 m at B (max 6.9 m).
+  One seed only; night-demo's 20-seed eval is the real number.
 - Onboard helpers: `load_prior`, `ThermalPrior.predict_view` (expected image from a pose; agrees with the
   camera, corr > 0.95 at 3 yaws). `load_truth(contrast=)` for mild-night rows without rebuilding.
 - NIR: berkeley and m-c804bb84 got `world/nir.png` + `onboard/nir.png` (NAIP band 4), added once. New missions

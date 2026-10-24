@@ -42,6 +42,7 @@ from .shading import sky_view, sun_exposure
 
 RES = 0.5
 FORMAT = "sfhack-thermal/1"
+UNTAGGED_PAVED_P = 0.4  # outside the US: share of minor roads without a surface tag that are paved (truth draw)
 
 
 # ------------------------------------------------------------------------------------------------ inputs
@@ -186,21 +187,20 @@ def solar_hour(clock_hour: float, lon: float, season: str) -> tuple[float, float
 
 def temperature_map(cls: np.ndarray, exposure: np.ndarray, svf: np.ndarray, table: np.ndarray,
                     exps: np.ndarray, svfs: np.ndarray) -> np.ndarray:
-    """Per pixel: bilinear in (exposure, svf) of the class's (n_exp, n_svf) table."""
-    e = np.clip(exposure, exps[0], exps[-1])
-    s = np.clip(svf, svfs[0], svfs[-1])
+    """Per pixel: bilinear in (exposure, svf) of the class's (n_exp, n_svf) table (float32, per class)."""
+    e = np.clip(exposure, exps[0], exps[-1]).astype(np.float32)
+    s = np.clip(svf, svfs[0], svfs[-1]).astype(np.float32)
     ie = np.clip(np.searchsorted(exps, e, side="right") - 1, 0, len(exps) - 2)
     is_ = np.clip(np.searchsorted(svfs, s, side="right") - 1, 0, len(svfs) - 2)
-    fe = (e - exps[ie]) / (exps[ie + 1] - exps[ie])
-    fs = (s - svfs[is_]) / (svfs[is_ + 1] - svfs[is_])
-    t = table[cls]  # (rows, cols, n_exp, n_svf)
-    r = np.arange(cls.shape[0])[:, None]
-    c = np.arange(cls.shape[1])[None, :]
-    v00 = t[r, c, ie, is_]
-    v01 = t[r, c, ie, is_ + 1]
-    v10 = t[r, c, ie + 1, is_]
-    v11 = t[r, c, ie + 1, is_ + 1]
-    return ((1 - fe) * ((1 - fs) * v00 + fs * v01) + fe * ((1 - fs) * v10 + fs * v11)).astype(np.float32)
+    fe = ((e - exps[ie]) / (exps[ie + 1] - exps[ie])).astype(np.float32)
+    fs = ((s - svfs[is_]) / (svfs[is_ + 1] - svfs[is_])).astype(np.float32)
+    out = np.zeros(cls.shape, np.float32)
+    for k in np.unique(cls):
+        m = cls == k
+        t = table[int(k)].astype(np.float32)
+        i, j, a, b = ie[m], is_[m], fe[m], fs[m]
+        out[m] = (1 - a) * ((1 - b) * t[i, j] + b * t[i, j + 1]) + a * ((1 - b) * t[i + 1, j] + b * t[i + 1, j + 1])
+    return out
 
 
 def _up2(a: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -330,9 +330,13 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     # material classes: truth from world/, prior from onboard/ (5 % of minor OSM ways unknown onboard)
     chm = canopy_height(mdir, g1, grid)
     info["canopy"] = "lidar" if chm is not None else "spectral"
-    cm_t = classify(w_rgb, w_nir, grid, osm, origin, w_lm, rng=np.random.default_rng(1), chm=chm)
+    us = any(k in wman["ortho"].get("source", "") for k in ("NAIP", "USGS"))
+    native = float((wman.get("nir") or {}).get("native_res_m", 0.6 if us else 10.0))
+    region = {"untagged_paved_p": None if us else UNTAGGED_PAVED_P, "coarse": native > 2.0}
+    info.update({"region": "us" if us else "intl", "imagery_native_res_m": native})
+    cm_t = classify(w_rgb, w_nir, grid, osm, origin, w_lm, rng=np.random.default_rng(1), chm=chm, truth=True, **region)
     cm_p = classify(o_rgb, o_nir, grid, osm, origin, o_lm, drop_minor_frac=0.05, rng=np.random.default_rng(seed + 2),
-                    chm=chm)
+                    chm=chm, **region)
     log(f"  classes: truth {cm_t.stats['class_frac']}")
 
     # shading on 1 m DSMs
@@ -371,7 +375,7 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
     nb = int(cm_t.bldg_id.max()) + 2
     truth += np.where(cm_t.bldg_id >= 0, rng.normal(0, 1.0, nb)[cm_t.bldg_id], 0.0).astype(np.float32)
     ns = max(len(cm_t.roads_json), 1) + 1
-    truth += np.where(cm_t.seg_id >= 0, rng.normal(0, 0.8, ns)[cm_t.seg_id], 0.0).astype(np.float32)
+    truth += np.where(cm_t.seg_id >= 0, rng.normal(0, 1.0, ns)[cm_t.seg_id], 0.0).astype(np.float32)
     truth += rng.normal(0, 0.5, len(MATERIALS)).astype(np.float32)[truth_cls]
     truth += smooth_noise(grid.shape, 40.0, 0.6, rng)
     truth += smooth_noise(grid.shape, 2.0, 0.3, rng) + rng.normal(0, 0.2, grid.shape).astype(np.float32)
@@ -386,7 +390,7 @@ def build_thermal(mission_dir: str | Path, hour: float = 23.0, season: str = "su
         n_wet = max(3, int(10 * area_km2))
         wet = _blobs(grid, centers(n_wet), rng.uniform(3, 10, (n_wet, 2)), -rng.uniform(2, 4, n_wet))
         n_sh = max(5, int(40 * area_km2))
-        shade = _blobs(grid, centers(n_sh), rng.uniform(4, 9, (n_sh, 2)), -rng.uniform(0.8, 2.0, n_sh))
+        shade = _blobs(grid, centers(n_sh), rng.uniform(4, 12, (n_sh, 2)), -rng.uniform(2.0, 4.5, n_sh))
         truth += np.where(paved, wet + shade, 0.0).astype(np.float32)
         info.update({"wet_patches": n_wet, "shade_patches": n_sh})
     # rooftop HVAC units (warm)

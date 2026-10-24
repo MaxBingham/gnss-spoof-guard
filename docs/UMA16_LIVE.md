@@ -29,6 +29,7 @@ The engine tracker needs ~3 s of steady harmonics; a clap is a 10 ms burst. `dem
 ```
 python demos/44_uma16_clap.py --north 0 --truth-az <sim bearing of B>   # calibrate: 3-5 claps from the B corner
 python demos/44_uma16_clap.py --north <suggested_north>                 # demo: clap 2-3 times, then take off
+python demos/44_uma16_clap.py --north <suggested_north> --udp <sim-laptop-ip>   # MVP: live to demos/50_base_3d.py
 ```
 
 The sim sets point B's compass bearing from the base; clapping from the stage corner that stands for B with

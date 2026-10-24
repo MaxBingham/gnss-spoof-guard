@@ -3,10 +3,12 @@
     python demos/44_uma16_clap.py --north 0                         # LIVE: array flat, mics up, +x axis -> north
     python demos/44_uma16_clap.py --north 0 --truth-az 135          # stage calibration: clap from a known bearing
     python demos/44_uma16_clap.py --file rec.wav --fast             # same on a 16-ch WAV (e.g. a session.wav)
+    python demos/44_uma16_clap.py --north 0 --udp 192.168.1.20      # MVP: every bearing to the sim laptop
 
 Keep quiet for the first second (noise floor), then clap 2-3 times from point B. Every accepted clap prints its
 compass bearing and rewrites `bearing.json` (BearingEstimate, label "clap") with the circular mean of the claps
-of the last `--memory` seconds; the mission reads it before takeoff (`demo_recon.py --bearing ...`).
+of the last `--memory` seconds; the mission reads it before takeoff (`demo_recon.py --bearing ...`). With
+`--udp host[:port]` the same JSON goes to `demos/50_base_3d.py` (port 5005), which launches or retargets the drone.
 
 Stage calibration: in the sim, point B sits at some compass bearing from the base. Clap from the stage corner
 that stands for B with `--truth-az <that bearing>`; the summary prints `suggested_north`, the --north that maps
@@ -17,6 +19,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import socket
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -50,6 +53,8 @@ def main():
     ap.add_argument("--threshold", type=float, default=None, help="onset ratio over the noise floor (default 8)")
     ap.add_argument("--max-s", type=float, default=None, help="stop after this many seconds of audio")
     ap.add_argument("--no-record", action="store_true", help="live: do not save the raw 16-ch audio")
+    ap.add_argument("--udp", type=str, default=None,
+                    help="host[:port] of the sim (demos/50_base_3d.py, port 5005): send every new bearing")
     args = ap.parse_args()
 
     if args.list:
@@ -74,6 +79,11 @@ def main():
     if args.threshold is not None:
         ccfg.threshold_ratio = args.threshold
     det = ClapBearing(ccfg, mount, array_enu)
+    udp = None
+    if args.udp:
+        host, _, port = args.udp.partition(":")
+        udp = (socket.socket(socket.AF_INET, socket.SOCK_DGRAM), (host, int(port or 5005)))
+        print(f"bearings -> UDP {udp[1][0]}:{udp[1][1]}")
     print(f"session: {session}\nmounting: +x -> {mount.x_axis_bearing_deg:.1f} deg, mics {'up' if mount.mics_up else 'down'}"
           f"\nquiet for {ccfg.warmup_s:.0f} s, then clap from point B")
 
@@ -90,6 +100,8 @@ def main():
                 b = det.bearing(t)
                 b.save(out)
                 b.save(session / "bearing.json")
+                if udp is not None:
+                    udp[0].sendto(json.dumps(b.to_dict()).encode("utf-8"), udp[1])
                 rec = {"t": round(clap.t, 3), "compass_az": round(clap.compass_az_deg, 1),
                        "array_az": round(clap.doa.array_az_deg, 1), "el": round(clap.el_deg, 1),
                        "peak": round(clap.doa.peak, 3), "rms": round(clap.rms, 5)}

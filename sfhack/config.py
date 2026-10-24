@@ -553,6 +553,11 @@ class TrackerConfig:
     suspect_sigma: float = 3.0  # TRACKING: track farther than this many sigma off the bearing ...
     suspect_s: float = 3.0  # ... for this long -> SUSPECT (bird / wrong object): drop it and re-acquire
     gate_bearing: bool = True  # a NEW track must also lie within suspect_sigma of a fresh bearing
+    # intercept (off = track and report only): a confirmed track -> STRIKE, fly into it on the camera track
+    intercept: bool = False
+    strike_speed: float = 18.0
+    strike_dist_m: float = 4.0  # nearer than this (onboard track, 3D) counts as the hit
+    strike_lead_max_s: float = 4.0  # aim where the track will be, at most this far ahead
     # battery (flight time budget)
     battery_s: float = 900.0
     reserve_s: float = 60.0

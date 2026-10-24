@@ -6,6 +6,7 @@ front camera (YOLO), follows it at a standoff and reports it to the base over th
     uv run python demos/52_track_enemy.py --headless --bearing 60 --script-bearing   # no window: fly, print, score
     uv run python demos/52_track_enemy.py --record out.mp4 --bearing 60 --script-bearing --speed 2      # MP4
     uv run python demos/52_track_enemy.py --headless --detector oracle   # perfect detector (truth boxes): flight logic
+    uv run python demos/52_track_enemy.py --intercept --range 1000 --enemy-speed 8   # 1 km out, closing; STRIKE
 
 Acoustic re-acquisition: while the link is up the base sends the UMA-16 bearing to the enemy ~1 Hz (sigma grows with
 the distance; the base tells our drone and the enemy apart by their rotor sound, ASSUMED to work in the sim:
@@ -91,7 +92,8 @@ def make_detector(args, tcfg: TrackerConfig):
 def new_scenario(world, args, detector, tcfg: TrackerConfig) -> TrackScenario:
     sc = TrackScenario(world, seed=args.seed, detector=detector, tcfg=tcfg, enemy_speed=args.enemy_speed,
                        availability=args.link, score=args.score or args.detector == "oracle",
-                       send_bearings=not args.no_base_bearing, forced_losses=args.forced_losses)
+                       send_bearings=not args.no_base_bearing, forced_losses=args.forced_losses,
+                       enemy_on_bearing=not args.lag)
     if args.detector == "oracle":
         sc.pilot.detector = OracleDetector(sc.cam)
     if args.gnss_off:
@@ -109,9 +111,11 @@ def summary(sc: TrackScenario) -> str:
     fd = "-" if p.first_detect_t is None else f"{p.first_detect_t - (sc.launch_t or 0):.1f} s after launch"
     ft = "-" if p.first_track_t is None else f"{p.first_track_t - (sc.launch_t or 0):.1f} s"
     ls = sc.losses
+    hit = "" if p.struck_t is None else (f"STRIKE: hit at {p.struck_t - (sc.launch_t or 0):.1f} s after launch, "
+                                         f"true miss {sc.strike_miss:.1f} m; ")
     loss = "" if not ls else (f"; forced losses {len(ls)}: re-acquired {sum(e.reacquired for e in ls)} "
                               f"(times after reappearing: {[round(e.reacq_t - e.t1, 1) for e in ls if e.reacquired]} s)")
-    return (f"RESULT state={p.state} t={sc.t:.1f}s  first detection {fd}, tracking from {ft}; tracking "
+    return (f"RESULT state={p.state} t={sc.t:.1f}s  {hit}first detection {fd}, tracking from {ft}; tracking "
             f"{tr:.0f} s of {flight:.0f} s flight; reports made {p.outbox.made}, received {len(sc.received)} "
             f"(link up {100 * sc.link.measured_availability:.0f} %); report error {e}; closest approach "
             f"{sc.min_dist:.1f} m; own position error {sc.own_err():.1f} m; bearings sent {sc.bearings_sent}, "
@@ -338,9 +342,12 @@ def run_viewer(world, args, tcfg: TrackerConfig) -> None:
             print(f"snapshot: {p}", flush=True)
         cv2.imshow(WINDOW, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
         code = cv2.waitKeyEx(1)
-        if code != -1:
+        if code != -1 and time.perf_counter() - wall0 > 3.0:  # a new window grabs the focus: typing elsewhere lands here
             keys.append(key_of(code))
-        if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+        try:
+            if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+                break
+        except cv2.error:  # Qt: the window is already gone
             break
     if video is not None:
         video.close()
@@ -361,6 +368,11 @@ def main() -> None:
     ap.add_argument("--detector", choices=("yolo", "oracle"), default="yolo")
     ap.add_argument("--weights", default=None, help="YOLO weights (default TrackerConfig.weights under $SFHACK_DATA)")
     ap.add_argument("--enemy-speed", type=float, default=4.0, help="m/s (0 = random 3-5)")
+    ap.add_argument("--range", type=float, default=None, help="the enemy appears this far out, m (default 500)")
+    ap.add_argument("--intercept", action="store_true", help="confirmed track -> STRIKE: fly into the enemy")
+    ap.add_argument("--lag", action="store_true",
+                    help="the enemy steers toward the latest bearing at <= 9 m/s sideways, weaving (default: it sits "
+                         "exactly on the latest bearing)")
     ap.add_argument("--link", type=float, default=0.8, help="link availability")
     ap.add_argument("--gnss-off", action="store_true", help="GNSS off from the start (key N toggles)")
     ap.add_argument("--no-base-bearing", action="store_true", help="the base sends no acoustic bearings in flight")
@@ -388,6 +400,13 @@ def main() -> None:
     tcfg = TrackerConfig()
     if args.battery is not None:
         tcfg.battery_s = args.battery
+    if args.range is not None:
+        tcfg.assumed_range_m = args.range
+    if args.enemy_speed is not None:
+        tcfg.assumed_speed = args.enemy_speed
+    if args.intercept:
+        tcfg.intercept = True
+        tcfg.search_speed = max(tcfg.search_speed, 15.0)
     world = ew.build(args.world, n_birds=args.birds, seed=args.seed)
     if args.headless:
         sys.exit(run_headless(world, args, tcfg))

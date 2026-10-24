@@ -1,8 +1,9 @@
 """Enemy-drone tracker pilot (onboard): the UMA-16 at the base hears an enemy drone; our drone takes off, finds it
-with the gimballed front camera, follows it at a standoff and reports it to the base. Track and report only: it
-never closes in (never nearer than `min_dist_m`), no interception.
+with the gimballed front camera, follows it at a standoff and reports it to the base. By default track and report
+only: it never closes in (never nearer than `min_dist_m`). With `TrackerConfig.intercept` a confirmed track goes to
+STRIKE instead of TRACKING.
 
-    WAIT -> TAKEOFF -> SEARCH -> DETECTED -> TRACKING <-> LOST -> ... -> RETURN -> DESCEND -> LANDED
+    WAIT -> TAKEOFF -> SEARCH -> DETECTED -> TRACKING (or STRIKE) <-> LOST -> ... -> RETURN -> DESCEND -> LANDED
 
 - SEARCH: the base's assumption: at the first sound the enemy was `assumed_range_m` out along the bearing, then it
   approaches at `assumed_speed`. Fly toward that (moving) point along the LATEST bearing, `search_agl` above the
@@ -15,6 +16,9 @@ never closes in (never nearer than `min_dist_m`), no interception.
   buffered while the link is down. No hit for `lost_after_s` -> LOST.
   Plausibility: the base's UMA-16 bearing (~1 Hz while the link is up) must agree with the track; more than
   `suspect_sigma` sigma off for `suspect_s` -> SUSPECT (a bird / wrong object): drop the track, LOST, re-acquire.
+- STRIKE (intercept only): fly at `strike_speed` into the track's predicted position (lead = time to go, capped
+  at `strike_lead_max_s`); inside `strike_dist_m` of the track = hit -> RETURN. No hit for `lost_after_s` -> LOST,
+  which re-acquires and strikes again.
 - LOST: the predicted enemy position = the point on the LATEST base bearing at (track distance from the base when
   lost - assumed_speed * time since lost); until a bearing newer than the loss arrives (link down): constant-velocity
   prediction from the last track. Watch that point from `lost_standoff_m` on the base side, sweeping forward /
@@ -42,7 +46,7 @@ from ..perception.drone_detector import Det, EnemyTracker, FrameResult, pointing
 from .bearing_pilot import BearingPilot, BearingPlan, az_to_dir, flat
 from .enemy_report import EnemyReport, ReportOutbox, snapshot
 
-TRACK_STATES = ("SEARCH", "DETECTED", "TRACKING", "LOST")
+TRACK_STATES = ("SEARCH", "DETECTED", "TRACKING", "STRIKE", "LOST")
 STATES = ("WAIT", "TAKEOFF", *TRACK_STATES, "RETURN", "DESCEND", "LANDED")
 
 
@@ -78,6 +82,7 @@ class TrackerPilot(BearingPilot):
         self.first_detect_t: float | None = None
         self.first_track_t: float | None = None
         self.recalled = False
+        self.struck_t: float | None = None
         self.brg: tuple[float, float, float] | None = None  # latest base bearing (rx time, az deg, sigma deg)
         self.n_bearings = 0
         self.t_lost: float | None = None
@@ -218,15 +223,16 @@ class TrackerPilot(BearingPilot):
             if trk.confirmed:
                 if self.first_track_t is None:
                     self.first_track_t = t
-                self._go("TRACKING", t, f"confirmed ({trk.hits}/{len(trk.window)} frames), "
-                                        f"{float(np.linalg.norm(trk.track.pos - est.pos)):.0f} m away")
+                self._go("STRIKE" if self.tcfg.intercept else "TRACKING", t,
+                         f"confirmed ({trk.hits}/{len(trk.window)} frames), "
+                         f"{float(np.linalg.norm(trk.track.pos - est.pos)):.0f} m away")
                 self._next_report = t
             elif t - self.t_state > self.tcfg.detected_timeout_s:
                 trk.reset()
                 self._go(self.resume_state, t, "not confirmed")
-        elif s == "TRACKING" and t - (trk.last_hit_t or t) > self.tcfg.lost_after_s:
+        elif s in ("TRACKING", "STRIKE") and t - (trk.last_hit_t or t) > self.tcfg.lost_after_s:
             self._enter_lost(t)
-        elif s == "TRACKING" and self.use_bearing:
+        elif s in ("TRACKING", "STRIKE") and self.use_bearing:
             ob = self.bearing_offset(trk.track.pos, trk.track.sigma_h() + own, t)
             if ob is not None and abs(ob[0]) > self.tcfg.suspect_sigma * ob[1]:
                 self.suspect_since = t if self.suspect_since is None else self.suspect_since
@@ -237,7 +243,7 @@ class TrackerPilot(BearingPilot):
                                         "possibly a bird / wrong object; re-acquiring", suspect=True)
             else:
                 self.suspect_since = None
-        if self.state in ("TRACKING", "LOST") and trk.track is not None and t >= self._next_report:
+        if self.state in ("TRACKING", "STRIKE", "LOST") and trk.track is not None and t >= self._next_report:
             self._next_report = t + self.tcfg.report_every_s
             self._report(t, est)
 
@@ -268,7 +274,7 @@ class TrackerPilot(BearingPilot):
         self.outbox.put(EnemyReport(
             t=t, seq=self.report_seq, state=self.state, pos=p, agl=float(p[2] - self.terrain(p[0], p[1])),
             speed=float(math.hypot(v[0], v[1])), heading_deg=math.degrees(math.atan2(v[0], v[1])) % 360.0,
-            climb=float(v[2]), confidence=self.tracker.confidence() if self.state == "TRACKING" else 0.0,
+            climb=float(v[2]), confidence=self.tracker.confidence() if self.state in ("TRACKING", "STRIKE") else 0.0,
             sigma_m=trk.sigma_h(), range_m=float(np.linalg.norm(p - est.pos)), own_pos=est.pos.copy(),
             snapshot=None if snap is None else snap[0], snapshot_jpg=b"" if snap is None else snap[1]))
 
@@ -301,6 +307,8 @@ class TrackerPilot(BearingPilot):
             self._detected(est, t, dt)
         elif s == "TRACKING":
             self._tracking(est, t, dt)
+        elif s == "STRIKE":
+            self._strike(est, t, dt)
         elif s == "LOST":
             self._lost(est, t, dt)
 
@@ -380,6 +388,31 @@ class TrackerPilot(BearingPilot):
         L = float(np.linalg.norm(leash))
         if L > 8.0:
             self.sp = est.pos + leash * 8.0 / L
+        self.yaw = math.atan2(e[1] - est.pos[1], e[0] - est.pos[0])
+        self._look_at(t, est, e)
+
+    def _strike(self, est: PoseEstimate, t: float, dt: float) -> None:
+        """Fly into the track: aim at its predicted position (lead = time to go at strike speed, capped)."""
+        tc = self.tcfg
+        trk = self.tracker.track
+        e = trk.pos_at(t)
+        d3 = float(np.linalg.norm(e - est.pos))
+        if d3 < tc.strike_dist_m:
+            self.struck_t = t
+            self._go("RETURN", t, f"STRIKE: target hit ({d3:.1f} m on the track)")
+            return
+        lead = min(d3 / tc.strike_speed, tc.strike_lead_max_s)
+        ev = np.r_[trk.vel[:2], 0.0]
+        aim = e + ev * lead
+        rel = aim - est.pos
+        n = float(np.linalg.norm(rel))
+        v = ev + rel / max(n, 1e-6) * min(tc.strike_speed, 1.5 * n)  # closing speed tapers in the last metres
+        vh = float(np.linalg.norm(v[:2]))
+        if vh > tc.strike_speed:
+            v[:2] *= tc.strike_speed / vh
+        v[2] = float(np.clip(v[2], -4.0, 4.0))
+        self.v = v
+        self.sp = est.pos + v * min(1.0, n / max(tc.strike_speed, 1e-6))
         self.yaw = math.atan2(e[1] - est.pos[1], e[0] - est.pos[0])
         self._look_at(t, est, e)
 

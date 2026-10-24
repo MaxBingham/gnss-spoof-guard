@@ -72,7 +72,7 @@ class TrackScenario:
     def __init__(self, world: ew.EnemyWorld, seed: int = 0, detector=None, tcfg: TrackerConfig | None = None,
                  enemy_speed: float | None = 4.0, availability: float = 0.8, score: bool = False,
                  birds_near_route: bool = True, send_bearings: bool = True, forced_losses: int = 0,
-                 occlusion_s: float = 8.0, turn_deg: float = 30.0) -> None:
+                 occlusion_s: float = 8.0, turn_deg: float = 30.0, enemy_on_bearing: bool = False) -> None:
         self.world, self.seed, self.score = world, seed, score
         self.tcfg = tcfg or TrackerConfig()
         m = self.model = world.model
@@ -94,7 +94,8 @@ class TrackScenario:
         self.rig = SensorRig(cfg, self.bus, m, d, seed=seed)
         self.cam = GimbalCamera(m, self.bus, self.tcfg)
         self.enemy = en.EnemyDrone(ground=self.ground, base_xy=self.mast, range0=self.tcfg.assumed_range_m,
-                                   agl=self.tcfg.assumed_agl, speed=enemy_speed, seed=seed)
+                                   agl=self.tcfg.assumed_agl, speed=enemy_speed, seed=seed,
+                                   **({"lateral_max": 1e6, "weave_m": 0.0} if enemy_on_bearing else {}))
         self.birds = en.BirdFlock(m, self.ground, world.birds, seed=seed)
         self.birds_near_route = birds_near_route
         self.link = LinkModel(availability, seed=seed)
@@ -138,6 +139,7 @@ class TrackScenario:
         self.min_dist = math.inf
         self.state_time: dict[str, float] = {}
         self.banner: tuple[float, str, tuple] | None = None
+        self.strike_miss: float | None = None  # true distance our drone -> enemy at the hit
         self.prev_state = self.pilot.state
         self._read_truth()
         self.est = self.pilot.pose()
@@ -189,7 +191,7 @@ class TrackScenario:
                 en.set_enemy(self.model, d, pose)
                 self.birds.step(t, d)
             fr = self.cam.step(d, seg=self.score)
-            if fr is not None and self.score and pilot.state in ("SEARCH", "DETECTED", "TRACKING", "LOST"):
+            if fr is not None and self.score and pilot.state in ("SEARCH", "DETECTED", "TRACKING", "STRIKE", "LOST"):
                 self._score_frame(fr.t)
             up = self.link.step(t)
             if self.enemy.active and self.acoustic.due(t):
@@ -207,6 +209,12 @@ class TrackScenario:
                 if self.recall_pending:
                     pilot.recall(t)
                     self.recall_pending = False
+            if pilot.struck_t is not None and self.enemy.t_kill is None:
+                miss = float(np.linalg.norm(d.qpos[0:3] - self.enemy.pose.pos))
+                self.enemy.kill(t)
+                self.strike_miss = miss
+                self.banner = (t, f"STRIKE: TARGET HIT ({miss:.1f} m true miss distance)", (255, 50, 40, 255))
+                self.prev_state = pilot.state
             st = pilot.state
             self.state_time[st] = self.state_time.get(st, 0.0) + self.dt
             if st != self.prev_state:
@@ -228,7 +236,7 @@ class TrackScenario:
                     self.truth_trail.append(self.true_pos.copy())
                     self.est_trail.append(self.est.pos.copy())
                 trk = pilot.tracker.track
-                if trk is not None and pilot.state in ("TRACKING", "LOST", "DETECTED"):
+                if trk is not None and pilot.state in ("TRACKING", "STRIKE", "LOST", "DETECTED"):
                     self.track_trail.append(trk.pos + [0.0, 0.0, self.z0])
         self._read_truth()
         self.est = pilot.pose()

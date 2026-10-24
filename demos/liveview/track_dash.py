@@ -38,7 +38,7 @@ CONE3 = (1.0, 0.95, 0.3)
 ACOU3 = (0.75, 0.45, 1.0)  # the acoustic bearing the drone received
 LOST3 = (1.0, 0.2, 0.85)  # LOST: predicted point + search area
 DRONE_SCALE = 9.0
-STATE_COLOR = {"WAIT": MUTED, "TAKEOFF": CYAN, "SEARCH": AMBER, "DETECTED": ORANGE, "TRACKING": GREEN, "LOST": RED,
+STATE_COLOR = {"WAIT": MUTED, "TAKEOFF": CYAN, "SEARCH": AMBER, "DETECTED": ORANGE, "TRACKING": GREEN, "STRIKE": RED, "LOST": VIOLET,
                "RETURN": CYAN, "DESCEND": CYAN, "LANDED": WHITE}
 
 
@@ -124,7 +124,7 @@ class TrackView:
             if not p.on_ground:
                 g.line(tp, e.pos, (1.0, 0.4, 0.4), 1.5, 0.5)
         trk = p.tracker.track
-        if trk is not None and p.state in ("DETECTED", "TRACKING", "LOST"):
+        if trk is not None and p.state in ("DETECTED", "TRACKING", "STRIKE", "LOST"):
             tpos = trk.pos + [0, 0, z0]
             s = float(np.clip(2.0 * trk.sigma_h(), 0.5, 80.0))
             g.sphere(tpos, max(s, 0.08 * self.scale), TRACK3, 0.25)
@@ -143,7 +143,7 @@ class TrackView:
                 tag = "  · HIDDEN from the camera" if getattr(sc, "hidden", False) else ""
                 out.append((q, f"ENEMY (true) {d:.0f} m{tag}", (255, 90, 80, 255)))
         trk = sc.pilot.tracker.track
-        if trk is not None and sc.pilot.state in ("DETECTED", "TRACKING", "LOST"):
+        if trk is not None and sc.pilot.state in ("DETECTED", "TRACKING", "STRIKE", "LOST"):
             q = project(trk.pos + [0, 0, sc.z0 - 3.0])
             if q is not None:
                 out.append((q, "TRACK (onboard)", (255, 160, 40, 255)))
@@ -566,7 +566,7 @@ class TrackComposer:
         p = sc.pilot
         trk = p.tracker.track
         te = None
-        if trk is not None and sc.enemy.active and p.state in ("DETECTED", "TRACKING", "LOST"):
+        if trk is not None and sc.enemy.active and p.state in ("DETECTED", "TRACKING", "STRIKE", "LOST"):
             te = float(np.linalg.norm(trk.pos + [0, 0, sc.z0] - sc.enemy.pose.pos))
         err = sc.report_errors()
         rx_err = "—" if not len(err) else f"{err[-1, 1]:.1f} m last · {np.mean(err[:, 1]):.1f} m mean ({len(err)})"

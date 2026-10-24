@@ -164,12 +164,36 @@ class EnemyDrone:
         self.xy = np.zeros(2)  # position of the un-weaved track point
         self.pose = EnemyPose(HIDDEN.copy(), np.zeros(3), 0.0, False)
         self._t: float | None = None
+        self.t_kill: float | None = None
 
     @property
     def active(self) -> bool:
         return self.t_spawn is not None
 
+    def kill(self, t: float) -> None:
+        """Struck: from now on it tumbles to the ground with its momentum."""
+        if self.t_kill is None and self.active:
+            self.t_kill = t
+
+    def _fall(self, t: float) -> EnemyPose:
+        dt = 0.0 if self._t is None else max(t - self._t, 0.0)
+        self._t = t
+        p, v = self.pose.pos.copy(), self.pose.vel.copy()
+        g = float(self.ground(p[0], p[1])) + 0.15
+        if p[2] > g:
+            v[:2] *= math.exp(-dt / 2.0)
+            v[2] -= 9.81 * dt
+            p += v * dt
+            if p[2] <= g:
+                p[2], v[:] = g, 0.0
+        else:
+            v[:] = 0.0
+        self.pose = EnemyPose(p, v, self.pose.yaw + 6.0 * dt * (p[2] > g), True)
+        return self.pose
+
     def step(self, t: float, bearing_deg: float | None) -> EnemyPose:
+        if self.t_kill is not None:
+            return self._fall(t)
         if self.t_spawn is None:
             if bearing_deg is None:
                 self._t = t
@@ -186,12 +210,14 @@ class EnemyDrone:
             goal = self.base + az_dir(bearing_deg) * r_new
             d = goal - self.xy
             radial = rel / max(r, 1e-6)
-            step_r = float(d @ radial)  # approach part: at `speed`, lateral part: limited
-            lat = d - step_r * radial
+            step_r = r_new - r  # approach part: at `speed` (not d @ radial: a bearing offset would add the chord)
+            lat = d - float(d @ radial) * radial  # lateral part: limited
             n = float(np.linalg.norm(lat))
             if n > self.lateral_max * dt:
                 lat *= self.lateral_max * dt / n
             self.xy = self.xy + step_r * radial + lat
+            rel = self.xy - self.base  # keep the range exact (the lateral step is a tangent)
+            self.xy = self.base + rel / max(float(np.linalg.norm(rel)), 1e-6) * r_new
         rel = self.xy - self.base
         r = float(np.linalg.norm(rel))
         u = rel / max(r, 1e-6)

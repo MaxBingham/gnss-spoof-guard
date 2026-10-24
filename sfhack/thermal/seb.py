@@ -45,17 +45,35 @@ def solar(hour_solar: np.ndarray, lat_deg: float, doy: int) -> tuple[np.ndarray,
     return direct, diffuse, el, az
 
 
-def air_temp(hour_solar: np.ndarray, c: Climate) -> np.ndarray:
-    """Tmin at t_min_h, Tmax at t_max_h, half-cosine ramps in between (K)."""
+def sunset_hour(lat_deg: float, doy: int) -> float:
+    dec = math.radians(23.44) * math.sin(2 * math.pi * (284 + doy) / 365.0)
+    x = -math.tan(math.radians(lat_deg)) * math.tan(dec)
+    return 12.0 + math.degrees(math.acos(max(-1.0, min(1.0, x)))) / 15.0
+
+
+def air_temp(hour_solar: np.ndarray, c: Climate, lat_deg: float = 40.0) -> np.ndarray:
+    """2 m air temperature (K): half-cosine rise from Tmin (t_min_h) to Tmax (t_max_h), half-cosine fall until
+    sunset, then the exponential night decay of Parton & Logan (1981, b = 2.2) down to Tmin at t_min_h: on a
+    clear calm night the air cools fast after sunset, then slowly."""
     h = np.mod(np.asarray(hour_solar, float), 24.0)
     tmin, tmax = c.tmin_c + 273.15, c.tmax_c + 273.15
     rise = c.t_max_h - c.t_min_h
     fall = 24.0 - rise
-    t_up = (h - c.t_min_h) % 24.0
-    up = t_up <= rise
-    f_up = (1 - np.cos(math.pi * t_up / rise)) / 2
-    f_dn = (1 + np.cos(math.pi * (t_up - rise) / fall)) / 2
-    return np.where(up, tmin + (tmax - tmin) * f_up, tmin + (tmax - tmin) * f_dn)
+    ss = min(max(sunset_hour(lat_deg, c.doy), c.t_max_h + 0.5), 23.5)
+
+    def day(t: np.ndarray) -> np.ndarray:
+        t_up = (t - c.t_min_h) % 24.0
+        f_up = (1 - np.cos(math.pi * t_up / rise)) / 2
+        f_dn = (1 + np.cos(math.pi * (t_up - rise) / fall)) / 2
+        return np.where(t_up <= rise, tmin + (tmax - tmin) * f_up, tmin + (tmax - tmin) * f_dn)
+
+    t_ss = float(day(np.array([ss]))[0])
+    n = (c.t_min_h - ss) % 24.0
+    tau = (h - ss) % 24.0
+    b = 2.2
+    night = tmin + (t_ss - tmin) * (np.exp(-b * tau / n) - math.exp(-b)) / (1 - math.exp(-b))
+    is_night = tau <= n
+    return np.where(is_night, night, day(h))
 
 
 def sky_emissivity(dew_c: float) -> float:
@@ -137,7 +155,7 @@ def simulate(lat_deg: float, climate: Climate, materials: list[Material] = MATER
     steps_day = int(round(86400 / dt))
     hours = np.arange(steps_day) * dt / 3600.0
     d_dir, d_dif, _, _ = solar(hours, lat_deg, climate.doy)
-    t_air_day = air_temp(hours, climate)
+    t_air_day = air_temp(hours, climate, lat_deg)
     out_s = np.zeros((V, steps_day))
     out_a = np.zeros((V, steps_day))
     for day in range(days):

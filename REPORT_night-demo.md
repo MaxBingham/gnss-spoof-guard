@@ -96,13 +96,13 @@ Reading it:
    per-second traces, rows thermal / imu_trn / straight / low_contrast / thermal_rw, frozen mission copy,
    divergence abort, resume + survives a broken process pool (memory pressure). `scripts/night_eval_report.py`
    combines runs into one table + an error-over-time plot that keeps failed flights in the statistics.
-   About 330 night flights tonight (~60 CPU-hours).
+   310 scored night flights tonight (34 worker-hours of simulation).
 6. **Integration**: night-thermal (thermal model, camera, prior) and night-nav (V3.2 GNSS-free track, TRN, thermal
    localizer, sensor, tilt fix 651b398) merged; my eval traces of the ukraine-1 runaways went to night-nav and led
    to the tilt-bias fix. **Backup videos** (final build) in `$SFHACK_DATA/night/demo/`: `ukraine-1_night_final.mp4`
    (ABOVE B 1.5 m), `berkeley_night_final.mp4`.
 7. Tests: new offline tests (global build path, UTM, night route straight vs detour, planner Night pass-through);
-   the full suite is green after every merge (75+ tests).
+   the full suite (75 tests) is green after every merge.
 
 ## What failed / limits (honest)
 
@@ -143,7 +143,7 @@ Built by night-demo tonight: Sentinel-2 / GLO-30 global mission path (sentinel.p
 osm.json, --agl), mission ukraine-1, scripts/plot_mission_roads.py, night route choice (night_route.py + the
 extra-cost hook in plan_route), the night viewer (liveview/night.py, demo_live --night, key N, ensure_thermal),
 planner Night checkbox, eval harness demos/30_night_eval.py + scripts/night_eval_report.py, docs (NIGHT_DEMO.md,
-MAP_PACKAGE.md section, DEMO_NIGHT.md, README section, docs/night_eval/), the merges, the final eval (~330
+MAP_PACKAGE.md section, DEMO_NIGHT.md, README section, docs/night_eval/), the merges, the final eval (310
 simulated night flights) and the backup videos. Data added to $SFHACK_DATA (nothing existing modified except my
 own new mission ukraine-1): missions/ukraine-1, thermal files for campus-glade (via ensure_thermal),
 night/demo_eval_snap, night/eval/*, night/demo/*. Merged from the other night agents (also

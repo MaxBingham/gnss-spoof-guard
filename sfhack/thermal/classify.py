@@ -1,0 +1,249 @@
+"""Material class per 0.5 m pixel from the orthophoto (+ NIR) and OpenStreetMap.
+
+Order (later wins):
+ 1. spectral base: NDVI (or RGB greenness without NIR) -> vegetation; dark vegetation = tree canopy, bright =
+    grass; yellowish non-vegetation = dry grass / soil; other non-vegetation = paved, dark -> asphalt, bright ->
+    concrete.
+ 2. OSM areas: water, parking (paved pixels), pitches.
+ 3. OSM highways buffered to a width per highway type, material from `surface` (default per type); only where
+    the image does not show vegetation (a road under a tree crown is hidden by the crown, a verge is grass).
+ 4. OSM tree landmarks as crown discs.
+ 5. building footprints: roof (dark / light by the roof's brightness in the ortho), fountains = water.
+Works at any ortho resolution (NAIP 0.6 m or Sentinel-2 10 m resampled to the 0.5 m grid): the spectral
+layer just gets blurrier; OSM geometry keeps the roads sharp.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from typing import Any
+
+import cv2
+import numpy as np
+
+from ..geo import GeoOrigin
+from ..missionprep.geometry import Grid, polygon_mask
+from ..missionprep.osm import _geom, element_rings
+from .materials import CLS
+
+VEHICLE_WIDTH = {"motorway": 14.0, "trunk": 12.0, "primary": 11.0, "secondary": 10.0, "tertiary": 8.0,
+                 "residential": 7.0, "unclassified": 6.5, "service": 4.5, "living_street": 5.0, "road": 6.0,
+                 "busway": 6.0, "motorway_link": 6.0, "trunk_link": 6.0, "primary_link": 6.0,
+                 "secondary_link": 6.0, "tertiary_link": 6.0}
+PED_WIDTH = {"pedestrian": 6.0, "footway": 2.5, "cycleway": 2.5, "path": 1.8, "steps": 2.5, "track": 3.0,
+             "bridleway": 2.0, "platform": 3.0}
+MINOR = {"service", "living_street", "footway", "path", "cycleway", "steps", "track", "bridleway"}
+SURFACE = {
+    "asphalt": "asphalt", "chipseal": "asphalt", "paved": None,
+    "concrete": "concrete", "concrete:plates": "concrete", "concrete:lanes": "concrete", "wood": "concrete",
+    "metal": "concrete",
+    "paving_stones": "pavers", "sett": "pavers", "brick": "pavers", "bricks": "pavers", "cobblestone": "pavers",
+    "unhewn_cobblestone": "pavers", "stepping_stones": "pavers",
+    "unpaved": "dirt_road", "dirt": "dirt_road", "ground": "dirt_road", "earth": "dirt_road", "gravel": "dirt_road",
+    "fine_gravel": "dirt_road", "compacted": "dirt_road", "pebblestone": "dirt_road", "sand": "dirt_road",
+    "mud": "dirt_road", "rock": "dirt_road",
+    "grass": "grass", "grass_paver": "grass", "artificial_turf": "turf",
+}
+PAVED = {"asphalt", "asphalt_minor", "concrete", "pavers", "parking"}
+ROAD_KIND = {"none": 0, "vehicle": 1, "pedestrian": 2, "parking": 3}
+
+
+def road_material(tags: dict[str, str]) -> tuple[str, str, float] | None:
+    """(material, kind, width_m) of a highway way, None if it is not visible from above."""
+    hw = tags.get("highway", "")
+    if tags.get("tunnel") in ("yes", "building_passage") or tags.get("covered") == "yes" or hw == "corridor":
+        return None
+    try:
+        if int(tags.get("layer", "0")) < 0:
+            return None
+    except ValueError:
+        pass
+    if hw in VEHICLE_WIDTH:
+        kind, width = "vehicle", VEHICLE_WIDTH[hw]
+    elif hw in PED_WIDTH:
+        kind, width = "pedestrian", PED_WIDTH[hw]
+    else:
+        return None
+    try:
+        width = float(tags["width"].split()[0]) if "width" in tags else width
+    except ValueError:
+        pass
+    lanes = tags.get("lanes")
+    if "width" not in tags and lanes and lanes.isdigit() and kind == "vehicle":
+        width = max(width, 3.3 * int(lanes) + 1.0)
+    surf = SURFACE.get(tags.get("surface", ""), "")
+    if surf == "":  # no or unknown surface tag: default per type
+        surf = None
+    if surf is None:
+        if hw == "track":
+            surf = "dirt_road"
+        elif hw == "path":
+            surf = "dirt_road"
+        elif kind == "vehicle":
+            surf = "asphalt_minor" if hw in ("service", "living_street") else "asphalt"
+        else:
+            surf = "concrete"
+    if surf == "asphalt" and hw in ("service", "living_street", "footway", "cycleway", "path"):
+        surf = "asphalt_minor"
+    return surf, kind, float(np.clip(width, 1.0, 30.0))
+
+
+@dataclass
+class ClassMap:
+    cls: np.ndarray  # uint8 (rows, cols)
+    roads: np.ndarray  # uint8 0/1: paved highway pixel visible from above
+    road_kind: np.ndarray  # uint8 ROAD_KIND
+    seg_id: np.ndarray  # int32 index into roads_json, -1 elsewhere
+    bldg_id: np.ndarray  # int32 landmark id of the roof, -1 elsewhere
+    uncertain: np.ndarray  # bool: deep shadow in the ortho (spectral class unreliable)
+    roads_json: list[dict[str, Any]] = field(default_factory=list)
+    stats: dict[str, Any] = field(default_factory=dict)
+
+
+def spectral_base(rgb: np.ndarray, nir: np.ndarray | None,
+                  chm: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """`chm`: canopy height above ground (m) on the same grid, from LiDAR; without it trees are the dark part
+    of the vegetation (weak: NAIP crowns and lawns have the same NDVI and brightness)."""
+    f = rgb.astype(np.float32)
+    R, G, B = f[..., 0], f[..., 1], f[..., 2]
+    V = f.mean(axis=2)
+    if nir is not None:
+        n = nir.astype(np.float32)
+        vi = (n - R) / (n + R + 1e-3)
+        veg = vi > 0.12
+        idx = "ndvi"
+    else:
+        vi = (2 * G - R - B) / (R + G + B + 1.0)
+        veg = vi > 0.05
+        idx = "exg"
+    veg = cv2.morphologyEx(veg.astype(np.uint8), cv2.MORPH_OPEN, np.ones((2, 2), np.uint8)) > 0
+    if chm is not None:
+        tree = veg & (chm > 2.5)
+        tree = cv2.morphologyEx(tree.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)) > 0
+    else:
+        tree = veg & (cv2.GaussianBlur(V, (0, 0), 1.0) < 85.0)
+    tree = cv2.morphologyEx(tree.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)) > 0
+    warm_tone = (R - B) > 18.0
+    dry = ~veg & warm_tone & (V > 95.0) & ((vi > -0.02) if nir is not None else True)
+    cls = np.full(rgb.shape[:2], CLS["concrete"], np.uint8)
+    cls[V < 105.0] = CLS["asphalt_minor"]
+    cls[dry] = CLS["dry_grass"]
+    cls[veg] = CLS["grass"]
+    cls[tree] = CLS["tree"]
+    uncertain = (V < 40.0) & ~veg
+    stats = {"index": idx, "canopy": "lidar" if chm is not None else "spectral", "veg_frac": round(float(veg.mean()), 3), "tree_frac": round(float(tree.mean()), 3),
+             "dry_frac": round(float(dry.mean()), 3), "shadow_frac": round(float(uncertain.mean()), 3)}
+    return cls, uncertain, {**stats, "veg_mask": veg}
+
+
+def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str, Any] | None, origin: GeoOrigin,
+             landmarks: list[dict[str, Any]], drop_minor_frac: float = 0.0,
+             rng: np.random.Generator | None = None, chm: np.ndarray | None = None) -> ClassMap:
+    rng = rng or np.random.default_rng(0)
+    cls, uncertain, st = spectral_base(rgb, nir, chm)
+    veg = st.pop("veg_mask")
+    shape = grid.shape
+    roads = np.zeros(shape, np.uint8)
+    road_kind = np.zeros(shape, np.uint8)
+    seg_id = np.full(shape, -1, np.int32)
+    bldg_id = np.full(shape, -1, np.int32)
+    roads_json: list[dict[str, Any]] = []
+
+    def to_px16(pts: np.ndarray) -> np.ndarray:
+        return np.round((grid.to_px(pts) + 0.5) * 16).astype(np.int32)
+
+    elements = (osm or {}).get("elements", [])
+    # 2. areas
+    for el in elements:
+        tags = el.get("tags", {})
+        if el["type"] == "node" or "highway" in tags or "building" in tags:
+            continue
+        target = None
+        if tags.get("natural") == "water" or tags.get("water") or tags.get("landuse") in ("basin", "reservoir"):
+            target = "water"
+        elif tags.get("amenity") == "parking" and tags.get("parking", "surface") in ("surface", ""):
+            target = "parking"
+        elif tags.get("leisure") == "pitch" and tags.get("surface") == "artificial_turf":
+            target = "turf"
+        if target is None:
+            continue
+        for ring in element_rings(el):
+            pts = np.array([origin.to_enu(a, b) for a, b in ring])
+            if len(pts) < 3:
+                continue
+            m = polygon_mask(grid, [pts]) > 0
+            if target == "parking":
+                sel = m & ~veg
+                cls[sel] = CLS["parking"]
+                road_kind[sel] = ROAD_KIND["parking"]
+            else:
+                cls[m] = CLS[target]
+    # 3. highways, wide first so narrow paths on top keep their own id
+    ways = []
+    for el in elements:
+        tags = el.get("tags", {})
+        if el["type"] != "way" or "highway" not in tags:
+            continue
+        rm = road_material(tags)
+        if rm is None:
+            continue
+        pts = np.array([origin.to_enu(a, b) for a, b in _geom(el.get("geometry", []))])
+        if len(pts) < 2:
+            continue
+        hw = tags["highway"]
+        if drop_minor_frac > 0 and hw in MINOR and rng.uniform() < drop_minor_frac:
+            continue  # OSM is incomplete: the onboard copy misses some minor ways
+        ways.append((rm[2], el, tags, pts, rm))
+    ways.sort(key=lambda w: -w[0])
+    for width, el, tags, pts, (mat, kind, _) in ways:
+        sid = len(roads_json)
+        roads_json.append({"id": sid, "osm_id": f"way/{el['id']}", "highway": tags["highway"],
+                           "surface": tags.get("surface"), "material": mat, "kind": kind, "width_m": width,
+                           "paved": mat in PAVED, "pts_enu": np.round(pts, 2).tolist()})
+        m = np.zeros(shape, np.uint8)
+        area = tags.get("area") == "yes" and len(pts) >= 4 and np.allclose(pts[0], pts[-1])
+        if area:
+            cv2.fillPoly(m, [to_px16(pts)], 1, lineType=cv2.LINE_8, shift=4)
+        else:
+            th = max(1, int(round(width / grid.res)))
+            cv2.polylines(m, [to_px16(pts)], False, 1, thickness=th, lineType=cv2.LINE_8, shift=4)
+        sel = (m > 0) & ~veg
+        cls[sel] = CLS[mat]
+        seg_id[sel] = sid
+        road_kind[sel] = ROAD_KIND[kind]
+        roads[sel] = 1 if mat in PAVED else 0
+    # 4. trees from the landmark list (crown discs)
+    for lm in landmarks:
+        if lm["type"] != "tree":
+            continue
+        c = to_px16(np.asarray([lm["centroid_enu"]], float))[0]
+        r = int(round(float(lm.get("radius", 3.0)) / grid.res * 16))
+        tm = np.zeros(shape, np.uint8)
+        cv2.circle(tm, (int(c[0]), int(c[1])), r, 1, -1, lineType=cv2.LINE_8, shift=4)
+        sel = tm > 0
+        cls[sel] = CLS["tree"]
+    # 5. roofs
+    V = rgb.astype(np.float32).mean(axis=2)
+    for lm in landmarks:
+        if lm["type"] not in ("building", "tower", "fountain") or not lm.get("footprint_enu"):
+            continue
+        m = polygon_mask(grid, [np.asarray(lm["footprint_enu"], float)]) > 0
+        if not m.any():
+            continue
+        if lm["type"] == "fountain":
+            cls[m] = CLS["water"]
+            continue
+        bright = float(np.median(V[m]))
+        cls[m] = CLS["roof_light"] if bright > 150.0 else CLS["roof_dark"]
+        bldg_id[m] = lm["id"]
+        roads[m] = 0
+        road_kind[m] = 0
+        seg_id[m] = -1
+    hidden = cls == CLS["tree"]
+    roads[hidden] = 0
+    seg_id[hidden] = -1
+    road_kind[hidden] = 0
+    st.update({"road_frac": round(float(roads.mean()), 4), "n_ways": len(roads_json),
+               "class_frac": {k: round(float((cls == v).mean()), 4) for k, v in CLS.items()}})
+    return ClassMap(cls, roads, road_kind, seg_id, bldg_id, uncertain, roads_json, st)

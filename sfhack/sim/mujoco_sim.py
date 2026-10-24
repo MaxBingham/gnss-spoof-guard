@@ -160,6 +160,11 @@ class MujocoSim:
         # MuJoCo cameras look along their -z axis. Down camera: image top = forward, image right = right.
         drone.add_camera(name="down", pos=[0, 0, -0.02], fovy=cam.down_fovy_deg,
                          quat=_quat_from_axes([0, -1, 0], [1, 0, 0]))
+        # Thermal (LWIR) camera on the same mount; MuJoCo's fovy is the vertical FOV.
+        thermal_fovy = math.degrees(2 * math.atan(math.tan(math.radians(cam.thermal_hfov_deg) / 2)
+                                                  * cam.thermal_height / cam.thermal_width))
+        drone.add_camera(name="thermal", pos=[0, 0, -0.02], fovy=thermal_fovy,
+                         quat=_quat_from_axes([0, -1, 0], [1, 0, 0]))
         # Downward rangefinder: MuJoCo casts along the site's +z axis (flipped to point down), ignoring the X2.
         drone.add_site(name="rangefinder", pos=[0, 0, 0.01], quat=[0, 1, 0, 0])
         rf = spec.add_sensor(name="rangefinder", type=mujoco.mjtSensor.mjSENS_RANGEFINDER,

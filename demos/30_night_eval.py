@@ -10,6 +10,7 @@ Rows (onboard configuration, everything else equal):
   low_contrast  thermal, but the TRUE scene's contrast is scaled by 0.4 (night-nav's thermal_contrast lever; else the harness edits the
             simulator's truth raster; the onboard prior still predicts the full contrast). night-research: ASTER
             night scenes over Berkeley show only ~1-3 K road contrast on mild nights vs the 5-10 K hot-day model.
+  thermal_rw  thermal with cfg.ekf.acc_bias_rw = 0.04 (night-nav's candidate fix against overconfident runaways)
 
 Scoring (harness, truth): ARRIVAL error = horizontal |truth - B| when the drone decides it is above B (first
 ABOVE_B / WAIT_FOR_FIX decision, else the start of DESCEND). Success = arrival error <= 5 m. The landing itself is
@@ -42,6 +43,7 @@ ROWS = {
     "imu_trn": {"night": True, "thermal_method": "off"},
     "straight": {"night": True, "night_route": False},
     "low_contrast": {"night": True, "contrast": 0.4},
+    "thermal_rw": {"night": True, "acc_bias_rw": 0.04},
 }
 
 
@@ -91,6 +93,8 @@ def fly(job: dict) -> dict:
             kw["night"] = True
         else:
             notes.append("FlightSystem has no night mode on this branch: day localizer off")
+    if "acc_bias_rw" in row:  # night-nav's candidate fix (bce976d): let the bias states track the tilt drift
+        cfg.ekf.acc_bias_rw = row["acc_bias_rw"]
     if "thermal_method" in row:
         if hasattr(cfg, "thermal"):
             cfg.thermal.method = row["thermal_method"]
@@ -187,7 +191,7 @@ def table(results: list[dict]) -> str:
     lines = ["| mission | row | n | within 5 m | rate (95 % Wilson) | arrival error mean / median / max (m) | "
              "est. error at arrival mean (m) | 2-sigma at arrival mean (m) | thermal fixes accepted / flight |",
              "|---|---|---:|---:|---|---|---:|---:|---:|"]
-    keys = sorted({(r["mission"], r["row"]) for r in results}, key=lambda k: (k[0], list(ROWS).index(k[1])))
+    keys = sorted({(r["mission"], r["row"]) for r in results}, key=lambda k: (k[0], list(ROWS).index(k[1])))  # noqa
     for m, row in keys:
         rs = [r for r in results if r["mission"] == m and r["row"] == row]
         e = np.array([r["arrival_err"] for r in rs])

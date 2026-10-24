@@ -1,0 +1,34 @@
+site,material,T_app_13h_C,T_app_21h_C,T_app_23h_C,T_app_3h_C
+berkeley,asphalt road,54.76,29.98,25.61,19.95
+berkeley,concrete pavement,44.76,27.49,23.95,19.24
+berkeley,gravel/dirt road,53.17,24.49,20.19,15.1
+berkeley,bare soil (dry),57.63,20.89,16.53,11.98
+berkeley,grass (irrigated lawn),36.98,18.6,15.82,12.71
+berkeley,"grass (dry, summer)",56.32,19.07,15.79,12.12
+berkeley,"roof dark, light-weight",71.76,15.28,11.29,7.9
+berkeley,roof white membrane,38.26,15.04,11.19,7.81
+berkeley,roof heavy (gravel on concrete),52.72,26.52,23.34,18.99
+berkeley,trees (canopy top),26.55,20.17,16.88,13.47
+berkeley,water,18.06,16.54,16.5,16.46
+berkeley,metal roof (unpainted),31.89,8.99,5.89,2.68
+berkeley,air (2 m),27.24,22.04,18.67,15.19
+ukraine,asphalt road,54.33,31.94,28.03,22.22
+ukraine,concrete pavement,45.24,29.74,26.46,21.58
+ukraine,gravel/dirt road,52.75,27.18,23.01,17.6
+ukraine,bare soil (dry),56.67,24.33,19.6,14.56
+ukraine,grass (irrigated lawn),38.06,22.56,18.8,15.26
+ukraine,"grass (dry, summer)",55.45,23.04,18.77,14.65
+ukraine,"roof dark, light-weight",69.29,20.41,14.57,10.49
+ukraine,roof white membrane,39.05,20.02,14.48,10.4
+ukraine,roof heavy (gravel on concrete),52.31,28.74,25.81,21.21
+ukraine,trees (canopy top),28.69,23.58,19.51,15.5
+ukraine,water,24.91,23.81,23.47,23.42
+ukraine,metal roof (unpainted),33.16,13.94,9.7,5.91
+ukraine,air (2 m),29.34,25.3,21.15,17.06
+
+sensitivity_berkeley_23h,asphalt,lawn,trees,dark_roof
+"clear, calm (h_night 5)",25.61,15.82,16.88,11.29
+"clear, breeze ~3 m/s (h_night 14)",23.2,16.81,16.88,14.16
+overcast after sunset,29.56,21.01,18.5,18.59
+half cloud after sunset,27.59,18.43,17.69,14.98
+cool day 22/13 C,22.41,12.86,14.27,8.76

@@ -106,6 +106,7 @@ crosses a ~250 m forest, x = -150..+100 m, where the prior is uniform: ~30 s wit
 
 The compass yaw error stays at its per-flight bias (mean |yaw error| 0.78 deg, no drift). Thermal processing 30-70 ms
 per frame on berkeley / hill, 130-180 ms on ukraine-1 (larger search windows), at 5 Hz.
+
 Mild night (`--contrast 0.4`: the TRUE scene's contrast scaled to 0.4x around air temperature, ~2-4 K road-grass
 as in night-research's ASTER notes, while the prior keeps the full model contrast):
 
@@ -153,6 +154,15 @@ ukraine-1 on the straight route with the fix: 5/6 at that time (one runaway at t
 | m-c804bb84 | IMU + TRN only | 0/20 | 0-16 % | 29.9 / 6107 | 9 | - |
 | ukraine-1 | **grad** | **12/20** | 39-78 % | 2.1 / 7693 | 8 | 790 |
 | ukraine-1 | IMU + TRN only | 0/20 | 0-16 % | 6431 / 7721 | 20 | - |
+
+Road / junction alone, closed loop (final configuration incl. gyro-bias learning, 10 seeds):
+
+| mission | row | within 5 m | 95 % Wilson CI | error at B median / max (m) | thermal fixes accepted / flight |
+|---|---|---|---|---|---|
+| berkeley | junction | 6/10 | 31-83 % | 3.6 / 8069 | 68 |
+| berkeley | road | 2/10 | 6-51 % | 31.6 / 7925 | 92 |
+| m-c804bb84 | junction | 0/10 | 0-28 % | 245 / 7666 | 56 |
+| m-c804bb84 | road | 1/10 | 2-40 % | 77.2 / 6876 | 36 |
 
 Plots: `docs/night_nav/night_error_<mission>.png` (error over time since GNSS off, per-seed error at B).
 

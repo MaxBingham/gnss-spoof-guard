@@ -51,7 +51,8 @@ Default = `grad` (gradient-orientation NCC of the rectified thermal frame vs the
 ## Method comparison (closed loop, before the gyro-bias fix)
 
 grad 20/20 (berkeley), 19/20 (hill), 12/20 (ukraine-1); ncc 16/20, 15/20; ncc+grad 18/20, 19/20;
-IMU + TRN 10/20, 0/20, 0/20. Open-loop bench: grad 66-79 % fix rate, median 0.5-0.65 m; road 35-47 % with median
+IMU + TRN 10/20, 0/20, 0/20; road alone 2/10, 1/10 and junction alone 6/10, 0/10 (berkeley, hill; with the
+gyro-bias fix). Open-loop bench: grad 66-79 % fix rate, median 0.5-0.65 m; road 35-47 % with median
 5-9 m; junction 15-23 %. Full tables in `docs/NIGHT_NAV.md`.
 
 ## What failed / caveats

@@ -487,7 +487,7 @@ class NightComposer:
     def hud_card(self, demo: Any, speed: int, paused: bool, recording: bool) -> Image.Image:
         ns: NightState = demo.night
         p = self.px
-        w, h = p(400), p(410)
+        w, h = p(400), p(420)
         im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
         d.rounded_rectangle((0, 0, w - 1, h - 1), radius=p(10), fill=CARD_BG, outline=mix(WHITE, 0.16))
@@ -512,10 +512,22 @@ class NightComposer:
         y += p(62)
         d.text((x, y), "NAV SOURCE", font=font(max(8, p(14)), True), fill=MUTED)
         y += p(20)
-        src = ns.nav_sources()
-        txt = " + ".join(src + ["IMU", "BARO"]) if src else "IMU + BARO (dead reckoning)"
-        d.text((x, y), txt, font=font(max(8, p(19)), True), fill=CYAN if src else AMBER)
-        y += p(34)
+        ap = demo.fs.autopilot
+        if hasattr(ap, "night_nav_source"):  # night-nav: (GNSS | THERMAL | TRN | INS, "GNSS - THERMAL 0.2s TRN 3.1s")
+            primary, detail = ap.night_nav_source(demo.t)
+            names = {"INS": "IMU + BARO (dead reckoning)", "THERMAL": "THERMAL + TRN + IMU", "TRN": "TRN + IMU",
+                     "GNSS": "GNSS + IMU"}
+            d.text((x, y), names.get(primary, primary), font=font(max(8, p(19)), True),
+                   fill=AMBER if primary == "INS" else CYAN)
+            d.text((x, y + p(24)), detail, font=font(max(8, p(12))), fill=MUTED)
+            reason = ap.health_state.reason or ""
+            if "BLIND" in reason:
+                d.text((w - p(16), y + p(24)), "BLIND: keep route", font=font(max(8, p(12)), True), fill=AMBER, anchor="ra")
+        else:
+            src = ns.nav_sources()
+            txt = " + ".join(src + ["IMU", "BARO"]) if src else "IMU + BARO (dead reckoning)"
+            d.text((x, y), txt, font=font(max(8, p(19)), True), fill=CYAN if src else AMBER)
+        y += p(44)
         est, tr = demo.fs.autopilot.pose(), demo.fs.truth.state()
         s2 = float(est.sigma2_horizontal())
         err = float(np.linalg.norm(est.pos[:2] - tr.pos[:2]))

@@ -14,6 +14,9 @@ $SFHACK_DATA/missions/<id>/          <id>: [A-Za-z0-9][A-Za-z0-9_-]{0,63}
     ortho.jpg
     terrain.npz
     target_scene.json                objects in the search area around B (object placer writes here)
+    osm.json                         raw OSM download (Overpass `out geom` shape): roads + surface, landuse, ... (thermal model)
+    nir.png, ndvi.png                near infrared + NDVI on the ortho grid (NAIP band 4 / Sentinel-2 B08, B04), if available
+    thermal_truth.npz                night thermal truth (sfhack.thermal build, night-thermal), if built
   onboard/                           the package "uploaded to the drone": a deliberately imperfect copy
     manifest.json                    index: origin, frame, layers with bytes + SHA-256, sources, licenses
     mission.json                     A, B, search radius, route, target_scene (search area only)
@@ -21,6 +24,8 @@ $SFHACK_DATA/missions/<id>/          <id>: [A-Za-z0-9][A-Za-z0-9_-]{0,63}
     landmarks.json                   vision / mock localizer, display
     dsm.npz                          DTM + DSM rasters (TRN, terrain-aware vision, route)
     map_cloud.ply                    3D point cloud (LiDAR scan-to-map)
+    nir.png, ndvi.png                copies of the world bands (0.5 px blur), if available
+    thermal_prior.npz                predicted night temperature + road mask (sfhack.thermal build), if built
   drone/                             onboard/ after the simulated upload, every file SHA-256 verified
     ...same files...  upload_receipt.json
 ```
@@ -33,6 +38,7 @@ uv run python -m sfhack.missionprep serve                            # browser: 
                                                                      # upload and launch the viewer in one click)
 uv run python -m sfhack.missionprep build --id berkeley              # default A / B, no browser
 uv run python -m sfhack.missionprep build --a 37.8716 -122.2638 --b 37.87215 -122.2566 --radius 40 --id campus-glade
+uv run python -m sfhack.missionprep build --a 49.2244 23.3220 --b 49.2305 23.3456 --id ukraine-1 --agl 60  # outside the US
 uv run python -m sfhack.missionprep upload berkeley --mbps 2         # simulated link + checksum check
 uv run python demos/demo_live.py --mission berkeley                  # fly it (viewer; --headless to score)
 ```
@@ -192,6 +198,45 @@ mission directory (and drops placed objects and the drone copy).
 
 All random draws are seeded from the mission id, so a rebuild reproduces the same package.
 
+## Outside the US (`region: global`)
+
+`--region auto` (default) uses the US sources when the bbox lies inside the conterminous US
+(24.4-49.4 N, 125.0-66.9 W), else the global ones (`--region us|global` forces):
+
+| Layer | US | Global |
+| --- | --- | --- |
+| Ortho | NAIP ~0.6 m RGB (+ band 4 NIR) | Sentinel-2 L2A 10 m: ESA true-colour TCI as RGB, B08 NIR, NDVI from B04 / B08 |
+| Terrain | 3DEP 1 m DEM (GLO-30 fallback) | Copernicus GLO-30 (a DSM: forest canopy and dense roofs are in the "terrain") |
+| Point cloud | 3DEP LiDAR (synthetic fallback) | synthetic (no open LiDAR); DSM = terrain + OSM building heights |
+
+Sentinel-2 (`sfhack/missionprep/sentinel.py`): Earth Search STAC (`sentinel-2-l2a`, AWS open data, no account),
+June-August of 2025 / 2024 / 2023; the scene with the least cloud + shadow + nodata INSIDE the bbox (scene
+classification layer on a 20 m grid; first one <= 1 % wins). Only the COG tiles covering the bbox are read, by
+HTTP range requests through the cached Fetcher (tifffile, no GDAL). UTM -> local ENU with our own transverse
+Mercator (Krueger series, checked against quadrature). Reflectance = DN x 1e-4: Earth Search items with
+`earthsearch:boa_offset_applied` already had the -1000 removed (their raster:bands still say offset -0.1;
+applying it zeroed the red band). `nir.png` = B08 reflectance x 425 (255 = 0.6); `ndvi.png` = (NDVI + 1) x 127.5.
+The 10 m pixels are resampled onto the 0.5 m grid (bicubic RGB, bilinear NIR / NDVI): blurry by design.
+
+Mission `ukraine-1` (built 2026-10-24): Skhidnytsia, Carpathian foothills south of Boryslav (V3's S2 area),
+A 49.2244 N 23.3220 E on the asphalt road west of the village -> B 49.2305 N 23.3456 E beside the main road,
+1.8 km, extent 2016 x 936 m, relief -6 .. +131 m, scene S2C_34UFV_20250828 (0 % cloud in the bbox), 348
+buildings (346 at the default 10 m), route planned at 60 m AGL (`--agl 60`). Build: 41-54 s cold. Roads in
+the extent by OSM `surface` (`scripts/plot_mission_roads.py ukraine-1`, figure `docs/ukraine-1_roads.png`):
+
+| highway | paved km | unpaved km | untagged km |
+|---|---:|---:|---:|
+| secondary | 0.14 | 0.00 | 0.00 |
+| tertiary | 2.31 | 0.00 | 0.00 |
+| unclassified | 0.35 | 0.00 | 0.00 |
+| residential | 0.30 | 0.39 | 1.71 |
+| service | 0.26 | 0.86 | 6.21 |
+| track | 0.00 | 3.52 | 0.00 |
+| **all** | **3.36** | **4.77** | **7.92** |
+
+21 % paved, 30 % unpaved, 49 % untagged (village lanes and driveways, mostly dirt per night-research). Only the
+tagged-paved roads count as warm at night (the thermal prior's `roads` mask).
+
 ## Sources and licenses
 
 | Layer | Primary | Fallback | License |
@@ -200,6 +245,7 @@ All random draws are seeded from the mission id, so a rebuild reproduces the sam
 | Ortho | USGS NAIP ImageServer `exportImage` (EPSG:4326 = linear in our frame) | USGS National Map imagery tiles z16 | Public domain |
 | Terrain | USGS 3DEP 3DEPElevation ImageServer (1 m DEM where TNM lists one, else best available) | Copernicus GLO-30 DSM (AWS open data) | Public domain / Copernicus DEM licence |
 | Point cloud | USGS 3DEP LiDAR, Entwine EPT on AWS `usgs-lidar-public` | synthetic | Public domain |
+| Imagery outside the US | Copernicus Sentinel-2 L2A COGs (Earth Search STAC, Element84 / AWS) | - | Copernicus Sentinel data terms (free, full and open) |
 | Search box | Nominatim (User-Agent, <= 1 request/s, cached, proxied by the planner) | - | ODbL |
 
 Downloads are cached under `$SFHACK_DATA/cache/missionprep` (keyed by URL + parameters): a second

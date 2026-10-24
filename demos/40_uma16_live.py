@@ -15,7 +15,8 @@ is detected with a steady bearing for ~3 s, `bearing.json` (BearingEstimate) is 
 
 Mounting: flat on the table, mics up; `--north DEG` = compass bearing the array's +x axis points to (measure it
 with a phone compass along the board edge), `--mics-down` if the board lies mics down. Live accuracy: put the
-speaker at a measured compass bearing and pass `--truth-az DEG`; errors go to the console and summary.json.
+speaker at a measured compass bearing and pass `--truth-az DEG`; errors go to the console and summary.json,
+with `suggested_north` (the --north that would have made the bearing right; see docs/UMA16_LIVE.md).
 
 Live input: Windows needs the miniDSP ASIO driver; SD_ENABLE_ASIO=1 is set before sounddevice is imported.
 Each live session's raw 16-ch audio is saved (session.wav) so it can be replayed with --file.
@@ -40,7 +41,7 @@ import scipy.io.wavfile as wavfile
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sfhack.acoustic.array import FS, N_MICS, Mounting, mic_positions  # noqa: E402
 from sfhack.acoustic.bearing import BearingEstimate  # noqa: E402
-from sfhack.acoustic.detect import AcousticPipeline, WindowResult  # noqa: E402
+from sfhack.acoustic.detect import AcousticPipeline, WindowResult, circ_mean_std_deg  # noqa: E402
 from sfhack.acoustic.doa import angle_diff_deg  # noqa: E402
 from sfhack.config import AcousticConfig, data_dir  # noqa: E402
 
@@ -487,6 +488,10 @@ def main():
                                      if len(we) else None)
         summary["stable_err_deg"] = ({"n": len(se), "last": float(stable_err[-1]),
                                       "rms": float(np.sqrt(np.mean(se ** 2)))} if len(se) else None)
+        if stable_err:
+            # compass = north -/+ array az: shifting --north shifts every bearing by the same amount
+            summary["suggested_north"] = round((cfg.x_axis_bearing_deg
+                                                - circ_mean_std_deg(np.array(stable_err) % 360.0)[0]) % 360.0, 1)
     (session / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
     print(f"session: {session}")

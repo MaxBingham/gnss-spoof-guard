@@ -338,6 +338,58 @@ class ThermalConfig:
 
 
 @dataclass
+class FlowConfig:
+    """recon-nav: optical flow from the downward thermal camera (perception/optical_flow.py)."""
+
+    grid_px: int = 128  # rectified grid size (cells per side)
+    grid_half_frac: float = 0.24  # grid half size = this x height (inscribed in the 50 x 40 deg footprint at any yaw)
+    min_agl: float = 8.0  # m above the surface: below this the footprint is small (use the rangefinder there)
+    max_agl: float = 300.0
+    min_std_K: float = 0.08  # rectified grid std below this = uniform, no measurement
+    min_response: float = 0.5  # NCC peak below this = no reliable shift
+    search_px: int = 24  # max shift per frame pair (cells): 7 m at 80 m AGL, 36 m/s at 5 Hz
+    dog_lo: float = 1.0  # band-pass (grid cells) before matching
+    dog_hi: float = 8.0
+    max_dt: float = 0.5  # s, frame pairs further apart are not used (dropped frames)
+    fpn_tau_s: float = 20.0  # running-mean time constant of the fixed-pattern estimate
+    fpn_warmup_frames: int = 10  # frames before the fixed-pattern subtraction starts
+    sigma_shift_px: float = 0.25  # 1-sigma shift error at a strong peak (grid cells) ...
+    response_ref: float = 0.9  # ... grows as response_ref / response below this
+    height_rel_std: float = 0.02  # relative height error (baro + DSM): scales the velocity
+    sigma_floor: float = 0.08  # m/s
+
+
+@dataclass
+class LightsConfig:
+    """recon-nav: base-light localizer (perception/light_localizer.py): blobs -> blink-code ids -> resection."""
+
+    min_peak: int = 18  # gray levels above the background median for a blob
+    max_blob_area: int = 400  # px: bigger = not a point light (headlights, fires up close)
+    max_blobs: int = 80
+    track_gate_deg: float = 0.5  # frame-to-frame association in world azimuth / elevation
+    track_max_off_s: float = 1.2  # a track without a blob this long is dropped (codes have short off runs)
+    id_min_periods: float = 1.5  # code periods of history before an id is decided
+    id_window_periods: float = 3.0  # ... matched over at most this many periods
+    id_min_score: float = 0.9  # fraction of samples matching the code
+    id_min_margin: float = 0.12  # over the best other id
+    id_phase_steps: int = 16  # phase hypotheses per code period
+    min_lights: int = 2  # 2 = bearing-line fix, >= 3 = resection
+    sigma_px: float = 0.3  # centroid error (shimmer, PSF) 1-sigma
+    survey_std_m: float = 0.15  # light position error (onboard survey), projected at the light's range
+    tilt_prior_deg: float = 0.5  # AHRS roll / pitch error prior of the solver
+    yaw_prior_deg: float = 10.0  # compass yaw error prior (loose: the lights determine yaw)
+    z_prior_min_std: float = 1.0  # m, baro height prior of the solver (at least)
+    max_rms_norm: float = 3.0  # normalized residual RMS above this (>= 3 lights) = wrong ids -> no fix
+    max_fix_std: float = 60.0  # m, a fix whose major 1-sigma is above this is not published
+    # compass bias learned from the light yaw (autopilot): 1-state KF on the heading bias
+    yaw_learn: bool = True
+    yaw_bias_init_std_deg: float = 2.0
+    yaw_ahrs_jitter_deg: float = 0.35  # AHRS heading noise (compass 2 deg at 20 Hz through the 1/s filter) ...
+    yaw_corr_inflate: float = 5.0  # ... correlated over ~1 s: per-frame variance x this
+    yaw_bias_max_deg: float = 8.0
+
+
+@dataclass
 class DisturbanceConfig:
     wind_drag: float = 0.15  # N per m/s of relative air speed (linear drag model for wind force)
     imu_bias_jump: float = 0.3  # m/s^2, magnitude of an accel bias jump
@@ -357,6 +409,8 @@ class Config:
     trn: TrnConfig = field(default_factory=TrnConfig)
     thermal: ThermalConfig = field(default_factory=ThermalConfig)
     disturbance: DisturbanceConfig = field(default_factory=DisturbanceConfig)
+    flow: FlowConfig = field(default_factory=FlowConfig)
+    lights: LightsConfig = field(default_factory=LightsConfig)
     # Initial degradation levers (simulated reality). Read by the simulator only, never onboard.
     conditions: Conditions = field(default_factory=Conditions)
 

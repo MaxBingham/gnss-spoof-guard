@@ -302,6 +302,8 @@ def place_targets(terrain: Terrain, rng: np.random.Generator, d: TargetDesign = 
     roads = _roads(terrain.dir, terrain)
     nv = int(rng.integers(d.n_vehicles[0], d.n_vehicles[1] + 1))
     kinds = list(rng.choice(["truck", "car", "apc"], size=nv, p=[0.45, 0.3, 0.25]))
+    if not {"truck", "apc"} & set(kinds):  # the base array must hear the group (cars alone are too quiet at 2-3 km)
+        kinds[0] = "truck"
     objs: list[dict[str, Any]] = []
     placed: list[np.ndarray] = []
     road, k0 = None, 0

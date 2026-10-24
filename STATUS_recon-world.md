@@ -32,8 +32,18 @@ Decodable lights (in view, not occluded, peak >= 25 DN when on): 250 m orbit 0-2
 1.1-1.8 km 1-3 (outer posts only). **All fence lights are behind terrain beyond ~0.9 km** toward 60-90 deg (a ~100 m
 hill 400 m east of A; Copernicus GLO-30 is a surface model).
 
+## ukraine-recon (optional mission, built today)
+Built with missionprep (A 49.2922 N 23.4312 E on the plain ~7 km NE of ukraine-1, B 3 km NE, 600 m margin) + the
+thermal build; 3.3 x 3.3 km, 1281 buildings. Base, lights and 20 target seeds generated (groups 1.6-2.6 km out at
+10-105 deg). Line of sight from the fence lights at 60-80 m AGL: clear to 3 km over 30-60 deg, to 2.7 km over 0-90 deg.
+Fly it with `--mission ukraine-recon` wherever a mission id is taken.
+
+## Simulated bearings (seeds 0-19, calm)
+Every group is heard (each has >= 1 truck or APC). ukraine-1: |error| median ~4.5 deg, max 12.8 deg, reported sigma
+5.2-7.1 deg. ukraine-recon (farther groups): median ~4.8 deg, max 19.7 deg, sigma 5.3-10.6 deg.
+
 ## Blockers / decisions
-- ukraine-1 is 2.0 x 1.0 km with A in the SW corner: targets fit only at 1.5-1.9 km toward 60-90 deg, and the lights
-  are hidden there (above). I am building **`ukraine-recon`** as an option (base on the plain ~7 km NE of ukraine-1,
-  3 km line of sight in almost every direction, 3.3 x 3.3 km map, targets up to 3 km). ukraine-1 stays the default
-  until the integrator decides.
+- ukraine-1 is 2.0 x 1.0 km with A in the SW corner: targets fit only at 1.5-1.9 km toward 60-90 deg, and the fence
+  lights are hidden there. ukraine-recon fixes both; ukraine-1 stays the default until the integrator decides.
+- Codes: recon-nav notes some 8-bit codes are 1 bit apart under rotation; 10-bit weight 5-7 codes with cyclic distance
+  >= 2 would be more robust (not changed: their decoder resolves it with a margin).

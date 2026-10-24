@@ -7,9 +7,9 @@ The drone gets only the result (bearing.json, same type and file as the live pat
 
 Model (mode "model", default; a heuristic budget, not a validated propagation code):
 - Sources: running vehicles (world/target_scene.json, kind "vehicle") with a band level (50-2000 Hz) at 1 m:
-  car 92, truck 102, APC 108 dB SPL. People are inaudible at km range.
+  car 92, truck 105, tracked APC 110 dB SPL (under load). People are inaudible at km range.
 - Propagation: spherical spreading + 3 dB/km (air absorption at a few hundred Hz plus ground excess attenuation
-  at grazing incidence). A truck at 1.7 km arrives at ~32 dB.
+  at grazing incidence). A truck at 1.7 km arrives at ~35 dB, an APC at 3 km at ~31 dB.
 - Noise at the array: quiet rural night 35 dB in the band, plus wind noise on the bare MEMS (25 + 20 log10(w) dB).
   Array gain 12 dB (16 mics). Detected when SNR >= 6 dB (recon-acoustic's detect_db).
 - Azimuth error = bias + noise. Noise (3 s average): 2 deg at 20 dB SNR, x 10^(-(SNR - 20) / 20), clipped to 1..15
@@ -38,7 +38,7 @@ import numpy as np
 
 from .bearing import BearingEstimate
 
-SOURCE_DB = {"car": 92.0, "truck": 102.0, "apc": 108.0}  # band level at 1 m (dB SPL, 50-2000 Hz)
+SOURCE_DB = {"car": 92.0, "truck": 105.0, "apc": 110.0}  # band level at 1 m (dB SPL, 50-2000 Hz), under load
 ARRAY_GAIN_DB = 12.0
 DETECT_SNR_DB = 6.0
 SIGMA_FLOOR_DEG = 5.0

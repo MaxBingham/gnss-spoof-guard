@@ -681,6 +681,24 @@ def _make_demo(args, reuse: LiveDemo | None = None) -> LiveDemo:
                     night=args.night, cruise_agl=args.cruise_agl, cfg=cfg)
 
 
+def ensure_thermal(mission: str | None) -> None:
+    """Night flights need world/thermal_truth.npz + onboard/thermal_prior.npz (night-thermal's model). A mission
+    prepared on the planner page right before a night flight has neither: build them (harness side, ~10-60 s)."""
+    if mission is None:
+        return
+    from sfhack.runner import resolve_mission
+
+    d = resolve_mission(mission)
+    if (d / "world" / "thermal_truth.npz").exists() and (d / "onboard" / "thermal_prior.npz").exists():
+        return
+    from sfhack.thermal.model import build_thermal
+
+    print(f"night: building the thermal model for {mission} (23:00, summer) ...", flush=True)
+    t0 = time.time()
+    build_thermal(d, hour=23.0, season="summer")
+    print(f"night: thermal model ready in {time.time() - t0:.0f} s", flush=True)
+
+
 def _composer(demo: LiveDemo, W: int, H: int) -> "Composer | NightComposer":
     return NightComposer(demo, W, H) if demo.night is not None else Composer(demo, W, H)
 
@@ -980,6 +998,8 @@ def main() -> None:
     if args.gnss is None:
         args.gnss = "ok"  # the demo starts with an honest receiver so the spoof has something to drag
     args.conditions = conditions_from_args(args)
+    if args.night:
+        ensure_thermal(args.mission)
     if args.size is None:
         args.size = RECORD_SIZE if args.record else VIEW_SIZE
     if args.headless:

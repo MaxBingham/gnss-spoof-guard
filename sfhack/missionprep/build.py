@@ -33,7 +33,9 @@ from ..geo import BBox, GeoOrigin, LatLon
 from . import lidar as L
 from .geometry import Grid, polygon_mask, sample_bilinear
 from .osm import extract_landmarks, render_osm_ground
-from .sources import SRC_OSM, FetchError, Fetcher, fetch_dem, fetch_ortho, fetch_osm
+from .sentinel import fetch_s2
+from .sources import (SRC_NAIP, SRC_OSM, FetchError, Fetcher, fetch_dem, fetch_dem_copernicus, fetch_naip_nir, fetch_ortho,
+                      fetch_osm)
 
 FORMAT = "sfhack-mission/1"
 DEFAULT_A = LatLon(37.8703, -122.2595)  # near Sather Gate (same A/B as sfhack/world/sample_berkeley)
@@ -70,6 +72,29 @@ CLOUD_NOISE_M = 0.05  # synthetic cloud range noise; real LiDAR keeps its own er
 # invisible to the estimate. Real crews take off from a level pad: the terrain under A is flattened.
 PAD_RADIUS_M = 4.0
 PAD_BLEND_M = 10.0  # linear blend back to the DEM between PAD_RADIUS_M and this radius
+
+
+# Region: the US sources (NAIP, 3DEP DEM + LiDAR) cover the conterminous US only. Elsewhere ("global"):
+# Sentinel-2 L2A 10 m RGB + NIR (sentinel.py), Copernicus GLO-30, no LiDAR (synthetic cloud from the onboard
+# map, DSM = DEM + OSM building heights).
+CONUS = BBox(24.4, -125.0, 49.4, -66.9)
+
+
+def is_us(bbox: BBox) -> bool:
+    return (CONUS.south <= bbox.south and bbox.north <= CONUS.north and CONUS.west <= bbox.west
+            and bbox.east <= CONUS.east)
+
+
+def _s2_ortho(f: Fetcher, bbox: BBox, grid: Grid) -> tuple[np.ndarray, dict[str, Any]]:
+    """Sentinel-2 as the ortho layer: RGB plus NIR / NDVI carried in the source block (popped by the build)."""
+    rgb, nir, ndvi, src = fetch_s2(f, bbox, grid)
+    return rgb, {**src, "_nir": nir, "_ndvi": ndvi}
+
+
+def ndvi_png(rgb: np.ndarray, nir: np.ndarray) -> np.ndarray:
+    """(NDVI + 1) x 127.5 from the ortho's red channel and an 8-bit NIR band (NAIP DNs: uncalibrated)."""
+    r, n = rgb[..., 0].astype(np.float32), nir.astype(np.float32)
+    return np.clip(((n - r) / np.maximum(n + r, 1.0) + 1.0) * 127.5 + 0.5, 0, 255).astype(np.uint8)
 
 
 def missions_dir() -> Path:
@@ -200,7 +225,7 @@ def lidar_dsm(xyz: np.ndarray, g: Grid) -> np.ndarray:
     return out.reshape(g.shape)
 
 
-def required_z(dsm: np.ndarray, dtm: np.ndarray, g: Grid) -> tuple[np.ndarray, Grid]:
+def required_z(dsm: np.ndarray, dtm: np.ndarray, g: Grid, min_agl: float = MIN_AGL_M) -> tuple[np.ndarray, Grid]:
     """Altitude the drone needs over each ROUTE_CELL_M cell (obstacles within OBSTACLE_MARGIN_M count)."""
     k = max(1, int(round(ROUTE_CELL_M / g.res)))
     R, C = g.rows // k, g.cols // k
@@ -212,16 +237,16 @@ def required_z(dsm: np.ndarray, dtm: np.ndarray, g: Grid) -> tuple[np.ndarray, G
     disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
     surf = cv2.dilate(pool(dsm), disk)
     ground = cv2.dilate(pool(dtm), disk)
-    return np.maximum(surf + CLEARANCE_M, ground + MIN_AGL_M), Grid(g.min_x, g.max_y, k * g.res, R, C)
+    return np.maximum(surf + CLEARANCE_M, ground + min_agl), Grid(g.min_x, g.max_y, k * g.res, R, C)
 
 
 def plan_route(a: np.ndarray, b: np.ndarray, a_z: float, b_z: float, dsm: np.ndarray, dtm: np.ndarray, g: Grid,
-               mc: MissionConfig) -> tuple[list[dict[str, Any]], list[dict[str, float]]]:
+               mc: MissionConfig, min_agl: float = MIN_AGL_M) -> tuple[list[dict[str, Any]], list[dict[str, float]]]:
     """Waypoints A -> B on the onboard DSM: takeoff, stepped cruise legs, descend, land (ENU, z absolute)."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import dijkstra
 
-    req, g4 = required_z(dsm, dtm, g)
+    req, g4 = required_z(dsm, dtm, g, min_agl)
     R, C = g4.shape
 
     def cell(p: np.ndarray) -> tuple[int, int]:
@@ -340,15 +365,23 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
                     mission_id: str | None = None, *, force: bool = False, offline: bool = False,
                     no_lidar: bool = False, log: Callable[[str], None] = print,
                     downloads: dict[str, Callable[..., Any]] | None = None,
-                    progress: Callable[[float, str], None] | None = None) -> dict[str, Any]:
+                    progress: Callable[[float, str], None] | None = None,
+                    region: str = "auto", min_agl_m: float = MIN_AGL_M) -> dict[str, Any]:
     """Build (or reuse) $SFHACK_DATA/missions/<id>. Returns the build report. `downloads` replaces layer
-    fetchers by name (osm, ortho, terrain, lidar; same signatures as the defaults): offline tests."""
+    fetchers by name (osm, ortho, terrain, lidar, nir; same signatures as the defaults): offline tests.
+    `region` "us" / "global" / "auto" (CONUS bbox test) picks the imagery / terrain / LiDAR sources;
+    `min_agl_m` is the minimum cruise height above the onboard DTM the route is planned for."""
     prog = progress or (lambda frac, stage: None)
     t_start = time.time()
     mid = mission_id or default_mission_id(a, b, radius_m)
     mdir = mission_dir(mid)
     inputs = {"format": FORMAT, "a": [a.lat, a.lon], "b": [b.lat, b.lon], "radius_m": float(radius_m),
               "no_lidar": no_lidar}
+    # only non-defaults enter the inputs, so missions prepared before these options still count as complete
+    if region != "auto":
+        inputs["region"] = region
+    if min_agl_m != MIN_AGL_M:
+        inputs["min_agl_m"] = float(min_agl_m)
     if not force and _is_complete(mdir, inputs):
         rep = json.loads((mdir / "build_report.json").read_text(encoding="utf-8"))
         log(f"mission {mid}: already prepared ({rep['total_seconds']:.1f} s build), reusing {mdir}")
@@ -364,18 +397,26 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
         f"(A/B + {MARGIN_M:.0f} m): S {bbox.south:.5f} W {bbox.west:.5f} N {bbox.north:.5f} E {bbox.east:.5f}")
     prog(0.02, "download")
 
+    us = is_us(bbox) if region == "auto" else region == "us"
+    log(f"region: {'US (NAIP, 3DEP, 3DEP LiDAR)' if us else 'global (Sentinel-2 L2A, Copernicus GLO-30, no LiDAR)'}")
     f = Fetcher(offline=offline, log=log)
-    layers: dict[str, Layer] = {k: Layer(k) for k in ("osm", "ortho", "terrain", "lidar")}
+    layers: dict[str, Layer] = {k: Layer(k) for k in ("osm", "ortho", "terrain", "lidar", "nir")}
     results: dict[str, Any] = {}
     deadline = time.time() + LIDAR_TIMEBOX_S
-    with ThreadPoolExecutor(4) as ex:
-        dl = {"osm": fetch_osm, "ortho": fetch_ortho, "terrain": fetch_dem, "lidar": _fetch_lidar, **(downloads or {})}
+    with ThreadPoolExecutor(5) as ex:
+        dl = ({"osm": fetch_osm, "ortho": fetch_ortho, "terrain": fetch_dem, "lidar": _fetch_lidar, "nir": fetch_naip_nir}
+              if us else {"osm": fetch_osm, "ortho": _s2_ortho, "terrain": fetch_dem_copernicus})
+        if downloads:  # tests: replaced fetchers only; no NIR unless given
+            dl = {k: v for k, v in dl.items() if k != "nir"} | downloads
         jobs = {ex.submit(_timed, dl["osm"], f, bbox): "osm",
                 ex.submit(_timed, dl["ortho"], f, bbox, g_ortho): "ortho",
                 ex.submit(_timed, dl["terrain"], f, bbox, g_dem): "terrain"}
-        if not no_lidar:
+        if not no_lidar and "lidar" in dl:
             jobs[ex.submit(_timed, dl["lidar"], f, bbox, deadline)] = "lidar"
-        log("downloading OSM (Overpass), orthophoto (NAIP), terrain (3DEP), LiDAR (3DEP EPT) in parallel ...")
+        if "nir" in dl:
+            jobs[ex.submit(_timed, dl["nir"], f, bbox, g_ortho)] = "nir"
+        log("downloading " + ("OSM (Overpass), orthophoto + NIR (NAIP), terrain (3DEP), LiDAR (3DEP EPT)" if us else
+                              "OSM (Overpass), Sentinel-2 L2A (RGB, NIR), terrain (Copernicus GLO-30)") + " in parallel ...")
         done = 0
         for fut in as_completed(jobs):
             name = jobs[fut]
@@ -437,7 +478,8 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
         log(f"lidar: {len(cloud_xyz):,} points from {lidar_info['collection_name']} ({lidar_info['nodes']} EPT nodes)")
     else:
         layers["lidar"].source = "synthetic (sampled from the onboard building meshes + terrain)"
-        layers["lidar"].note = layers["lidar"].note or "disabled (--no-lidar)"
+        layers["lidar"].note = layers["lidar"].note or ("disabled (--no-lidar)" if no_lidar or us else
+                                                        "no open LiDAR outside the US")
     prog(0.7, "landmarks")
 
     # ---- truth landmarks: base on the terrain, untagged heights from the LiDAR where there is one
@@ -464,10 +506,25 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
     log(f"osm: {counts}; building heights from {hs}")
 
     # ---- ortho
+    nir = ndvi = None
+    nir_meta: dict[str, Any] = {}
     if results.get("ortho") is not None:
         ortho, ortho_src = results["ortho"]
+        ortho_src = dict(ortho_src)
+        nir, ndvi = ortho_src.pop("_nir", None), ortho_src.pop("_ndvi", None)
+        if nir is not None:  # Sentinel-2: NIR / NDVI from the same scene, calibrated reflectance
+            nir_meta = {"source": ortho_src["name"], "scene": ortho_src.get("scene"), "native_res_m": 10.0,
+                        "nir_png": ortho_src.get("nir_png"), "ndvi_png": ortho_src.get("ndvi_png")}
+            layers["nir"].source = f"Sentinel-2 B08 / B04 ({ortho_src.get('scene')})"
         sources.append({k: v for k, v in ortho_src.items() if k in ("name", "license", "attribution", "url")})
-        layers["ortho"].source = ortho_src["name"]
+        layers["ortho"].source = ortho_src["name"] + (f" ({ortho_src['scene']}, {ortho_src['date']})"
+                                                      if "scene" in ortho_src else "")
+        if nir is None and results.get("nir") is not None and ortho_src["name"] == SRC_NAIP["name"]:
+            nir, nsrc = results["nir"]
+            ndvi = ndvi_png(ortho, nir)
+            nir_meta = {"source": nsrc["name"], "native_res_m": nsrc.get("native_res_m"), "nir_png": nsrc.get("band"),
+                        "ndvi_png": "(NDVI + 1) x 127.5 from ortho red + NIR DNs (uncalibrated)"}
+            layers["nir"].source = nsrc.get("band", "")
     else:
         ortho = render_osm_ground(osm, origin, extent, (g_ortho.cols, g_ortho.rows))
         ortho_src = {"name": "OSM-rendered (no imagery available)"}
@@ -496,6 +553,14 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
               "object_format": {"mesh": "STL path, absolute or relative to world/", "pos": "[x, y, z] ENU m (z optional: "
                                 "true ground)", "yaw_deg": "about +z, 0 = +x (east), CCW", "scale": 1.0, "rgba": [0.85, 0.85, 0.85, 1]}}
     (wdir / "target_scene.json").write_text(json.dumps(target, indent=2), encoding="utf-8")
+    # raw OSM as downloaded (roads with highway / surface tags, landuse, parking, water: the thermal model needs them)
+    (wdir / "osm.json").write_text(json.dumps(osm, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+    world_files = ["manifest.json", "landmarks.json", "ortho.jpg", "terrain.npz", "target_scene.json", "osm.json"]
+    if nir is not None:
+        Image.fromarray(nir).save(wdir / "nir.png")
+        Image.fromarray(ndvi).save(wdir / "ndvi.png")
+        world_files += ["nir.png", "ndvi.png"]
+        nir_meta = {"file": "nir.png", "ndvi_file": "ndvi.png", "grid": "same as ortho.jpg", **nir_meta}
     common = {
         "bbox": {"south": bbox.south, "west": bbox.west, "north": bbox.north, "east": bbox.east},
         "origin": {"lat": origin.lat, "lon": origin.lon},
@@ -514,8 +579,10 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
         "terrain": {"file": "terrain.npz", "source": dem_src["product"], **g_hf.meta()},
         "buildings": "extruded",
         "ortho": ortho_meta,
+        **({"nir": nir_meta} if nir is not None else {}),
+        "region": "us" if us else "global",
         "sources": sources, "attribution": attribution, "landmark_counts": counts, "hand_made": False,
-        "files": ["manifest.json", "landmarks.json", "ortho.jpg", "terrain.npz", "target_scene.json"],
+        "files": world_files,
     }
     (wdir / "manifest.json").write_text(json.dumps(world_manifest, indent=2), encoding="utf-8")
     t_world = time.time() - t0
@@ -531,6 +598,9 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
     Image.fromarray(degrade_ortho(ortho, rng)).save(odir / "ortho.jpg", quality=80)
     (odir / "landmarks.json").write_text(json.dumps(ob_lms, separators=(",", ":")), encoding="utf-8")
     np.savez_compressed(odir / "dsm.npz", dsm=ob_dsm, dtm=ob_dtm, **{k: np.float64(v) for k, v in g_dem.meta().items()})
+    if nir is not None:  # same pixels, 0.5 px blur like the onboard ortho (no extra random draws: rebuilds reproduce)
+        for name, arr in (("nir.png", nir), ("ndvi.png", ndvi)):
+            Image.fromarray(cv2.GaussianBlur(arr, (0, 0), 0.5)).save(odir / name)
     t_dsm = time.time() - t0
 
     # map_cloud.ply
@@ -557,14 +627,14 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
     warnings = []
     if b_surface - b_ground > 1.5:
         warnings.append(f"B is under/on a mapped object ({b_surface - b_ground:.1f} m above ground): pick open ground")
-    route, legs = plan_route(a_xy, b_xy, 0.0, b_ground, ob_dsm, ob_dtm, g_dem, mc)
+    route, legs = plan_route(a_xy, b_xy, 0.0, b_ground, ob_dsm, ob_dtm, g_dem, mc, min_agl_m)
     mission = {
         "version": 1, "format": FORMAT, "mission_id": mid, "created_at": now,
         "frame": "local ENU (x=east, y=north, z=up) m; origin and z datum in manifest.json",
         "a": {"lat": a.lat, "lon": a.lon, "enu": [round(float(v), 2) for v in a_xy], "ground_z": 0.0},
         "b": {"lat": b.lat, "lon": b.lon, "enu": [round(float(v), 2) for v in b_xy], "ground_z": round(b_ground, 2),
               "search_radius_m": float(radius_m)},
-        "cruise": {"speed_m_s": mc.cruise_speed, "clearance_m": CLEARANCE_M, "min_agl_m": MIN_AGL_M,
+        "cruise": {"speed_m_s": mc.cruise_speed, "clearance_m": CLEARANCE_M, "min_agl_m": float(min_agl_m),
                    "obstacle_margin_m": OBSTACLE_MARGIN_M, "max_leg_m": LEG_MAX_M,
                    "max_z": max(w["enu"][2] for w in route), "legs": legs},
         "route": route,
@@ -592,6 +662,10 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
                                                                                                "points": int(len(cxyz))}),
         "mission": ("mission.json", "A, B, search radius, route, target_scene", {}),
     }
+    if nir is not None:
+        files["nir"] = ("nir.png", "near infrared, 8-bit, ortho grid (" + str(nir_meta.get("nir_png")) + ")",
+                        {"native_res_m": nir_meta.get("native_res_m")})
+        files["ndvi"] = ("ndvi.png", "NDVI, 8-bit (NDVI + 1) x 127.5, ortho grid", {})
     layer_meta = {}
     for key, (fn, desc, extra) in files.items():
         p = odir / fn
@@ -602,6 +676,8 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
         "ortho": {**ortho_meta, "processing": "photometric copy of the world ortho (gamma, contrast, saturation, "
                                               "0.5 px blur, JPEG q80)"},
         "dsm": {"file": "dsm.npz", **g_dem.meta()},
+        **({"nir": {**nir_meta, "processing": "copy of the world band, 0.5 px blur"}} if nir is not None else {}),
+        "region": "us" if us else "global",
         "map_cloud": {"file": "map_cloud.ply", "kind": cloud_kind, "voxel_m": CLOUD_VOXEL, "points": int(len(cxyz)),
                       **({"lidar": lidar_info} if cloud_kind == "real" else {})},
         "layers": layer_meta,
@@ -629,6 +705,7 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
             "ortho": {"seconds": round(layers["ortho"].seconds, 1), "source": layers["ortho"].source, "note": layers["ortho"].note},
             "terrain": {"seconds": round(layers["terrain"].seconds, 1), "source": layers["terrain"].source,
                         "note": layers["terrain"].note},
+            "nir": {"seconds": round(layers["nir"].seconds, 1), "source": layers["nir"].source, "note": layers["nir"].note},
             "lidar": {"seconds": round(t_cloud, 1), "source": layers["lidar"].source, "note": layers["lidar"].note,
                       "kind": cloud_kind},
             "world_build": {"seconds": round(t_world, 1)},
@@ -637,7 +714,7 @@ def prepare_mission(a: LatLon = DEFAULT_A, b: LatLon = DEFAULT_B, radius_m: floa
         },
         "sizes_bytes": {**{f"world/{p.name}": p.stat().st_size for p in sorted(wdir.iterdir())},
                         **{f"onboard/{p.name}": p.stat().st_size for p in sorted(odir.iterdir())}},
-        "warnings": warnings,
+        "warnings": warnings, "region": "us" if us else "global",
     }
     (mdir / "build_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     log(f"mission {mid} prepared in {total:.1f} s -> {mdir}")

@@ -3,6 +3,7 @@
     python -m sfhack.missionprep serve [--port 8765]               # browser page: pick A / B, prepare, upload
     python -m sfhack.missionprep build                              # default Berkeley A / B
     python -m sfhack.missionprep build --a 37.8703 -122.2595 --b 37.8754 -122.2590 --radius 30 --id berkeley
+    python -m sfhack.missionprep build --a 49.2244 23.3220 --b 49.2300 23.3456 --id ukraine-1 --agl 60   # Sentinel-2
     python -m sfhack.missionprep upload <id> [--mbps 2]            # simulated link upload + checksum check
     python -m sfhack.missionprep list
 """
@@ -32,6 +33,9 @@ def main() -> None:
     b.add_argument("--force", action="store_true", help="rebuild even if the mission exists (downloads stay cached)")
     b.add_argument("--offline", action="store_true", help="cache only, no network")
     b.add_argument("--no-lidar", action="store_true", help="skip 3DEP LiDAR, use the synthetic cloud")
+    b.add_argument("--region", choices=("auto", "us", "global"), default="auto",
+                   help="data sources: us = NAIP / 3DEP / LiDAR, global = Sentinel-2 / GLO-30 (auto: by bbox)")
+    b.add_argument("--agl", type=float, default=None, help="minimum cruise height above ground for the route (m)")
     u = sub.add_parser("upload", help="simulated upload of the onboard package to the drone")
     u.add_argument("id")
     u.add_argument("--mbps", type=float, default=2.0, help="link bandwidth in MB/s")
@@ -47,7 +51,8 @@ def main() -> None:
         uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     elif args.cmd == "build":
         rep = prepare_mission(LatLon(*args.a), LatLon(*args.b), args.radius, args.id, force=args.force,
-                              offline=args.offline, no_lidar=args.no_lidar)
+                              offline=args.offline, no_lidar=args.no_lidar, region=args.region,
+                              **({"min_agl_m": args.agl} if args.agl is not None else {}))
         print(summarize(rep))
         print(f"\nfly it:  uv run python demos/demo_live.py --mission {rep['mission_id']}")
     elif args.cmd == "upload":

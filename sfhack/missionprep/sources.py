@@ -133,6 +133,39 @@ class Fetcher:
                     time.sleep(1.5 * (attempt + 1))
         raise FetchError(f"{url}: {err!r}")
 
+    def get_range(self, url: str, start: int, end: int, timeout: float = 60.0, retries: int = 2) -> bytes:
+        """Bytes [start, end] (inclusive) of a remote file by HTTP range request, cached like `get`."""
+        path = self._path(json.dumps([url, {"range": [start, end]}, {}], sort_keys=True))
+        if path.exists():
+            b = path.read_bytes()
+            with self.lock:
+                self.bytes_cache += len(b)
+            return b
+        if self.offline:
+            raise FetchError(f"offline and not cached: {url} [{start}-{end}]")
+        err: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                r = self.client.get(url, headers={"Range": f"bytes={start}-{end}"}, timeout=timeout)
+                if r.status_code in (429, 502, 503, 504):
+                    raise FetchError(f"HTTP {r.status_code}")
+                r.raise_for_status()
+                b = r.content
+                if r.status_code == 200:  # server ignored the range
+                    b = b[start:end + 1]
+                with self.lock:
+                    self.bytes_net += len(b)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(f".tmp{threading.get_ident()}")
+                tmp.write_bytes(b)
+                tmp.replace(path)
+                return b
+            except (httpx.HTTPError, FetchError) as e:
+                err = e
+                if attempt < retries:
+                    time.sleep(1.5 * (attempt + 1))
+        raise FetchError(f"{url} [{start}-{end}]: {err!r}")
+
 
 def _is_image(r: httpx.Response) -> None:
     if not r.headers.get("content-type", "").startswith("image"):
@@ -319,6 +352,32 @@ def fetch_dem(f: Fetcher, bbox: BBox, grid: Grid) -> tuple[np.ndarray, dict[str,
 
         dem = resample(dem, dem_grid, grid)
     return dem.astype(np.float32), src
+
+
+def fetch_dem_copernicus(f: Fetcher, bbox: BBox, grid: Grid) -> tuple[np.ndarray, dict[str, Any]]:
+    """Outside the US: Copernicus GLO-30 straight away (3DEP has nothing there). GLO-30 is a surface model:
+    forest canopy and dense buildings are part of it."""
+    from .geometry import resample
+
+    dem, dem_grid = _copernicus(f, bbox, grid)
+    src = {**SRC_COP, "product": "Copernicus GLO-30 DSM", "native_res_m": 30.0, "vertical_datum": "EGM2008 (m)"}
+    return resample(dem, dem_grid, grid).astype(np.float32), src
+
+
+def fetch_naip_nir(f: Fetcher, bbox: BBox, grid: Grid) -> tuple[np.ndarray, dict[str, Any]]:
+    """NAIP band 4 (near infrared, 8-bit DN) on `grid`; the RGB ortho export drops it."""
+    w, h = grid.cols, grid.rows
+    s = min(1.0, MAX_EXPORT_PX / max(w, h))
+    rw, rh = max(1, round(w * s)), max(1, round(h * s))
+    params = {"bbox": f"{bbox.west},{bbox.south},{bbox.east},{bbox.north}", "bboxSR": 4326, "imageSR": 4326,
+              "size": f"{rw},{rh}", "format": "png", "bandIds": "3", "pixelType": "U8",
+              "interpolation": "RSP_BilinearInterpolation", "f": "image"}
+    img = Image.open(io.BytesIO(f.get(NAIP_EXPORT, params, timeout=90.0, check=_is_image))).convert("L")
+    if img.size != (rw, rh) or not _real_imagery(img):
+        raise FetchError(f"NAIP NIR export returned {img.size}, expected {(rw, rh)} / blank")
+    img = img.resize((w, h), Image.Resampling.LANCZOS) if img.size != (w, h) else img
+    return np.asarray(img), {**SRC_NAIP, "band": "NAIP band 4 (NIR), 8-bit DN", "native_res_m": 0.6,
+                             "request_px": [rw, rh]}
 
 
 def _copernicus(f: Fetcher, bbox: BBox, grid: Grid) -> tuple[np.ndarray, Grid]:

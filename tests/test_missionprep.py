@@ -247,3 +247,36 @@ def test_fly_endpoint_launches_one_viewer(mission: str, monkeypatch: pytest.Monk
     c.post("/api/fly/stop")
     s = c.get("/api/fly/status").json()
     assert s["state"] == "stopped" and "log_tail" not in s
+
+
+def test_utm_projection_basics() -> None:
+    from sfhack.missionprep.sentinel import latlon_to_utm, utm_zone
+
+    assert utm_zone(23.32) == 34 and utm_zone(-122.26) == 10
+    e, n = latlon_to_utm(np.array([0.0, 49.0, 49.0]), np.array([21.0, 21.0, 22.0]), 34)
+    assert e[0] == pytest.approx(500000.0) and n[0] == pytest.approx(0.0, abs=1e-6)
+    assert e[1] == pytest.approx(500000.0)
+    assert n[1] == pytest.approx(5427455.78, abs=0.01)  # 0.9996 x meridian arc to 49 deg (5429627.63 m, quadrature)
+    assert e[2] - 500000.0 == pytest.approx(73.13e3, rel=0.01)  # 1 deg of longitude at 49 N, x 0.9996
+
+
+def test_global_region_writes_nir_ndvi_and_raw_osm(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SFHACK_DATA", str(tmp_path))
+
+    def fake_s2(f: Fetcher, bbox: BBox, grid: Grid) -> tuple[np.ndarray, dict]:
+        rgb, src = fake_ortho(f, bbox, grid)
+        nir = np.full(grid.shape, 128, np.uint8)
+        return rgb, {**src, "scene": "TEST", "date": "2025-08-28", "_nir": nir, "_ndvi": nir}
+
+    rep = build.prepare_mission(A, B, 25.0, "test-global", log=lambda s: None, region="global", min_agl_m=60.0,
+                                downloads={"osm": fake_osm, "ortho": fake_s2, "terrain": fake_dem})
+    d = build.mission_dir(rep["mission_id"])
+    assert rep["region"] == "global" and rep["inputs"]["region"] == "global"
+    assert rep["layers"]["lidar"]["kind"] == "synthetic"
+    for sub in ("world", "onboard"):
+        assert (d / sub / "nir.png").exists() and (d / sub / "ndvi.png").exists()
+    assert json.loads((d / "world" / "osm.json").read_text(encoding="utf-8"))["elements"]
+    om = json.loads((d / "onboard" / "manifest.json").read_text(encoding="utf-8"))
+    assert "nir" in om["layers"] and om["region"] == "global"
+    mission = json.loads((d / "onboard" / "mission.json").read_text(encoding="utf-8"))
+    assert mission["cruise"]["min_agl_m"] == 60.0

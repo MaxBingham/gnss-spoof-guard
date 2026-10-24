@@ -262,14 +262,19 @@ class TrackerPilot(BearingPilot):
 
     def _report(self, t: float, est: PoseEstimate) -> None:
         trk = self.tracker.track
-        p, v = trk.pos, trk.vel
+        p, v, sig = trk.pos, trk.vel, trk.sigma_h()
+        if self.state == "LOST":  # not seen: report the prediction (bearing / constant velocity), honestly wide
+            p = self.lost_prediction(t)
+            v = self.lost_vel.copy()
+            a = self.lost_area(t)
+            sig = a["across"] / 2 if a["mode"] == "bearing" else a["radius"]
         snap = self.last_snapshot
         self.report_seq += 1
         self.outbox.put(EnemyReport(
             t=t, seq=self.report_seq, state=self.state, pos=p, agl=float(p[2] - self.terrain(p[0], p[1])),
             speed=float(math.hypot(v[0], v[1])), heading_deg=math.degrees(math.atan2(v[0], v[1])) % 360.0,
             climb=float(v[2]), confidence=self.tracker.confidence() if self.state == "TRACKING" else 0.0,
-            sigma_m=trk.sigma_h(), range_m=float(np.linalg.norm(p - est.pos)), own_pos=est.pos.copy(),
+            sigma_m=sig, range_m=float(np.linalg.norm(p - est.pos)), own_pos=est.pos.copy(),
             snapshot=None if snap is None else snap[0], snapshot_jpg=b"" if snap is None else snap[1]))
 
     # ------------------------------------------------------------------ mission (IMU rate)
@@ -349,6 +354,12 @@ class TrackerPilot(BearingPilot):
             e = trk.pos_at(t)
             self.yaw = math.atan2(e[1] - est.pos[1], e[0] - est.pos[0])
             self._look_at(t, est, e)
+            rel = est.pos - e
+            d3 = float(np.linalg.norm(rel))
+            if d3 < self.tcfg.min_dist_m:  # re-acquired too close: back off at once, as in TRACKING
+                away = rel / max(d3, 1e-6)
+                self.v = away * 4.0 * (self.tcfg.min_dist_m - d3 + 1.0)
+                self.sp = est.pos + away * 2.0
 
     def _tracking(self, est: PoseEstimate, t: float, dt: float) -> None:
         tc = self.tcfg
@@ -392,12 +403,13 @@ class TrackerPilot(BearingPilot):
         u = rad / max(float(np.linalg.norm(rad)), 1e-6)
         if self.lost_mode == "track" and float(np.linalg.norm(self.lost_vel[:2])) > 0.5:
             u = -self.lost_vel[:2] / float(np.linalg.norm(self.lost_vel[:2]))
-        watch = tgt[:2] - u * tc.lost_standoff_m  # ahead of the point, where the enemy is heading (the base side)
-        sweep = tc.lost_pattern_m * math.sin(2 * math.pi * (t - self.t_state) / tc.lost_pattern_s)
-        goal = watch + u * sweep
-        far = float(np.linalg.norm(watch - est.pos[:2])) > tc.lost_pattern_m + 10.0
+        # sweep forward / backward along the line, always ahead of the point (where the enemy is heading) and never
+        # through it: the enemy is unseen here, so the standoff must hold whatever the prediction error
+        sweep = 0.5 + 0.5 * math.sin(2 * math.pi * (t - self.t_state) / tc.lost_pattern_s)
+        goal = tgt[:2] - u * (tc.lost_standoff_m + tc.lost_pattern_m * sweep)
+        far = float(np.linalg.norm(goal - est.pos[:2])) > tc.lost_pattern_m + 10.0
         self._move_xy(goal, tc.track_speed_max if far else 6.0, dt)
-        z_goal = max(tgt[2] + tc.track_above_m, float(self.terrain(*self.sp[:2])) + 12.0)
+        z_goal = max(tgt[2] + tc.track_above_m + 6.0, float(self.terrain(*self.sp[:2])) + 12.0)
         self.v[2] = float(np.clip(0.6 * (z_goal - self.sp[2]), -self.plan.sink, self.plan.climb))
         self.sp[2] += self.v[2] * dt
         self.yaw = math.atan2(tgt[1] - est.pos[1], tgt[0] - est.pos[0])

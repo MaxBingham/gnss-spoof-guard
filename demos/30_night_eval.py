@@ -35,6 +35,7 @@ from pathlib import Path
 import numpy as np
 
 SUCCESS_M = 5.0
+ROUGH_COST = {"ukraine-1": 5.0, "m-c804bb84": 1.7, "berkeley": 1.0}  # relative wall time per flight (scheduling)
 ROWS = {
     "thermal": {"night": True},
     "imu_trn": {"night": True, "thermal_method": "off"},
@@ -120,6 +121,7 @@ def fly(job: dict) -> dict:
     trace = []
     next_trace = 0.0
     landed_at = None
+    next_div, diverged = 0.0, None
     max_t = cfg.sim.max_time_s
     while fs.t < max_t:
         fs.step()
@@ -146,6 +148,11 @@ def fly(job: dict) -> dict:
                           round(float(est.sigma2_horizontal()), 2)])
         if arrival is not None and not job["to_landing"] and fs.t - arrival["t"] >= 1.0:
             break
+        if arrival is None and fs.t >= next_div:  # harness economy: an estimate this far off never comes back
+            next_div = fs.t + 1.0
+            if float(np.linalg.norm(ap.pose().pos[:2] - tr.pos[:2])) > job["abort_err"]:
+                diverged = fs.t
+                break
         if fs.done:
             landed_at = landed_at if landed_at is not None else fs.t
             if fs.t - landed_at >= 1.0:
@@ -162,7 +169,8 @@ def fly(job: dict) -> dict:
     fix_sources = dict(getattr(fs, "night_fix_counts", {}) or {})
     out = {**job, "arrival": arrival, "arrived": arrival is not None,
            "arrival_err": arrival["err"] if arrival else float(np.linalg.norm(fs.truth.state().pos[:2] - goal)),
-           "final_err": r.final_error, "outcome": r.outcome, "landed": r.landed, "t_end": fs.t,
+           "final_err": r.final_error, "outcome": "DIVERGED" if diverged is not None else r.outcome,
+           "diverged_t": diverged, "landed": r.landed, "t_end": fs.t,
            "gnss_off_t": gnss_off_t, "route_len_m": round(route_len, 1), "est_err_mean": r.est_err_mean,
            "est_err_max": r.est_err_max, "health": r.health_states, "counters": counters, "fix_sources": fix_sources,
            "decisions": [(round(t, 1), s) for t, s in ap.decisions][-40:], "trace": trace, "notes": notes,
@@ -239,13 +247,20 @@ def main() -> None:
     ap.add_argument("--gnss-off-frac", type=float, default=0.2)
     ap.add_argument("--cruise-agl", type=float, default=60.0)
     ap.add_argument("--to-landing", action="store_true", help="fly on after arrival and record the landed error")
+    ap.add_argument("--abort-err", type=float, default=500.0, help="stop a flight once |estimate - truth| exceeds "
+                    "this (m) before arrival: scored as a failure (DIVERGED)")
+    ap.add_argument("--only", default="", help="restrict to mission:row pairs, comma separated")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     out = Path(args.out) if args.out else data_dir() / "night" / "eval" / datetime.now().strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
     jobs = [{"mission": m, "row": row, "seed": s, "gnss_off_frac": args.gnss_off_frac, "cruise_agl": args.cruise_agl,
-             "to_landing": args.to_landing}
+             "to_landing": args.to_landing, "abort_err": args.abort_err}
             for m in args.missions.split(",") for row in args.rows.split(",") for s in range(args.seed0, args.seed0 + args.seeds)]
+    if args.only:  # "mission:row" pairs, e.g. ukraine-1:straight
+        keep = set(args.only.split(","))
+        jobs = [j for j in jobs if f"{j['mission']}:{j['row']}" in keep]
+    jobs.sort(key=lambda j: -ROUGH_COST.get(j["mission"], 1.0))  # longest flights first: better packing
     print(f"{len(jobs)} flights on {args.workers} workers -> {out}", flush=True)
     results, t0 = [], time.time()
     with ProcessPoolExecutor(args.workers) as ex:

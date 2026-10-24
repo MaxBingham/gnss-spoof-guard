@@ -14,11 +14,11 @@ uv run python -m sfhack.missionprep list   # berkeley, m-c804bb84, ukraine-1 mus
 Missions need `world/thermal_truth.npz` + `onboard/thermal_prior.npz`; if missing:
 `uv run python -m sfhack.thermal build --mission ukraine-1`.
 
-Backup videos (if the live sim misbehaves), in `$env:SFHACK_DATA\night\demo\`: `berkeley_night_v2.mp4` (77 s,
-2x, N at 40 s) and `ukraine-1_night_v2.mp4` (80 s, 4x, N at 76 s, ends "ABOVE B 3.8 m from B"); 1920x1080, mp4v
-codec (no ffmpeg on this machine: play with VLC or a browser). The files without `_v2` are the same flights but end
-on the landing-outcome banner (landing is not part of tonight's scenario): prefer v2. Both were recorded before
-night-nav's tilt-bias fix (651b398), on code night-demo 9141527.
+Backup videos (if the live sim misbehaves), in `$env:SFHACK_DATA\night\demo\`, final build (b5409f4):
+**`ukraine-1_night_final.mp4`** (80 s, 4x, N at 76 s, ends "ABOVE B 1.5 m from B") and
+**`berkeley_night_final.mp4`** (2x, N at 40 s). 1920x1080, mp4v codec (no ffmpeg on this machine: play with VLC or
+a browser). Older takes: `*_v2.mp4` (before the tilt-bias fix, ukraine ends 3.8 m), `*_night.mp4` (end on the
+landing-outcome banner; landing is not part of tonight's scenario).
 
 ## Live, option A: straight from the terminal
 
@@ -65,8 +65,9 @@ What to point at:
   thermal at 23:00. The drone matches its thermal camera against that prediction to know where it is."
 - "We plan the route where the camera will see roads. If it sees nothing, it keeps flying on inertial and
   terrain matching and tells you honestly how uncertain it is."
-- Result (fill from the final table): "<X>/20 flights end within 5 m of B in Berkeley, <Y>/20 in the
-  Ukraine mission, GNSS off from 20 % of the route."
+- Result (simulation, 20 flights per mission, GNSS off from 20 % of the route): "20 of 20 flights end within 5 m
+  of B in Berkeley, 20 of 20 over the hills, 20 of 20 in the Ukraine mission, typically 1-2 m. Without the thermal
+  camera, the same drone gets 0 of 20 in Ukraine." (Table: REPORT_night-demo.md; simulated thermal world.)
 
 Real-data backing (night-research NIGHT_NOTES v4, branch night-research, docs/night_research/): ASTER satellite
 night thermal (90 m, ~23:00) shows the paved road grid on hot summer nights (Fresno, 6 nights Jun-Jul; Davis July

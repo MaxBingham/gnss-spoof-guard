@@ -43,7 +43,8 @@ Reading it:
 - **ukraine-1: 15/20** with thermal (before the tilt fix): 3 runaways right after GNSS off, two at 17 / 25 m.
   IMU + TRN alone: 0/20 (every flight diverges in calm air, see "What failed").
 - **Route choice matters on ukraine-1**: the straight route over the forest diverges in 9/20 flights (11/20 within
-  5 m) vs 3/20 along the roads (15/20). n = 20 per row: suggestive (divergences 9 vs 3, Fisher p ~ 0.08), not
+  5 m) vs 3/20 along the roads (15/20). n = 20 per row: suggestive (divergences 9 vs 3, Fisher p = 0.08;
+  within 5 m 11 vs 15, p = 0.32), not
   conclusive. When the straight flight survives it is slightly more precise (shorter blind time at B).
 - **Mild night (0.4x contrast)**: berkeley 18/20 (two runaways), ukraine-1 11/20. Matching is scale-invariant, so
   most flights hold; the losses are runaways, the same failure mode as above.

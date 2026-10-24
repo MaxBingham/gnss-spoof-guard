@@ -13,14 +13,21 @@ and match the live thermal image against that prediction.
 - The premise holds, with corrections:
   - **Asphalt is the warmest common surface at night**, about 4-8 K above the air at 23:00.
   - **Grass is the coldest**, about 2-5 K below the air.
-  - The asphalt-grass contrast is **5-10 K**. That is 100-200 times the camera noise (NETD).
+  - The asphalt-grass contrast is **5-10 K after a hot clear day** (model + field measurements). That is
+    100-200 times the camera noise (NETD). On mild nights it can be only ~1-3 K (section 6).
 - Corrections to the plan's assumptions:
   - **Water is warm, not cool.**
   - **Trees are warmer than lawns.**
   - **Insulated roofs are cold**, not warm. Only heavy concrete roofs stay warm.
   - **Unpaved roads are unreliable.**
-- A real night thermal satellite scene over Berkeley (ASTER, 23:12 PDT, see section 6) confirms the
-  ranking: built-up and road-dense areas warm, tree cover and grass cool, the Bay warm.
+- Real night thermal satellite scenes over Berkeley (ASTER, 23:13-23:18 PDT, 90 m, 4 clear nights; section 6)
+  confirm the signs:
+  - road corridors are the warm linear features;
+  - the Bay is +3.5-5.2 K warmer than land;
+  - correlating the night image with the road map recovers a 230 m geolocation error of the satellite scene,
+    which is our method in miniature.
+  But the contrast is small at 90 m (+0.2-0.7 K for road-dense cells). That implies only ~1-3 K pure road
+  contrast on those mild spring / autumn nights. **Test the system at reduced contrast too.**
 - Fielded camera-to-map navigation reaches ~10-30 m (vendor claims). The only public night-thermal flight
   with a number is < 15 m RMS. Our 5 m target is feasible in simulation only because we fly low (8.7 cm/px)
   over mapped roads; it is ambitious for real life.
@@ -363,13 +370,109 @@ Verdict:
 
 ## 6. Validation with a real night thermal scene over Berkeley
 
-(filled in below once the analysis has run)
+**Data (open, no account):**
+- **ASTER L1T** night scenes (Terra, TIR band 13 at 10.6 um, 90 m) from the Microsoft Planetary Computer STAC
+  (`aster-l1t`). The night overpass is at **23:12-23:18 PDT**, i.e. our scenario hour.
+- ESA WorldCover 2021 (10 m) land cover, Copernicus GLO-30 elevation.
+- Road centrelines from Overture Maps (2026-10-21 release, OSM-derived). Overpass was unreachable from this
+  machine all night.
+
+Scripts: [aster_night_check.py](night_research/aster_night_check.py) (download, per-scene stats, contact sheet),
+then [aster_night_analyze.py](night_research/aster_night_analyze.py) (registration and statistics). Full tables:
+[aster_night_summary.md](night_research/aster_night_summary.md).
+
+ECOSTRESS (70 m, recent, many summer nights) and Landsat (night scenes are Level-1 only) both need an Earthdata or
+USGS / AWS account. I skipped them; the steps are in REPORT_night-research.md.
+
+**Scenes:**
+- 11 night scenes over the box (2002-2006). By eye ([contact sheet](night_research/aster_night_contact_sheet.png)):
+  - 4 clear: 2004-04-30, 2004-04-07, 2003-10-30, and 2003-10-21 (with a strong inversion);
+  - 5 cloud or fog;
+  - 1 doubtful;
+  - 1 covering only the hills.
+- **No clear June-August night scene exists.** Summer nights in Berkeley are mostly under the marine layer, which
+  is itself a finding. The clear nights followed mild spring / autumn days, not the hot day of our scenario.
+
+![ASTER night check](night_research/aster_night_berkeley.png)
+
+**Results (4 clear nights, 23:13-23:18 PDT):**
+
+1. **Matching the night image to a road prior works, even at 90 m.**
+   - The delivered night geolocation is off by **~230 m** (image shifted +200 m east, -110 m south).
+   - Correlating the high-passed night temperature with the high-passed road share over shifts of +-450 m finds
+     the offset: **r = -0.13 as delivered -> +0.26 registered** (per scene +0.10 to +0.29).
+   - The correlation surface is a **north-south ridge**: Berkeley's north-south arterials constrain east-west
+     well and north-south weakly. That is the along-road degeneracy we expect in flight (section 3, point 4).
+2. **Roads are warmer at night, but the 90 m signal is small:**
+   - cells with >= 35 % road are **+0.14 to +0.70 K** warmer than cells with < 5 % road;
+   - major-road corridors are **+0.17 to +0.53 K** warmer than low-road cells (n = 309 vs 1778);
+   - on the regression's per-100 % scale, major roads stand out by +0.7 to +1.6 K over minor roads.
+3. **Land-cover classes within the same elevation band differ by less than ~1 K.** Built-up vs tree vs grass
+   at 90 m mixes warm roads with cold roofs and yards (section 1.1), and the classes largely cancel.
+4. **Water is clearly warm: +3.5 to +5.2 K** over the land flats on every clear night. This confirms the
+   correction in section 1.
+5. **Terrain matters as much as cover.** On the inversion night the hills are warm, +1.4 K per 100 m of
+   elevation; on the other nights -0.04 to -0.25 K per 100 m. Cold-air drainage and inversions are a real
+   "unmodelled" signal.
+
+**What it means for us:**
+- **Confirmed:** roads are the warm linear features; water is warm; the road prior can register a night thermal
+  image.
+- **Caveat on magnitude.** A 90 m cell that is 40 % road should carry ~40 % of the pure road-vs-surroundings
+  contrast. The observed +0.5 K therefore implies a pure-surface contrast of only ~1-3 K on these mild nights
+  (more if the ASTER blur is taken into account). That is well below the 5-10 K the energy-balance model gives
+  after a **hot** summer day. Mild days and a damp spring could explain the gap, but I cannot prove the 5-10 K
+  for Berkeley from satellite data.
+- **Recommendation:** night-nav / night-demo should add one **contrast-scale robustness row** to the eval
+  (prior-vs-truth road contrast scaled to ~0.3-0.5x) so we know how the system degrades if real contrast is
+  2-3 K instead of 6-10 K.
 
 ---
 
 ## 7. Pitch
 
-(see below)
+**Five sentences for the jury**
+1. When GNSS is jammed at night, a drone has no daylight camera to fall back on. Without a fix it drifts by tens
+   of metres per minute.
+2. Physics gives us a free night-time map: asphalt soaks up the sun and stays 5-10 degrees warmer than grass for
+   the whole night, so roads glow in a thermal camera while lawns and fields go dark.
+3. Before take-off we turn open daytime data into a prediction of that night-time picture: OpenStreetMap roads with
+   their surface type, aerial or Sentinel-2 imagery with its near-infrared band, and the elevation model.
+4. In flight, the drone matches its thermal camera against that prediction a few times per second. It fuses the
+   result with its IMU, barometer and terrain-relative navigation, and keeps flying the planned route even when a
+   frame shows nothing useful.
+5. In simulation we measure it honestly over 20 seeds, in Berkeley and in Ukraine: we report the share of flights
+   that end within 5 m of the target with a 95 % confidence interval, not a single good video.
+
+**Likely jury questions**
+- *"Doesn't this break with clouds, wind or rain?"*
+  - Clouds after a sunny day keep the pavement warm; the contrast stays ~9 K in our model.
+  - Wind cuts it by about a third.
+  - Rain or a fully overcast day removes most of it.
+  - That is why the system never depends on thermal alone. When the matcher has no confident answer it gives
+    no fix, and the drone continues on IMU + TRN with a growing, honestly displayed uncertainty.
+  - In central Ukraine about 1 in 3 July nights is clear.
+- *"How is this different from what militaries already field?"*
+  - Fielded systems (Maxar Raptor, Honeywell VAN, Ukrainian optical-nav modules) match camera images to stored
+    imagery or 3D models and quote 10-30 m.
+  - The one published night-thermal flight reports < 15 m RMS.
+  - We test a narrower idea that needs no thermal reference map: **predict** the night signature from open
+    daytime data. We fly low enough (8.7 cm/px) to aim at metre-level fixes, and we report success rates over
+    seeds.
+- *"What if the road map is wrong, or roads are dirt?"*
+  - Only roads tagged or very likely paved go into the warm prior. In rural Ukraine that is only ~10 % of mapped
+    road length.
+  - The matcher uses edges, so it tolerates surfaces whose temperature sign we cannot predict (roofs, trees).
+  - The route planner prefers stretches with enough expected warm road under the camera.
+
+**Honest limits**
+- The thermal world is simulated: our truth raster comes from the same physics as our prior, plus perturbations.
+  Real cameras add vignetting, drift, non-uniformity, and unmodelled sources (traffic, AC units, wet patches).
+- Night temperatures come from a calibrated 1-D model plus a handful of measurements. A real night survey would
+  certainly differ in the details.
+- The 5 m target relies on low altitude and on mapped asphalt. Over parks, big roofs or rural fields between roads
+  the camera often sees nothing matchable, and accuracy then rests on IMU + TRN.
+- Vendor accuracy figures we cite are claims, not independent tests.
 
 ---
 

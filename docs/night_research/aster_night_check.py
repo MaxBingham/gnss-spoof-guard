@@ -106,35 +106,43 @@ def stac_href(collection, asset):
 
 
 def osm_roads():
-    cache = DATA / "osm_roads_berkeley.json"
-    if not cache.exists():
-        # 3 x 3 tiles: the public servers time out on the whole box
-        classes = "|".join(k for k in ROAD_WIDTH_M if k != "service")
-        lon_edges = np.linspace(BBOX[0], BBOX[2], 4)
-        lat_edges = np.linspace(BBOX[1], BBOX[3], 4)
-        elements, seen = [], set()
-        for i in range(3):
-            for j in range(3):
+    """OSM roads in 3 x 3 tiles (public servers time out on the whole box), each tile cached on its own.
+    Returns None if a tile cannot be fetched; the analysis then runs on WorldCover alone."""
+    import time
+    if os.environ.get("NIGHT_SKIP_OSM"):
+        return None
+    classes = "|".join(k for k in ROAD_WIDTH_M if k != "service")
+    lon_edges = np.linspace(BBOX[0], BBOX[2], 4)
+    lat_edges = np.linspace(BBOX[1], BBOX[3], 4)
+    elements, seen = [], set()
+    for i in range(3):
+        for j in range(3):
+            tile = DATA / f"osm_roads_tile_{i}{j}.json"
+            if not tile.exists():
                 q = (f"[out:json][timeout:90];way[highway~\"^({classes})$\"]"
                      f"({lat_edges[j]},{lon_edges[i]},{lat_edges[j + 1]},{lon_edges[i + 1]});out tags geom;")
-                for attempt in range(6):
-                    url = ("https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass-api.de/api/interpreter",
-                           "https://overpass.private.coffee/api/interpreter")[attempt % 3]
+                for attempt in range(8):
+                    url = ("https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+                           "https://overpass-api.de/api/interpreter")[attempt % 2]
                     try:
                         r = requests.post(url, data={"data": q}, timeout=150,
                                           headers={"User-Agent": "sfhack-night-research/0.1"})
                         r.raise_for_status()
-                        for el in r.json()["elements"]:
-                            if el["id"] not in seen:
-                                seen.add(el["id"])
-                                elements.append(el)
-                        break
+                        if "elements" in r.json():
+                            tile.write_text(r.text, encoding="utf-8")
+                            break
                     except Exception as e:  # noqa: BLE001 - retry / next mirror
-                        print("overpass failed:", url, type(e).__name__)
+                        print("overpass failed:", url, type(e).__name__,
+                              getattr(getattr(e, "response", None), "status_code", ""))
+                    time.sleep(15 * (attempt + 1))
                 else:
-                    raise RuntimeError(f"Overpass tile {i},{j} failed")
-        cache.write_text(json.dumps({"elements": elements}), encoding="utf-8")
-    return json.loads(cache.read_text(encoding="utf-8"))
+                    print(f"Overpass tile {i},{j} failed: continuing without OSM roads")
+                    return None
+            for el in json.loads(tile.read_text(encoding="utf-8"))["elements"]:
+                if el["id"] not in seen:
+                    seen.add(el["id"])
+                    elements.append(el)
+    return {"elements": elements}
 
 
 def road_fraction(shape, transform, crs, osm):
@@ -158,7 +166,8 @@ def road_fraction(shape, transform, crs, osm):
 
 def fit(y, cols: dict):
     names = list(cols)
-    x = np.column_stack([np.ones_like(y)] + [cols[n] for n in names])
+    y = np.ravel(y)
+    x = np.column_stack([np.ones_like(y)] + [np.ravel(cols[n]) for n in names])
     ok = np.isfinite(y) & np.all(np.isfinite(x), axis=1)
     coef, *_ = np.linalg.lstsq(x[ok], y[ok], rcond=None)
     pred = x[ok] @ coef
@@ -179,7 +188,8 @@ def main():
     wc = reproject_to(stac_href("esa-worldcover", "map"), shape, transform, crs, WC_CLASSES)
     dem = reproject_to(stac_href("cop-dem-glo-30", "data"), shape, transform, crs)
     osm = osm_roads()
-    froad, road_shapes = road_fraction(shape, transform, crs, osm)
+    froad = road_fraction(shape, transform, crs, osm)[0] if osm is not None else np.zeros(shape)
+    have_roads = osm is not None
     np.savez_compressed(DATA / "berkeley_grid.npz", dem=dem, froad=froad, **{f"wc_{k}": v for k, v in wc.items()})
 
     dominant = {name: wc[name] >= 0.7 for name in ("built", "tree", "grass", "water")}
@@ -199,9 +209,11 @@ def main():
         p5, p50 = np.nanpercentile(tc[land], 5), np.nanpercentile(tc[land], 50)
         cold_share = float(np.nanmean(tc[land] < p50 - 6))
         means = {k: float(np.nanmean(tc[m])) if m.any() else np.nan for k, m in dominant.items()}
-        coef, r2, n = fit(tc, {"f_road": froad, "f_built_nonroad": np.clip(wc["built"] - froad, 0, 1),
-                               "f_tree": wc["tree"], "f_grass": wc["grass"] + wc["shrub"],
-                               "f_water": wc["water"], "elev_100m": dem / 100.0})
+        cols = {"f_road": froad, "f_built_nonroad": np.clip(wc["built"] - froad, 0, 1)} if have_roads else \
+            {"f_built": wc["built"]}
+        cols.update({"f_tree": wc["tree"], "f_grass": wc["grass"] + wc["shrub"], "f_water": wc["water"],
+                     "elev_100m": dem / 100.0})
+        coef, r2, n = fit(tc, cols)
         local = it.datetime.hour + it.datetime.minute / 60 - 7  # PDT (all scenes Apr-Oct)
         row = dict(scene=it.id, date=it.datetime.date().isoformat(), utc=it.datetime.strftime("%H:%M"),
                    pdt=f"{int(local % 24):02d}:{int((local % 1) * 60):02d}", cold_share=round(cold_share, 3),
@@ -213,6 +225,26 @@ def main():
         rows.append(row)
         per_scene[it.id] = tc
         print(json.dumps(row))
+
+    np.savez_compressed(DATA / "night_scenes_bt13.npz", **{r["scene"]: per_scene[r["scene"]] for r in rows})
+    with open(DATA / "night_scenes_meta.json", "w", encoding="utf-8") as f:
+        json.dump({"rows": rows, "transform": list(transform)[:6], "crs": str(crs), "bbox": BBOX}, f, indent=1)
+    # contact sheet of all night scenes, to judge clouds / fog by eye
+    n = len(rows)
+    ncol = 4
+    fig, axes = plt.subplots(int(np.ceil(n / ncol)), ncol, figsize=(16, 3.4 * np.ceil(n / ncol)))
+    for ax, r in zip(axes.ravel(), rows):
+        t = per_scene[r["scene"]]
+        lo, hi = np.nanpercentile(t, [2, 98])
+        ax.imshow(t, cmap="inferno", vmin=lo, vmax=hi)
+        ax.set_title(f"{r['date']} {r['pdt']} PDT  {lo:.0f}..{hi:.0f} C", fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    for ax in axes.ravel()[n:]:
+        ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(OUT / "aster_night_contact_sheet.png", dpi=80)
+    plt.close(fig)
 
     with open(OUT / "aster_night_berkeley.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
@@ -241,6 +273,7 @@ def main():
     groups = [("built >=70 %", dominant["built"]), ("road frac >=35 %", froad >= 0.35),
               ("grass/shrub >=70 %", (wc["grass"] + wc["shrub"]) >= 0.7), ("tree >=70 %", dominant["tree"]),
               ("water >=70 %", dominant["water"])]
+    groups = [(g, m) for g, m in groups if np.any(m & np.isfinite(tc))]
     data = [tc[m & np.isfinite(tc)] for _, m in groups]
     axes[2].boxplot(data, showfliers=False)
     axes[2].set_xticks(range(1, len(groups) + 1), [f"{g}\n(n={len(d)})" for (g, _), d in zip(groups, data)],

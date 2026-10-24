@@ -89,6 +89,17 @@ def road_material(tags: dict[str, str]) -> tuple[str, str, float] | None:
     return surf, kind, float(np.clip(width, 1.0, 30.0))
 
 
+def underground(tags: dict[str, str]) -> bool:
+    """Building below the surface (garage under a plaza): its "roof" is ground. A hillside building with
+    layer=-1 but levels (Grimes Engineering Center) stays a building."""
+    try:
+        layer = int(tags.get("layer", "0"))
+    except ValueError:
+        layer = 0
+    return (tags.get("building") == "underground" or tags.get("location") in ("underground", "underwater")
+            or (layer < 0 and "building:levels" not in tags and "height" not in tags))
+
+
 @dataclass
 class ClassMap:
     cls: np.ndarray  # uint8 (rows, cols)
@@ -290,10 +301,16 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
         cv2.circle(tm, (int(p16[0, 0]), int(p16[0, 1])), int(round(rad / grid.res * 16)), 1, -1,
                    lineType=cv2.LINE_8, shift=4)
         cls[sl][tm > 0] = CLS["tree"]
-    # 5. roofs
+    # 5. roofs (not for underground structures: what is on top is the plaza / lawn the image shows; and where a
+    # LiDAR crown stands > 2 m above the roof, the crown is what the camera sees)
     V = rgb.astype(np.float32).mean(axis=2)
+    osm_tags = {f"{el['type']}/{el['id']}": el.get("tags", {}) for el in elements if el["type"] != "node"}
+    n_under = 0
     for lm in landmarks:
         if lm["type"] not in ("building", "tower", "fountain") or not lm.get("footprint_enu"):
+            continue
+        if underground(osm_tags.get(lm.get("osm_id", ""), {})):
+            n_under += 1
             continue
         pm = poly_mask(np.asarray(lm["footprint_enu"], float))
         if pm is None or not pm[1].any():
@@ -301,6 +318,10 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
         sl, m = pm
         if lm["type"] == "fountain":
             cls[sl][m] = CLS["water"]
+            continue
+        if chm is not None:
+            m = m & ~((cls[sl] == CLS["tree"]) & (chm[sl] > float(lm["height"]) + 2.0))
+        if not m.any():
             continue
         bright = float(np.median(V[sl][m]))
         cls[sl][m] = CLS["roof_light"] if bright > 150.0 else CLS["roof_dark"]
@@ -312,6 +333,7 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
     roads[hidden] = 0
     seg_id[hidden] = -1
     road_kind[hidden] = 0
+    st["underground_buildings"] = n_under
     st.update({"road_frac": round(float(roads.mean()), 4), "n_ways": len(roads_json), "n_ways_surface_unknown": n_unc,
                "class_frac": {k: round(float((cls == v).mean()), 4) for k, v in CLS.items()}})
     return ClassMap(cls, roads, road_kind, seg_id, bldg_id, uncertain, roads_json, st)

@@ -80,6 +80,7 @@ class Autopilot:
         self.last_thermal_fix: VisualFix | None = None
         self.thermal_log: list[tuple[float, str, float, float, bool, float]] = []  # t, method, x, y, accepted, yaw_corr
         self.lidar_agl: float | None = None  # nadir lidar: camera height above the surface below
+        self.mag_bias_est = 0.0  # rad, compass heading bias learned from thermal yaw corrections (yaw_feedback)
         self._lidar_t = -1.0
         self.health = HealthMonitor(cfg.health)
         self.controller = GeometricController(vehicle, cfg.gains)
@@ -200,6 +201,8 @@ class Autopilot:
     def on_mag(self, msg: MagMsg) -> None:
         dt = 1.0 / self.cfg.sim.mag_hz if self._last_mag_t is None else msg.t - self._last_mag_t
         self._last_mag_t = msg.t
+        if self.mag_bias_est:
+            msg = MagMsg(msg.t, math.atan2(math.sin(msg.yaw - self.mag_bias_est), math.cos(msg.yaw - self.mag_bias_est)))
         self.ahrs.update_mag(msg, dt)
 
     def on_gnss(self, msg: GnssMsg) -> None:
@@ -322,6 +325,11 @@ class Autopilot:
             self.thermal_accepted += 1
             stats[1] += 1
             self.sources_used.add("thermal")
+            tc = self.cfg.thermal
+            if tc.yaw_feedback and tf.yaw_corr and tf.quality >= tc.yaw_feedback_min_quality:
+                # yaw_corr = true - estimated heading = -(residual compass bias): learn it slowly
+                lim = math.radians(tc.yaw_feedback_max_deg)
+                self.mag_bias_est = float(np.clip(self.mag_bias_est - tc.yaw_feedback_gain * tf.yaw_corr, -lim, lim))
         self.thermal_log.append((frame.t, tf.method, float(tf.xy[0]), float(tf.xy[1]), accepted, tf.yaw_corr))
         if self.ekf.last_decision:
             self.log_decision(frame.t, self.ekf.last_decision.replace("vision fix", "thermal fix"))

@@ -272,11 +272,19 @@ class ThermalConfig:
     """Night (night-nav): thermal localizer (perception/thermal_localizer.py) and the simulated thermal camera."""
 
     camera_hz: float = 5.0  # thermal frames per second fed to the localizer
+    # Heading: the compass has a constant ~1 deg bias; every velocity change is then rotated into the wrong
+    # direction (8 m/s x 1.5 deg = 0.2 m/s cross-track drift). With yaw_feedback the yaw corrections of accepted
+    # thermal fixes (yaw search of the template) teach the autopilot the compass bias, slowly.
+    yaw_feedback: bool = False
+    yaw_feedback_gain: float = 0.05  # per accepted fix
+    yaw_feedback_min_quality: float = 0.6
+    yaw_feedback_max_deg: float = 5.0
     method: str = "ncc"
     tpl_mpp: float = 0.5  # m per template cell (= prior resolution)
-    tpl_frac: float = 0.33  # template half size = this x height above the surface (footprint half ~0.37 x h)
+    tpl_frac: float = 0.26  # template half size = this x height above the surface: the north-up square must fit
+    # in the 56 x 45 m (at 60 m) footprint at any heading (inscribed half ~0.26 x h at 45 deg)
     tpl_min_m: float = 6.0
-    tpl_max_m: float = 22.0
+    tpl_max_m: float = 18.0
     min_alt: float = 10.0  # m above the surface: below this the footprint is too small
     min_std_K: float = 0.4  # rectified image std below this = uniform (no fix)
     search_margin_m: float = 6.0  # search radius = 3 sigma(prior) + margin, clipped to [min, max]

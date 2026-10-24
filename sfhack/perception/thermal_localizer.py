@@ -202,13 +202,13 @@ class ThermalLocalizer:
         rect = self.rectify(img_K, est_pose, agl_m, intrinsics)
         if rect is None:
             return None
-        tpl, half, alt = rect
+        tpl, half, alt, off = rect
         sig_prior = math.sqrt(max(float(np.linalg.eigvalsh(est_pose.cov[:2, :2]).max()), 0.0))
         r_m = float(np.clip(3.0 * sig_prior + c.search_margin_m, c.search_min_m, c.search_max_m))
         if 3.0 * sig_prior + c.search_margin_m > c.search_max_m * 1.5:
             return self._fail("prior too wide")
         S = int(math.ceil(r_m / c.tpl_mpp))
-        px, py = float(est_pose.pos[0]), float(est_pose.pos[1])
+        px, py = float(est_pose.pos[0] + off[0]), float(est_pose.pos[1] + off[1])  # template centre (optical axis)
         methods = {"all": ["ncc", "grad", "road", "junction"]}.get(c.method, c.method.split("+"))
         cands: list[ThermalFix] = []
         for m in methods:
@@ -219,6 +219,7 @@ class ThermalLocalizer:
         if not cands:
             return None
         fix = self._combine(cands)
+        fix.xy = fix.xy - off  # template centre -> camera position
         fix.t = t
         fix.proc_ms = (time.perf_counter() - t0) * 1000.0
         self.n_fixes[fix.method] = self.n_fixes.get(fix.method, 0) + 1
@@ -226,7 +227,10 @@ class ThermalLocalizer:
         return fix
 
     def rectify(self, img_K: np.ndarray, est_pose: PoseEstimate, agl_m: float | None,
-                intrinsics: dict[str, float]) -> tuple[np.ndarray, float, float] | None:
+                intrinsics: dict[str, float]) -> tuple[np.ndarray, float, float, np.ndarray] | None:
+        """North-up template centred on the ground point of the optical axis (pitch / roll in cruise move the
+        footprint by height x tan(tilt): a template under the camera left the footprint at ~5 deg pitch).
+        Returns (template, half size m, height above surface, centre - camera xy)."""
         c = self.cfg
         om = self.map
         pos = est_pose.pos
@@ -238,13 +242,18 @@ class ThermalLocalizer:
         if not om.contains(pos[:2], margin=5.0):
             return self._fail("off map")
         mpp = c.tpl_mpp
+        R_wc = est_pose.R @ R_BODY_CAM
+        axis = -R_wc[:, 2]  # optical axis, world
+        if axis[2] > -0.5:
+            return self._fail("footprint (tilt)")
+        off = axis[:2] * alt / -axis[2]
         half = float(np.clip(c.tpl_frac * alt, c.tpl_min_m, c.tpl_max_m))
         n = int(round(2 * half / mpp))
         g = (np.arange(n) + 0.5) * mpp - half
-        dx, dy = np.meshgrid(g, -g)
+        dx, dy = np.meshgrid(g + off[0], -g + off[1])
         surf = om.surface_heights(np.stack([pos[0] + dx, pos[1] + dy], -1))
         rel = np.stack([dx, dy, surf - cam_z], -1)
-        pc = rel @ (est_pose.R @ R_BODY_CAM)
+        pc = rel @ R_wc
         depth = -pc[..., 2]
         fx, fy, cx, cy = intrinsics["fx"], intrinsics["fy"], intrinsics["cx"], intrinsics["cy"]
         h, w = img_K.shape
@@ -264,7 +273,7 @@ class ThermalLocalizer:
         if float(tpl.std()) < c.min_std_K:
             return self._fail("uniform")
         self.last_tpl = tpl
-        return tpl, half, alt
+        return tpl, half, alt, off
 
     # ------------------------------------------------------------------ peak search helper
 
@@ -307,7 +316,7 @@ class ThermalLocalizer:
             if a == 0:
                 out.append((0.0, tpl))
                 continue
-            # template rotated by +a about its centre = the image as it would look with a yaw error of -a
+            # template rotated by +a (CCW) best matching = the estimated heading is a too small: yaw_corr = +a
             M = cv2.getRotationMatrix2D(((n - 1) / 2, (n - 1) / 2), a, 1.0)
             out.append((math.radians(a), cv2.warpAffine(tpl, M, (n, n), flags=cv2.INTER_LINEAR,
                                                          borderMode=cv2.BORDER_REFLECT)))
@@ -323,15 +332,29 @@ class ThermalLocalizer:
         """Best NCC map over the yaw candidates (cropped templates; offsets compensated)."""
         best_map, best_val, best_rot = None, -2.0, 0.0
         n = tpl.shape[0]
+        vals = []
         for rot, t in self._rotations(tpl):
             tc = self._crop(t)
             k = (n - tc.shape[0]) // 2
             sc = cv2.matchTemplate(region, tc, cv2.TM_CCOEFF_NORMED)
             sc = sc[k:k + 2 * S + 1, k:k + 2 * S + 1] if sc.ndim == 2 else sc
             v = float(sc.max())
+            vals.append((rot, v))
             if v > best_val:
                 best_map, best_val, best_rot = sc, v, rot
-        return best_map, best_rot  # type: ignore[return-value]
+        return best_map, self._refine_rot(vals, best_rot)  # type: ignore[return-value]
+
+    @staticmethod
+    def _refine_rot(vals: list[tuple[float, float]], best_rot: float) -> float:
+        """Parabola through the best rotation's score and its neighbours (equal steps)."""
+        vals = sorted(vals)
+        i = [r for r, _ in vals].index(best_rot)
+        if 0 < i < len(vals) - 1:
+            (r0, a), (_, b), (r2, cc) = vals[i - 1], vals[i], vals[i + 1]
+            den = a - 2 * b + cc
+            if den < 0:
+                return best_rot + float(np.clip(0.5 * (a - cc) / den, -0.5, 0.5)) * (r2 - r0) / 2
+        return best_rot
 
     # ------------------------------------------------------------------ methods
 
@@ -347,7 +370,7 @@ class ThermalLocalizer:
             return self._fail("off map")
         t = cv2.GaussianBlur(tpl, (0, 0), 0.7)
         sc, rot = self._search(region, t, S)
-        return self._peak(sc, px, py, half, S, -rot, self.cfg.min_score, alt, "ncc")
+        return self._peak(sc, px, py, half, S, rot, self.cfg.min_score, alt, "ncc")
 
     def _m_grad(self, tpl: np.ndarray, px: float, py: float, half: float, S: int, alt: float) -> ThermalFix | None:
         if 0 not in self._orient_cache:
@@ -359,6 +382,7 @@ class ThermalLocalizer:
         tch = _orient_channels(cv2.GaussianBlur(tpl, (0, 0), 0.7))
         best_map, best_val, best_rot = None, -2.0, 0.0
         n = tpl.shape[0]
+        vals = []
         for rot, _ in self._rotations(tpl):
             M = cv2.getRotationMatrix2D(((n - 1) / 2, (n - 1) / 2), math.degrees(rot), 1.0)
             acc = None
@@ -370,10 +394,11 @@ class ThermalLocalizer:
                 acc = sc if acc is None else acc + sc
             acc = acc / 4.0
             v = float(acc.max())
+            vals.append((rot, v))
             if v > best_val:
                 best_map, best_val, best_rot = acc, v, rot
             # (orientation bins are not rotated with the template: +-3 deg is within one soft bin)
-        return self._peak(best_map, px, py, half, S, -best_rot, self.cfg.grad_min_score, alt, "grad")
+        return self._peak(best_map, px, py, half, S, self._refine_rot(vals, best_rot), self.cfg.grad_min_score, alt, "grad")
 
     def _observed_centerline(self, tpl: np.ndarray) -> np.ndarray:
         """Warm, elongated structures (roads) of the rectified image -> centerline mask."""
@@ -448,7 +473,7 @@ class ThermalLocalizer:
         ev[1] += (alt * math.radians(c.tilt_std_deg)) ** 2
         cov = evec @ np.diag(ev) @ evec.T
         self.last_skel_xy = np.argwhere(sk > 0)
-        return ThermalFix(np.array([bx, by]), cov, -rot, quality, "road",
+        return ThermalFix(np.array([bx, by]), cov, rot, quality, "road",
                           info={"cost": cmin, "sig_major": math.sqrt(ev[1]), "sig_minor": math.sqrt(ev[0])})
 
     def _m_junction(self, tpl: np.ndarray, px: float, py: float, half: float, S: int, alt: float) -> ThermalFix | None:

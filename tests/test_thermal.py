@@ -131,7 +131,7 @@ def _hot_spot_truth() -> ThermalTruth:
 
 def test_camera_geometry_and_orientation() -> None:
     m, d = _camera_world(0.0, 0.0, 60.0, yaw=0.0)  # facing east: image top = east
-    cam = ThermalCamera(m, netd_K=0.0)
+    cam = ThermalCamera(m, netd_K=0.0, abs_error_K=0.0, gain_error=0.0)
     cam.fpn[:] = 0
     cam.vignette[:] = 0
     img = cam.render(d, _hot_spot_truth())
@@ -189,3 +189,55 @@ def test_mission_rasters_aligned(mid: str) -> None:
     veg = np.isin(p.cls, [CLS["grass"], CLS["tree"]])
     assert np.median(truth[roads]) > np.median(truth[veg]) + 3.0
     assert np.corrcoef(p.temp_K.ravel(), truth.ravel())[0, 1] > 0.4
+
+
+def test_load_truth_contrast_scales_around_air(tmp_path) -> None:
+    from sfhack.thermal.camera import load_truth
+
+    t = np.full((40, 60), 290.0, np.float32)
+    t[10:30, 20:40] = 300.0
+    meta = {"extent_enu": {"min_x": -15.0, "min_y": -10.0, "max_x": 15.0, "max_y": 10.0}, "res_m": 0.5}
+    np.savez(tmp_path / "thermal_truth.npz", temp_K=t, wall_K=np.float32(296.0), air_K=np.float32(295.0),
+             meta=json.dumps(meta))
+    full = load_truth(tmp_path / "thermal_truth.npz", soften_m=0.0)
+    half = load_truth(tmp_path / "thermal_truth.npz", contrast=0.5, soften_m=0.0)
+    assert full.grid.shape == (40, 60) and full.grid.min_x == -15.0
+    assert half.temp_K[20, 30] == pytest.approx(297.5) and half.temp_K[0, 0] == pytest.approx(292.5)
+    assert half.wall_K == pytest.approx(295.5)
+    soft = load_truth(tmp_path / "thermal_truth.npz")
+    assert 290.0 < soft.temp_K[10, 30] < 300.0  # edge softened, interior kept
+    assert soft.temp_K[20, 30] == pytest.approx(300.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("yaw", [0.0, 1.1, -2.4])
+def test_prior_predict_view_matches_camera(yaw: float) -> None:
+    """The onboard prediction (prior.predict_view) and the simulated camera agree on geometry."""
+    from sfhack.thermal.prior import ThermalPrior
+
+    truth = _hot_spot_truth()
+    t = truth.temp_K.copy()
+    t[150:160, 230:300] = 305.0  # an asymmetric bar so a wrong rotation shows
+    truth.temp_K = t
+    m, d = _camera_world(3.0, -2.0, 60.0, yaw=yaw)
+    cam = ThermalCamera(m, netd_K=0.0, abs_error_K=0.0, gain_error=0.0)
+    cam.fpn[:] = 0
+    cam.vignette[:] = 0
+    cam.texture[:] = 0
+    img = cam.render(d, truth)[::2, ::2]
+    g = truth.grid
+    meta = {"extent_enu": {"min_x": g.min_x, "max_y": g.max_y, "max_x": g.max_x, "min_y": g.min_y}, "res_m": g.res}
+    prior = ThermalPrior(t, np.ones_like(t), np.zeros(t.shape, np.uint8), np.zeros(t.shape, np.uint8),
+                         np.zeros(t.shape, np.uint8), meta)
+    pred, sig = prior.predict_view(np.array([3.0, -2.0]), 60.0 - 0.05, cam.intrinsics, yaw=yaw)  # camera 5 cm below the body
+    assert pred.shape == img.shape and np.isfinite(pred).all()
+    assert np.corrcoef(pred.ravel(), img.ravel())[0, 1] > 0.95
+    cam.close()
+
+
+def test_night_cooling_through_the_night(curves) -> None:
+    """Roads stay warmer than grass all night (no crossover) while everything cools from 21 to 03 h."""
+    tab = {h: curves.at(h)[:, -1, -1] for h in (19.85, 21.85, 1.85)}  # 21, 23, 03 h PDT in solar time
+    a, g = CLS["asphalt"], CLS["grass"]
+    assert tab[19.85][a] > tab[21.85][a] > tab[1.85][a]
+    for v in tab.values():
+        assert v[a] - v[g] > 3.0

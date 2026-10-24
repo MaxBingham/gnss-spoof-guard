@@ -14,7 +14,8 @@ back-projected to world xyz -> per geom kind: ground, roof slabs and tree crowns
 objects (world/target_scene.json, optional "temp_K") their own, the drone itself air temperature, sky ~air - 30 K;
 a short LWIR air path (tau = exp(-range / 8 km)) -> upsample to 640 x 512 -> optics blur (diffraction spot of an
 f/1 lens at 12 um pitch, sigma 0.8 px) -> vignetting (narcissus, -0.15 K at the corners) -> fixed-pattern
-noise (per-pixel offset 80 mK, column 40 mK, gain 0.5 %) -> slow drift (Ornstein-Uhlenbeck offset, 0.25 K,
+noise (per-pixel offset 80 mK, column 40 mK, gain 0.5 %) -> absolute calibration error per camera (offset
+2 K, gain 3 %: uncooled radiometry is not absolute) -> slow drift (Ornstein-Uhlenbeck offset, 0.25 K,
 tau 90 s, reset by a flat-field correction every 180 s) -> temporal noise NETD 50 mK.
 """
 
@@ -50,8 +51,11 @@ class ThermalTruth:
         return cv2.remap(self.temp_K, uv[..., 0], uv[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
-def load_truth(path: str | Path) -> ThermalTruth:
-    """Mission directory (or id) or the npz itself."""
+def load_truth(path: str | Path, contrast: float = 1.0, soften_m: float = 0.3) -> ThermalTruth:
+    """Mission directory (or id) or the npz itself. `contrast` < 1 scales the scene around the air temperature
+    (a milder night than the model: robustness runs without rebuilding; the onboard prior is unchanged).
+    `soften_m`: Gaussian sigma applied to the 0.5 m raster, so class edges look like edges and not like 0.5 m
+    stair steps at the camera's 6-9 cm ground resolution."""
     p = Path(path)
     if not p.exists() and not p.suffix:
         from ..missionprep.build import mission_dir
@@ -63,6 +67,12 @@ def load_truth(path: str | Path) -> ThermalTruth:
         meta = json.loads(str(z["meta"]))
         temp = np.ascontiguousarray(z["temp_K"], np.float32)
         wall, air = float(z["wall_K"]), float(z["air_K"])
+    if soften_m > 0:
+        temp = cv2.GaussianBlur(temp, (0, 0), soften_m / float(meta["res_m"]))
+    if contrast != 1.0:
+        temp = (air + contrast * (temp - air)).astype(np.float32)
+        wall = air + contrast * (wall - air)
+        meta = {**meta, "contrast_at_load": contrast}
     e = meta["extent_enu"]
     grid = Grid(e["min_x"], e["max_y"], float(meta["res_m"]), temp.shape[0], temp.shape[1])
     objects: dict[str, float] = {}
@@ -79,8 +89,15 @@ def load_truth(path: str | Path) -> ThermalTruth:
 class ThermalCamera:
     def __init__(self, model: mujoco.MjModel, name: str = "thermal", width: int = 640, height: int = 512,
                  hfov_deg: float = 50.0, render_scale: float = 0.5, netd_K: float = 0.05, seed: int = 0,
-                 ffc_period_s: float = 180.0) -> None:
+                 ffc_period_s: float = 180.0, renderer: mujoco.Renderer | None = None,
+                 abs_error_K: float = 2.0, gain_error: float = 0.03) -> None:
+        """`renderer`: an existing mujoco.Renderer of the same model to draw into (e.g. MujocoSim.renderer, at
+        least 300 x 240): one GL context instead of two; switching contexts costs ~50 ms per frame on Windows.
+        The internal render then uses a viewport of that renderer."""
         self.model = model
+        self.shared = renderer is not None
+        if renderer is not None:
+            render_scale = min(renderer.width / width, renderer.height / height)
         self.w, self.h = width, height
         self.hfov = hfov_deg
         self.vfov = math.degrees(2 * math.atan(math.tan(math.radians(hfov_deg) / 2) * height / width))
@@ -93,16 +110,28 @@ class ThermalCamera:
         self.rw, self.rh = max(16, int(round(width * render_scale))), max(16, int(round(height * render_scale)))
         self.netd = netd_K
         self.rng = np.random.default_rng(seed + 4000)
-        self.renderer: mujoco.Renderer | None = None
+        self.renderer: mujoco.Renderer | None = renderer
         self.kind, self.geom_offset = self._geom_kinds()
         self.geom_names = [model.geom(i).name for i in range(model.ngeom)]
         # static sensor non-uniformity
         r = self.rng
         self.fpn = (r.normal(0, 0.08, (height, width)) + r.normal(0, 0.04, (1, width))).astype(np.float32)
         self.gain = (1.0 + r.normal(0, 0.005, (height, width))).astype(np.float32)
+        # uncooled radiometry: absolute accuracy is poor (+-5 K or 5 % in datasheets); per camera a constant
+        # offset and a global gain error, so matching must use normalized images, not Kelvin
+        self.abs_offset = float(r.normal(0, abs_error_K))
+        self.abs_gain = float(1.0 + r.normal(0, gain_error))
         yy, xx = np.mgrid[0:height, 0:width]
         rr = ((xx - width / 2) ** 2 + (yy - height / 2) ** 2) / ((width / 2) ** 2 + (height / 2) ** 2)
         self.vignette = (-0.15 * rr).astype(np.float32)
+        # temporal noise: a bank of NETD frames, picked and shifted at random (drawing 330k normals per frame
+        # cost ~8 ms)
+        self.noise_bank = r.normal(0, netd_K, (8, height, width)).astype(np.float32) if netd_K > 0 else None
+        # sub-raster surface texture fixed in the world (aggregate, cracks, grass tufts): 0.25 m cells, 0.2 K,
+        # tiled every 64 m. The truth raster is 0.5 m; the camera sees 8.7 cm at 60 m.
+        tex = cv2.GaussianBlur(r.normal(0, 1, (256, 256)).astype(np.float32), (0, 0), 0.8)
+        self.texture = (tex / max(float(tex.std()), 1e-6) * 0.2).astype(np.float32)
+        self.texture_res = 0.25
         self.drift = 0.0
         self.drift_tau, self.drift_std = 90.0, 0.25
         self.ffc_period = ffc_period_s
@@ -132,8 +161,11 @@ class ThermalCamera:
         img = cv2.resize(scene, (self.w, self.h), interpolation=cv2.INTER_LINEAR)
         img = cv2.GaussianBlur(img, (0, 0), 0.8)
         self._advance_drift(float(data.time))
-        img = (img - 293.15) * self.gain + 293.15 + self.fpn + self.vignette + self.drift
-        img += self.rng.normal(0, self.netd, img.shape).astype(np.float32)
+        img = (img - 293.15) * (self.gain * self.abs_gain) + 293.15 + self.abs_offset + self.fpn + self.vignette + self.drift
+        if self.noise_bank is not None:
+            k = int(self.rng.integers(len(self.noise_bank)))
+            dy, dx = int(self.rng.integers(self.h)), int(self.rng.integers(self.w))
+            img += np.roll(self.noise_bank[k], (dy, dx), axis=(0, 1))
         return img.astype(np.float32)
 
     def to_8bit(self, img: np.ndarray, lo_pct: float = 1.0, hi_pct: float = 99.0, min_span_K: float = 4.0,
@@ -151,7 +183,7 @@ class ThermalCamera:
         return np.clip((img - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
 
     def close(self) -> None:
-        if self.renderer is not None:
+        if self.renderer is not None and not self.shared:
             self.renderer.close()
             self.renderer = None
 
@@ -202,6 +234,43 @@ class ThermalCamera:
         a = math.exp(-dt / self.drift_tau)
         self.drift = a * self.drift + math.sqrt(max(1 - a * a, 0.0)) * self.drift_std * float(self.rng.normal())
 
+    def _render_fused(self, r: mujoco.Renderer) -> tuple[np.ndarray, np.ndarray]:
+        """Depth AND segmentation from ONE GL pass (mujoco.Renderer needs two: the render plus a GL context
+        switch is the frame cost). Same maths as mujoco.Renderer.render: reverse-Z perspective depth, segid
+        colours -> (objid, objtype)."""
+        scene, ctx = r._scene, r._mjr_context
+        rect = mujoco.MjrRect(0, 0, self.rw, self.rh)
+        flags = scene.flags.copy()
+        scene.flags[mujoco.mjtRndFlag.mjRND_SEGMENT] = True
+        scene.flags[mujoco.mjtRndFlag.mjRND_IDCOLOR] = True
+        if r._gl_context:
+            r._gl_context.make_current()
+        rgb = np.empty((self.rh, self.rw, 3), np.uint8)
+        dep = np.empty((self.rh, self.rw), np.float32)
+        try:
+            mujoco.mjr_render(rect, scene, ctx)
+            mujoco.mjr_readPixels(rgb, dep, rect, ctx)
+        finally:
+            np.copyto(scene.flags, flags)
+        m = self.model
+        far = np.float32(m.vis.map.zfar * m.stat.extent)
+        near = np.float32(m.vis.map.znear * m.stat.extent)
+        c = -(far + near) / (far - near)
+        d = -(np.float32(2) * far * near) / (far - near)
+        c, d = np.float32(-0.5) * c - np.float32(0.5), np.float32(-0.5) * d
+        depth = (d / (dep.astype(np.float64) + c)).astype(np.float32)
+        segimg = rgb[..., 0].astype(np.int64) + rgb[..., 1].astype(np.int64) * 256 + rgb[..., 2].astype(np.int64) * 65536
+        n = scene.ngeom
+        lut = np.full((n + 2, 2), -1, np.int32)
+        for i in range(n):
+            g = scene.geoms[i]
+            if g.segid != -1:
+                lut[g.segid + 1] = (g.objid, g.objtype)
+        seg = lut[np.clip(segimg, 0, n + 1)]
+        if r._gl_context:
+            depth, seg = np.flipud(depth), np.flipud(seg)
+        return np.ascontiguousarray(depth), np.ascontiguousarray(seg)
+
     def scene_temperature(self, data: mujoco.MjData, truth: ThermalTruth) -> np.ndarray:
         """Noise-free apparent temperature at the internal resolution (rh, rw)."""
         m = self.model
@@ -213,12 +282,15 @@ class ThermalCamera:
             m.cam_fovy[self.cam_id] = self.vfov
         try:
             r.update_scene(data, camera=self.cam_id)
-            r.enable_depth_rendering()
-            depth = r.render().copy()
-            r.disable_depth_rendering()
-            r.enable_segmentation_rendering()
-            seg = r.render().copy()
-            r.disable_segmentation_rendering()
+            try:
+                depth, seg = self._render_fused(r)
+            except AttributeError:  # Renderer internals changed: two passes
+                r.enable_depth_rendering()
+                depth = r.render().copy()
+                r.disable_depth_rendering()
+                r.enable_segmentation_rendering()
+                seg = r.render().copy()
+                r.disable_segmentation_rendering()
         finally:
             m.cam_fovy[self.cam_id] = saved
         gid = np.where(seg[..., 1] == int(mujoco.mjtObj.mjOBJ_GEOM), seg[..., 0], -1)
@@ -228,6 +300,9 @@ class ThermalCamera:
         R = data.cam_xmat[self.cam_id].reshape(3, 3)
         pts = pos + (self.rays * depth[..., None]) @ R.T
         out = truth.sample(pts[..., :2])
+        tu = (pts[..., 0] / self.texture_res).astype(np.float32) % 256
+        tv = (-pts[..., 1] / self.texture_res).astype(np.float32) % 256
+        out = out + cv2.remap(self.texture, tu, tv, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
         out = np.where(kind == WALL, truth.wall_K + self.geom_offset[gidx], out)
         out = np.where(kind == AIR, truth.air_K, out)
         if (kind == OBJECT).any():

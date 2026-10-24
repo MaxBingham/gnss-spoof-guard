@@ -72,6 +72,12 @@ class CameraConfig:
     thermal_width: int = 640
     thermal_height: int = 512
     thermal_hfov_deg: float = 50.0
+    # rear narrow-FOV NIR camera (sfhack/sim/rear_camera.py): looks back along body -x at the base lights
+    rear_width: int = 640
+    rear_height: int = 480
+    rear_hfov_deg: float = 20.0
+    rear_pitch_down_deg: float = 6.0  # below body -x (cruise pitches the nose down, which tilts this camera up)
+    rear_hz: float = 20.0  # >= 2x the 10 Hz blink bit rate
 
 
 @dataclass

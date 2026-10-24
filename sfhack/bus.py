@@ -21,6 +21,7 @@ CAMERA_DOWN = "camera/down"
 CAMERA_FRONT = "camera/front"
 THERMAL = "camera/thermal"  # ThermalFrame: downward LWIR camera, apparent temperature in K
 CAMERA_THERMAL = THERMAL
+CAMERA_REAR = "camera/rear"  # NirFrame: rear narrow-FOV NIR camera (base navigation lights)
 FIX = "fix"
 POSE = "pose"
 HEALTH = "health"

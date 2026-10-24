@@ -93,6 +93,24 @@ class ThermalFrame:
 
 
 @dataclass
+class NirFrame:
+    """Rear-facing narrow-FOV near-infrared camera (sfhack/sim/rear_camera.py): dark scene, the base's 850 nm
+    navigation lights as bright spots blinking their codes (sfhack/world/base.py).
+
+    Camera frame = OpenCV: x right, y down, z = optical axis. `R_body_cam` columns = those axes in the BODY frame
+    (x forward, y left, z up), fixed mount (no gimbal): world direction of a pixel = R_world_body @ R_body_cam @ ray,
+    with R_world_body from the AHRS. Rear mount: optical axis = body -x, pitched `pitch_down_deg` below it."""
+
+    t: float
+    seq: int
+    name: str  # "rear"
+    image: np.ndarray  # (H, W) uint8, row 0 = top
+    intrinsics: dict[str, float]  # pinhole: fx, fy, cx, cy, w, h, hfov_deg, vfov_deg (pixels / deg)
+    R_body_cam: np.ndarray  # (3, 3)
+    exposure_s: float = 0.004
+
+
+@dataclass
 class VisualFix:
     t: float  # timestamp of the camera frame the fix was computed from
     pos: np.ndarray  # (2,) x, y [m] world

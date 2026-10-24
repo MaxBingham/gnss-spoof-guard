@@ -6,7 +6,48 @@ Nothing pushed. Commands to continue: `RESUME.md`. Saturday demo script: `DEMO_N
 
 ## Final eval (night 23:00, 60 m AGL, GNSS completely off from 20 % of the route, 20 seeds)
 
-EVAL_TABLE_PLACEHOLDER
+Harness `demos/30_night_eval.py` (truth-scored): GNSS ok at first, `gnss.mode = off` (no signal at all) when the
+TRUE along-route progress passes 20 %; ARRIVAL error = |truth - B| (horizontal) at the moment the drone decides
+it is above B (first ABOVE_B / WAIT_FOR_FIX decision); success = arrival error <= 5 m; 95 % Wilson interval.
+Flights whose estimate is > 500 m off before arrival are stopped and counted as failures (DIVERGED). Data: a
+frozen copy of the three missions taken after night-thermal's final rebuild (01:17; traffic on, truth contrast
+0.7). Code: night-demo d2405bc = night-nav 4904433 + night-thermal 146a89f + night route choice (rows thermal,
+imu_trn, straight, low_contrast); thermal_rw = same + `ekf.acc_bias_rw 0.04` (night-nav's first candidate,
+rejected by them: flights wobble at waypoints); +tiltfix = night-demo b5409f4 with night-nav 651b398 (AHRS learns
+the roll / pitch gyro bias from the EKF tilt corrections; the night default now).
+
+| mission | row | n | within 5 m | rate (95 % Wilson) | arrival error mean / median / max (m) | est. error at arrival mean (m) | 2-sigma at arrival mean (m) | thermal fixes accepted / flight |
+|---|---|---:|---:|---|---|---:|---:|---:|
+| berkeley | thermal | 20 | 20 | 100% [84%, 100%] | 0.8 / 0.7 / 1.8 | 0.5 | 2.5 | 350 |
+| berkeley | imu_trn | 20 | 19 | 95% [76%, 99%] | 2.1 / 1.8 / 7.5 | 1.9 | 3.0 | 0 |
+| berkeley | low_contrast | 20 | 18 | 90% [70%, 97%] | 39.6 / 0.7 / 566.1 | 11.8 | 7.7 | 309 |
+| m-c804bb84 | thermal | 20 | 20 | 100% [84%, 100%] | 1.3 / 1.3 / 2.3 | 0.8 | 2.5 | 561 |
+| m-c804bb84 | imu_trn | 20 | 11 | 55% [34%, 74%] | 68.5 / 4.8 / 565.1 | 18.0 | 9.5 | 0 |
+| ukraine-1 | thermal | 20 | 15 | 75% [53%, 89%] | 248.0 / 3.7 / 1662.3 | 4.6 | 2.6 | 962 |
+| ukraine-1 | imu_trn | 20 | 0 | 0% [0%, 16%] | 1550.2 / 1586.1 / 1657.8 | nan | nan | 0 |
+| ukraine-1 | straight | 20 | 11 | 55% [34%, 74%] | 499.1 / 2.9 / 1534.3 | 1.8 | 2.5 | 739 |
+| ukraine-1 | low_contrast | 20 | 11 | 55% [34%, 74%] | 267.5 / 4.6 / 1641.3 | 10.0 | 3.4 | 916 |
+| ukraine-1 | thermal_rw | 20 | 18 | 90% [70%, 97%] | 4.0 / 2.8 / 22.3 | 3.7 | 2.6 | 1125 |
+| ukraine-1 | thermal+tiltfix | 4 | 4 | 100% [51%, 100%] | 2.1 / 2.1 / 2.5 | 1.6 | 2.5 | 1086 |
+
+Rows: thermal = thermal localizer (`grad`) + TRN + IMU on the night route (ukraine-1: along the road);
+imu_trn = no thermal (baseline); straight = thermal, but the planner's straight route (ukraine-1: 1129 m blind
+over the forest); low_contrast = thermal with the TRUE scene's contrast x 0.4 (0.4 x 0.7 = ~2.8 K road - grass,
+a mild night) while the prior still predicts the hot-day contrast.
+
+![error over time](docs/night_eval/error_over_time.png)
+
+Reading it:
+- **berkeley / m-c804bb84: 20/20 within 5 m** with thermal (mean 0.8 / 1.3 m). IMU + TRN alone: 19/20 on the
+  short Berkeley leg (450 m blind), 11/20 on the hill.
+- **ukraine-1: 15/20** with thermal (before the tilt fix): 3 runaways right after GNSS off, two at 17 / 25 m.
+  IMU + TRN alone: 0/20 (every flight diverges in calm air, see "What failed").
+- **Route choice matters on ukraine-1**: the straight route over the forest diverges in 9/20 flights (11/20 within
+  5 m) vs 3/20 along the roads (15/20). n = 20 per row: suggestive (divergences 9 vs 3, Fisher p ~ 0.08), not
+  conclusive. When the straight flight survives it is slightly more precise (shorter blind time at B).
+- **Mild night (0.4x contrast)**: berkeley 18/20 (two runaways), ukraine-1 11/20. Matching is scale-invariant, so
+  most flights hold; the losses are runaways, the same failure mode as above.
+
 
 ## What works
 

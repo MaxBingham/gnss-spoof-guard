@@ -122,7 +122,14 @@ def spectral_base(rgb: np.ndarray, nir: np.ndarray | None,
         tree = veg & (chm > 2.5)
         tree = cv2.morphologyEx(tree.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)) > 0
     else:
-        tree = veg & (cv2.GaussianBlur(V, (0, 0), 1.0) < 85.0)
+        # crowns are darker than lawns / meadows: Otsu split of the brightness of the vegetated pixels
+        # (imagery-relative: Sentinel-2 is much darker than NAIP)
+        Vb = cv2.GaussianBlur(V, (0, 0), 1.0)
+        thr = 85.0
+        if veg.sum() > 1000:
+            v8 = np.clip(Vb[veg], 0, 255).astype(np.uint8).reshape(-1, 1)
+            thr = float(np.clip(cv2.threshold(v8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0], 30.0, 120.0))
+        tree = veg & (Vb < thr)
     tree = cv2.morphologyEx(tree.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)) > 0
     warm_tone = (R - B) > 18.0
     dry = ~veg & warm_tone & (V > 95.0) & ((vi > -0.02) if nir is not None else True)
@@ -132,17 +139,26 @@ def spectral_base(rgb: np.ndarray, nir: np.ndarray | None,
     cls[veg] = CLS["grass"]
     cls[tree] = CLS["tree"]
     uncertain = (V < 40.0) & ~veg
-    stats = {"index": idx, "canopy": "lidar" if chm is not None else "spectral", "veg_frac": round(float(veg.mean()), 3), "tree_frac": round(float(tree.mean()), 3),
+    stats = {"index": idx, "canopy": "lidar" if chm is not None else "spectral (+ OSM wood / meadow)", "veg_frac": round(float(veg.mean()), 3), "tree_frac": round(float(tree.mean()), 3),
              "dry_frac": round(float(dry.mean()), 3), "shadow_frac": round(float(uncertain.mean()), 3)}
     return cls, uncertain, {**stats, "veg_mask": veg}
 
 
 def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str, Any] | None, origin: GeoOrigin,
              landmarks: list[dict[str, Any]], drop_minor_frac: float = 0.0,
-             rng: np.random.Generator | None = None, chm: np.ndarray | None = None) -> ClassMap:
+             rng: np.random.Generator | None = None, chm: np.ndarray | None = None,
+             untagged_paved_p: float | None = None, truth: bool = False, coarse: bool = False) -> ClassMap:
+    """`untagged_paved_p`: outside the US, minor roads without a `surface` tag are often dirt (Ukrainian village
+    lanes): the truth decides per way (paved with this probability), the prior marks them dirt + uncertain and
+    keeps them out of the `roads` mask. `coarse`: imagery coarser than ~2 m (Sentinel-2): mixed pixels look
+    vegetated next to every narrow road, so the image does not get to hide OSM roads (only tree landmarks do)."""
     rng = rng or np.random.default_rng(0)
     cls, uncertain, st = spectral_base(rgb, nir, chm)
     veg = st.pop("veg_mask")
+    if coarse:
+        veg_for_roads = np.zeros_like(veg)
+    else:
+        veg_for_roads = veg
     shape = grid.shape
     roads = np.zeros(shape, np.uint8)
     road_kind = np.zeros(shape, np.uint8)
@@ -160,7 +176,12 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
         if el["type"] == "node" or "highway" in tags or "building" in tags:
             continue
         target = None
-        if tags.get("natural") == "water" or tags.get("water") or tags.get("landuse") in ("basin", "reservoir"):
+        if tags.get("natural") in ("wood",) or tags.get("landuse") == "forest":
+            target = "wood"
+        elif chm is None and (tags.get("landuse") in ("meadow", "grass", "farmland", "village_green", "recreation_ground")
+                              or tags.get("natural") in ("grassland", "heath") or tags.get("leisure") in ("park", "pitch")):
+            target = "meadow"
+        elif tags.get("natural") == "water" or tags.get("water") or tags.get("landuse") in ("basin", "reservoir"):
             target = "water"
         elif tags.get("amenity") == "parking" and tags.get("parking", "surface") in ("surface", ""):
             target = "parking"
@@ -173,7 +194,11 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
             if len(pts) < 3:
                 continue
             m = polygon_mask(grid, [pts]) > 0
-            if target == "parking":
+            if target == "wood":
+                cls[m & veg] = CLS["tree"]
+            elif target == "meadow":
+                cls[m & veg & (cls == CLS["tree"])] = CLS["grass"]
+            elif target == "parking":
                 sel = m & ~veg
                 cls[sel] = CLS["parking"]
                 road_kind[sel] = ROAD_KIND["parking"]
@@ -196,11 +221,21 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
             continue  # OSM is incomplete: the onboard copy misses some minor ways
         ways.append((rm[2], el, tags, pts, rm))
     ways.sort(key=lambda w: -w[0])
+    n_unc = 0
     for width, el, tags, pts, (mat, kind, _) in ways:
         sid = len(roads_json)
+        unsure = (untagged_paved_p is not None and "surface" not in tags
+                  and tags["highway"] in ("residential", "unclassified", "service", "living_street", "road"))
+        if unsure:
+            n_unc += 1
+            if truth:  # per way, the same answer for every build
+                mat = "asphalt_minor" if np.random.default_rng(int(el["id"]) % 2**32).uniform() < untagged_paved_p                     else "dirt_road"
+            else:
+                mat = "dirt_road"
         roads_json.append({"id": sid, "osm_id": f"way/{el['id']}", "highway": tags["highway"],
                            "surface": tags.get("surface"), "material": mat, "kind": kind, "width_m": width,
-                           "paved": mat in PAVED, "pts_enu": np.round(pts, 2).tolist()})
+                           "paved": None if unsure and not truth else mat in PAVED,
+                           "pts_enu": np.round(pts, 2).tolist()})
         m = np.zeros(shape, np.uint8)
         area = tags.get("area") == "yes" and len(pts) >= 4 and np.allclose(pts[0], pts[-1])
         if area:
@@ -208,7 +243,9 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
         else:
             th = max(1, int(round(width / grid.res)))
             cv2.polylines(m, [to_px16(pts)], False, 1, thickness=th, lineType=cv2.LINE_8, shift=4)
-        sel = (m > 0) & ~veg
+        sel = (m > 0) & ~veg_for_roads
+        if unsure and not truth:
+            uncertain[sel] = True
         cls[sel] = CLS[mat]
         seg_id[sel] = sid
         road_kind[sel] = ROAD_KIND[kind]
@@ -244,6 +281,6 @@ def classify(rgb: np.ndarray, nir: np.ndarray | None, grid: Grid, osm: dict[str,
     roads[hidden] = 0
     seg_id[hidden] = -1
     road_kind[hidden] = 0
-    st.update({"road_frac": round(float(roads.mean()), 4), "n_ways": len(roads_json),
+    st.update({"road_frac": round(float(roads.mean()), 4), "n_ways": len(roads_json), "n_ways_surface_unknown": n_unc,
                "class_frac": {k: round(float((cls == v).mean()), 4) for k, v in CLS.items()}})
     return ClassMap(cls, roads, road_kind, seg_id, bldg_id, uncertain, roads_json, st)

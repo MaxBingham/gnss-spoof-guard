@@ -7,6 +7,9 @@ Rows (onboard configuration, everything else equal):
   thermal   FlightSystem(night=True): thermal localizer (cfg.thermal.method default) + TRN + IMU / baro
   imu_trn   same with cfg.thermal.method = "off" (baseline: IMU + baro + TRN only)
   straight  thermal, but the planner's straight route instead of the night route choice (night_route=False)
+  low_contrast  thermal, but the TRUE scene's contrast is compressed to 0.4x about its median (harness edits the
+            simulator's truth raster; the onboard prior still predicts the full contrast). night-research: ASTER
+            night scenes over Berkeley show only ~1-3 K road contrast on mild nights vs the 5-10 K hot-day model.
 
 Scoring (harness, truth): ARRIVAL error = horizontal |truth - B| when the drone decides it is above B (first
 ABOVE_B / WAIT_FOR_FIX decision, else the start of DESCEND). Success = arrival error <= 5 m. The landing itself is
@@ -36,6 +39,7 @@ ROWS = {
     "thermal": {"night": True},
     "imu_trn": {"night": True, "thermal_method": "off"},
     "straight": {"night": True, "night_route": False},
+    "low_contrast": {"night": True, "contrast": 0.4},
 }
 
 
@@ -98,6 +102,14 @@ def fly(job: dict) -> dict:
     localizer = "off" if row.get("night") else "vision"
     fs = FlightSystem(cfg=cfg, pose_source="ekf", localizer=localizer, seed=job["seed"], mission=job["mission"],
                       conditions=cond, **kw)
+    if "contrast" in row:  # simulated reality: a milder night than the prior predicts
+        truth = getattr(getattr(fs, "thermal_sensor", None), "truth", None)
+        temp = getattr(truth, "temp_K", getattr(truth, "temp", None))  # camera model | stub raster
+        if temp is None:
+            notes.append("no thermal truth raster to scale")
+        else:
+            ref = float(np.median(temp))
+            temp[...] = ref + row["contrast"] * (temp - ref)
     poly = _route_xy(fs)
     cum = np.r_[0.0, np.cumsum(np.hypot(*np.diff(poly, axis=0).T))]
     route_len = float(cum[-1])

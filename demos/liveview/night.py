@@ -361,6 +361,7 @@ class NightComposer:
             pts = np.array([(u * w / THERMAL_W, v * h / THERMAL_H) for u, v in fix.matched_px], np.int32)
             col = (255, 220, 0) if getattr(fix, "accepted", True) else (255, 60, 60)
             cv2.polylines(img, [pts], False, col, max(2, int(3 * fs_)), cv2.LINE_AA)
+        self._match_inset(demo, img, fs_)
         # reticle
         cx, cy = w // 2, h // 2
         L = int(18 * fs_)
@@ -369,6 +370,41 @@ class NightComposer:
             cv2.line(img, a, b, (0, 230, 255), max(1, int(2 * fs_)), cv2.LINE_AA)
         cv2.rectangle(img, (0, 0), (w - 1, h - 1), (0, 200, 255) if fresh else (120, 130, 150), max(2, int(3 * fs_)))
         return img
+
+    def _match_inset(self, demo: Any, img: np.ndarray, fs_: float) -> None:
+        """Bottom right: what the thermal localizer matched (rectified frame, north-up) next to the onboard
+        prior at the fix (same extent). night-nav: autopilot.thermal.last_tpl (0.5 m cells), last_thermal_fix."""
+        ns: NightState = demo.night
+        ap = demo.fs.autopilot
+        loc = getattr(ap, "thermal", None)
+        fix = getattr(ap, "last_thermal_fix", None)
+        tpl = getattr(loc, "last_tpl", None) if loc is not None else None
+        if tpl is None or fix is None or demo.t - float(fix.t) > 2.0:
+            return
+        side = int(130 * fs_)
+        pad = int(8 * fs_)
+        H, W = img.shape[:2]
+        tiles = [("SEEN", agc_8bit(np.asarray(tpl, np.float32)))]
+        if ns.prior_temp is not None and ns.prior_grid is not None:
+            min_x, max_y, res = ns.prior_grid
+            half_m = 0.5 * tpl.shape[1] * 0.5
+            c = (float(fix.pos[0]) - min_x) / res, (max_y - float(fix.pos[1])) / res
+            r = int(half_m / res)
+            c0, r0 = int(c[0]) - r, int(c[1]) - r
+            crop = ns.prior_temp[max(r0, 0):max(r0 + 2 * r, 0), max(c0, 0):max(c0 + 2 * r, 0)]
+            if crop.size > 16:
+                tiles.append(("MAP PRIOR", agc_8bit(crop)))
+        x = W - pad - len(tiles) * (side + pad)
+        y = H - pad - side - int(18 * fs_)
+        acc = getattr(fix, "accepted", True)
+        for name, t8 in tiles:
+            tile = cv2.cvtColor(cv2.resize(t8, (side, side), interpolation=cv2.INTER_AREA), cv2.COLOR_GRAY2RGB)
+            img[y:y + side, x:x + side] = tile
+            cv2.rectangle(img, (x, y), (x + side - 1, y + side - 1), (255, 220, 0) if acc else (255, 70, 60), max(1, int(2 * fs_)))
+            cv2.rectangle(img, (x, y + side), (x + side, y + side + int(18 * fs_)), (10, 14, 22), -1)
+            cv2.putText(img, name, (x + 4, y + side + int(14 * fs_)), cv2.FONT_HERSHEY_DUPLEX, 0.42 * fs_, (235, 240, 245),
+                        1, cv2.LINE_AA)
+            x += side + pad
 
     def thermal_caption(self, demo: Any, w: int) -> Image.Image:
         ns: NightState = demo.night

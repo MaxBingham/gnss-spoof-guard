@@ -248,8 +248,10 @@ class GimbalFrame:
 
 @dataclass
 class BearingUpdate:
-    """A new UMA-16 bearing to the enemy from the base (topic `link/bearing`), delivered only while the link is up."""
+    """The current UMA-16 bearing to the enemy from the base (topic `link/bearing`), ~1 Hz, delivered only while the
+    link is up. The base tells our drone and the enemy apart by their rotor sound (assumed to work in the sim)."""
 
     t: float  # when the base sent it
     az_deg: float  # compass degrees from the array
     first_heard_t: float  # when the base first heard the enemy (the 500 m assumption starts there)
+    sigma_deg: float = 5.0  # 1-sigma of this bearing (grows with the enemy's distance from the array)

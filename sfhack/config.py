@@ -544,6 +544,15 @@ class TrackerConfig:
     lost_after_s: float = 2.0  # TRACKING without a hit
     lost_circle_r: float = 20.0
     lost_search_s: float = 40.0  # LOST longer than this -> SEARCH along the latest bearing
+    lost_cv_max_s: float = 20.0  # constant-velocity prediction from the last track at most this far ahead
+    lost_standoff_m: float = 25.0  # LOST: watch the predicted point from this far on the base side
+    lost_pattern_m: float = 35.0  # ... sweeping forward / backward along the bearing line by this much
+    lost_pattern_s: float = 16.0
+    # acoustic bearing from the base (UMA-16, ~1 Hz while the link is up)
+    bearing_fresh_s: float = 3.0  # a bearing older than this is not used for checks
+    suspect_sigma: float = 3.0  # TRACKING: track farther than this many sigma off the bearing ...
+    suspect_s: float = 3.0  # ... for this long -> SUSPECT (bird / wrong object): drop it and re-acquire
+    gate_bearing: bool = True  # a NEW track must also lie within suspect_sigma of a fresh bearing
     # battery (flight time budget)
     battery_s: float = 900.0
     reserve_s: float = 60.0

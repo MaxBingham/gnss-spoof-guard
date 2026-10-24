@@ -22,6 +22,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -210,7 +211,8 @@ class EnemyTracker:
         self.best_conf = self.last_conf = 0.0
 
     def process(self, t: float, dets: list[Det], cam_pos: np.ndarray, yaw: float, pan_deg: float,
-                tilt_deg: float) -> FrameResult:
+                tilt_deg: float, accept: Callable[[Measurement], bool] | None = None) -> FrameResult:
+        """One frame. `accept(m)`: may a NEW track start from this measurement (e.g. the acoustic bearing gate)."""
         cfg = self.cfg
         ms = [measure(d, cfg, cam_pos, yaw, pan_deg, tilt_deg) for d in dets
               if d.cls == "drone" and d.conf >= cfg.drone_conf]
@@ -224,12 +226,14 @@ class EnemyTracker:
                 self.track.update(best)
                 res.hit = best
             res.others = [m for m in ms if m is not res.hit]
-        elif ms:
-            best = max(ms, key=lambda m: m.det.conf)
+        elif ms and (accept is None or any(accept(m) for m in ms)):
+            best = max((m for m in ms if accept is None or accept(m)), key=lambda m: m.det.conf)
             self.track = EnemyTrack(best, t)
             self.window.clear()
             res.hit, res.new_track = best, True
             res.others = [m for m in ms if m is not best]
+        else:
+            res.others = ms
         self.window.append(1 if res.hit is not None else 0)
         if res.hit is not None:
             self.last_hit_t = t

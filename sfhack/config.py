@@ -276,6 +276,11 @@ class ThermalConfig:
     # direction (8 m/s x 1.5 deg = 0.2 m/s cross-track drift). With yaw_feedback the yaw corrections of accepted
     # thermal fixes (yaw search of the template) teach the autopilot the compass bias, slowly.
     yaw_feedback: bool = False
+    # EKF accel-bias random walk while flying on thermal fixes (None = EkfConfig.acc_bias_rw, 0.01). With GNSS off
+    # the AHRS tilt drifted ~1 deg in 10-20 s (0.2 m/s^2 of gravity leak); at 0.01 m/s^2/sqrt(s) the bias states
+    # could not follow, the filter stayed confident (2-sigma 2.5 m) while the true error grew to 14 m, and then
+    # rejected the correct thermal fixes (m-c804bb84 seed 0 ran away).
+    ekf_acc_bias_rw: float | None = None
     confirm_jump_m: float = 5.0  # a fix moving the estimate more than this needs a second, consistent fix (0 = off)
     confirm_window_s: float = 2.0
     confirm_tol_m: float = 3.0

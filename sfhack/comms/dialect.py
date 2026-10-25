@@ -35,11 +35,23 @@ def module_path() -> Path:
     return _cache_dir() / f"sfhack_mav_{key}.py"
 
 
+def _common_xml() -> Path:
+    """common.xml lives in message_definitions/v1.0 in older wheels and in dialects/v20 in pymavlink 2.4.50."""
+    import pymavlink
+
+    root = Path(pymavlink.__file__).parent
+    for relative in (("message_definitions", "v1.0", "common.xml"), ("dialects", "v20", "common.xml")):
+        path = root.joinpath(*relative)
+        if path.is_file():
+            return path
+    raise FileNotFoundError(f"pymavlink common.xml not found under {root}")
+
+
 def generate(out: Path) -> Path:
     import pymavlink
     from pymavlink.generator import mavgen
 
-    common = Path(pymavlink.__file__).parent / "message_definitions" / "v1.0" / "common.xml"
+    common = _common_xml()
     out.parent.mkdir(parents=True, exist_ok=True)
     src = out.with_suffix(".xml")  # mavgen resolves <include> next to the dialect: point it at pymavlink's common.xml
     src.write_text(XML.read_text(encoding="utf-8").replace("<include>common.xml</include>",

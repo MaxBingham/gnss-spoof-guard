@@ -381,9 +381,12 @@ class TrackerPilot(BearingPilot):
             v[:2] *= tc.track_speed_max / vh
         v[2] = float(np.clip(v[2], -self.plan.sink, self.plan.climb))
         d3 = float(np.linalg.norm(rel))
-        if d3 < tc.min_dist_m:  # too close: back off along the line from the enemy, now
+        # keep-out, also predictive: at a 5 m standoff a closing enemy covers the margin within a second
+        rel_v = est.vel - trk.vel
+        d_pred = float(np.linalg.norm(rel + rel_v * tc.keepout_lookahead_s))
+        if d3 < tc.min_dist_m or d_pred < tc.min_dist_m + 1.0:  # too close / closing in: back off, now
             away = rel / max(d3, 1e-6)
-            v += away * 4.0 * (tc.min_dist_m - d3 + 1.0)
+            v += away * 4.0 * (tc.min_dist_m + 1.0 - min(d3, d_pred) + 1.0)
             self.sp = est.pos + away * 2.0
         self.v = v
         self.sp = self.sp + v * dt

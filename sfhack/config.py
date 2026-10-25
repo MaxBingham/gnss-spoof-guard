@@ -537,9 +537,10 @@ class TrackerConfig:
     search_agl: float = 38.0
     search_pan_deg: float = 25.0  # gimbal sweep half-width around the bearing direction
     search_sweep_s: float = 4.0
-    track_dist_m: float = 15.0  # standoff (horizontal)
+    track_dist_m: float = 5.0  # standoff (horizontal)
     track_above_m: float = 4.0
-    min_dist_m: float = 10.0  # never closer (3D)
+    min_dist_m: float = 3.0  # never closer (3D)
+    keepout_lookahead_s: float = 1.0  # back off when the predicted distance within this time drops below min + 1 m
     track_speed_max: float = 12.0
     lost_after_s: float = 2.0  # TRACKING without a hit
     lost_circle_r: float = 20.0

@@ -82,3 +82,10 @@ format and frames in `docs/MAP_PACKAGE.md` (the contract with V3.2 and the objec
 
 World = local ENU (x east, y north, z up), origin = map center, yaw 0 = east CCW. All parameters in
 `sfhack/config.py`. Generated data goes to `$SFHACK_DATA`, never into the repo. English everywhere.
+
+## Cursor Cloud specific instructions
+
+- Source `scripts/env.sh` before `uv run`. The venv is `~/.venvs/sf-hack-v5` and generated data is `~/sf-hack-data`, both outside the repo. `bash scripts/setup.sh` is idempotent (uv Python 3.12 + `uv sync`).
+- There is no GPU. On Linux with neither `/dev/dri` nor `/dev/nvidia0`, `scripts/env.sh` sets `MUJOCO_GL=osmesa` and `PYOPENGL_PLATFORM=osmesa`. Leave those set: GLFW/EGL return black frames here, and the vision localizer needs real down-camera images.
+- `uv run python -m pytest tests -q` is the flight check (the Berkeley ortho ships in `sfhack/world/sample_berkeley`, no download). Headless score: `uv run python demos/demo_live.py --headless`.
+- Mission planner: `uv run python -m sfhack.missionprep serve` then `http://127.0.0.1:8765/`. Do not `uv sync --extra detector` unless you need YOLO; that extra pulls CUDA PyTorch.

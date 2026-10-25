@@ -6,7 +6,8 @@ of the code only uses `EnemyDrone.step(t, bearing_deg) -> EnemyPose` and the MuJ
 Scenario: the UMA-16 at the base hears the enemy and gives a bearing. At the first bearing the enemy appears
 `range0` m out along it, `agl` m above the terrain, and approaches the base at `speed` with a little weaving. Its
 direction follows the LATEST bearing: it steers toward the point on the new bearing ray at its current range, with a
-limited lateral speed (a bearing jump of 30 deg at 400 m is a 200 m move, not a teleport). It stops approaching at
+limited lateral speed (a bearing jump of 30 deg at 400 m is a 200 m move, not a teleport; a bearing turning faster
+than `lateral_max` / range leaves the enemy lagging behind it). It stops approaching at
 `min_range` and loiters there.
 
 Looks: a heavy quad, 1.2 m motor to motor (1.6 m over the props), matte charcoal body with olive arms and a payload
@@ -183,15 +184,14 @@ class EnemyDrone:
             rel = self.xy - self.base
             r = float(np.linalg.norm(rel))
             r_new = max(self.min_range, r - self.speed * dt)
-            goal = self.base + az_dir(bearing_deg) * r_new
-            d = goal - self.xy
-            radial = rel / max(r, 1e-6)
-            step_r = float(d @ radial)  # approach part: at `speed`, lateral part: limited
-            lat = d - step_r * radial
-            n = float(np.linalg.norm(lat))
-            if n > self.lateral_max * dt:
-                lat *= self.lateral_max * dt / n
-            self.xy = self.xy + step_r * radial + lat
+            # polar step: range closes at `speed`, the azimuth turns toward the bearing at <= lateral_max / r.
+            # (A Cartesian step toward the goal point let the chord's radial part through unlimited: a bearing
+            # turning steadily pulled the enemy from 500 m to 80 m in ~10 s.)
+            az = math.degrees(math.atan2(rel[0], rel[1]))
+            da = (bearing_deg - az + 180.0) % 360.0 - 180.0
+            da_max = math.degrees(self.lateral_max * dt / max(r, 1e-6))
+            az += max(-da_max, min(da_max, da))
+            self.xy = self.base + az_dir(az) * r_new
         rel = self.xy - self.base
         r = float(np.linalg.norm(rel))
         u = rel / max(r, 1e-6)

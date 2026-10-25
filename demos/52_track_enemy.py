@@ -63,12 +63,13 @@ KEYS = {2424832: "LEFT", 65361: "LEFT", 2555904: "RIGHT", 65363: "RIGHT", 13: "E
 class BearingScript:
     """Scripted UMA-16 bearings for headless runs / the evaluation: a slow sweep around the first bearing (someone
     walking around the array with the speaker), one update per second. With `rate` (deg/s, + = clockwise, i.e.
-    increasing compass azimuth) the bearing turns at that constant rate instead. The enemy follows the bearing only
-    within its lateral speed limit (`EnemyDrone.lateral_max`), so far out it lags the script."""
+    increasing compass azimuth) the bearing turns at that constant rate instead, capped at what the enemy can fly at
+    its range (90 % of `EnemyDrone.lateral_max` / range: 5 deg/s needs <= ~93 m, at 500 m it is ~0.9 deg/s)."""
 
     def __init__(self, b0: float, seed: int, amp: float | None = None, period: float | None = None,
-                 rate: float | None = None) -> None:
-        self.rate = rate
+                 rate: float | None = None, enemy=None) -> None:
+        self.rate, self.enemy = rate, enemy
+        self.b_rate, self.t_rate = b0, None
         rng = np.random.default_rng(seed + 4200)
         self.b0 = b0
         self.amp = float(rng.uniform(5.0, 30.0) if amp is None else amp)
@@ -85,13 +86,21 @@ class BearingScript:
             return None
         self.next_t += 1.0
         if self.rate is not None:
-            return (self.b0 + self.rate * (t - self.t0)) % 360.0
+            dt = t - (self.t_rate if self.t_rate is not None else self.t0)
+            self.t_rate = t
+            rate = self.rate
+            if self.enemy is not None and self.enemy.xy is not None:
+                r = float(np.linalg.norm(self.enemy.xy - self.enemy.base))
+                cap = math.degrees(0.9 * self.enemy.lateral_max / max(r, 1.0))
+                rate = max(-cap, min(cap, rate))
+            self.b_rate += rate * dt
+            return self.b_rate % 360.0
         return (self.b0 + self.phase * self.amp * math.sin(2 * math.pi * (t - self.t0) / self.period)) % 360.0
 
 
-def make_script(b0: float, args) -> BearingScript | None:
+def make_script(b0: float, args, sc) -> BearingScript | None:
     if args.bearing_rate is not None:
-        return BearingScript(b0, args.seed, rate=args.bearing_rate)
+        return BearingScript(b0, args.seed, rate=args.bearing_rate, enemy=sc.enemy)
     return BearingScript(b0, args.seed) if args.script_bearing else None
 
 
@@ -141,7 +150,7 @@ def summary(sc: TrackScenario) -> str:
 def run_headless(world, args, tcfg: TrackerConfig) -> int:
     sc = new_scenario(world, args, make_detector(args, tcfg), tcfg)
     b0 = args.bearing if args.bearing is not None else 60.0
-    script = make_script(b0, args)
+    script = make_script(b0, args, sc)
     print(sc.hear(b0, "--bearing"))
     wall, nxt, last_dec = time.time(), 0.0, 0
     while sc.t < args.max_t and not (sc.pilot.state == "LANDED" and sc.launch_t is not None):
@@ -185,7 +194,7 @@ def run_record(world, args, tcfg: TrackerConfig) -> int:
     comp = TrackComposer(sc, W, H)
     comp.mode = args.view
     b0 = args.bearing if args.bearing is not None else 60.0
-    script = make_script(b0, args)
+    script = make_script(b0, args, sc)
     sc.hear(b0, "--bearing")
     video = _VideoOut(out, W, H, fps)
     steps = int(round(args.speed / fps / sc.dt))
@@ -233,7 +242,7 @@ def run_viewer(world, args, tcfg: TrackerConfig) -> None:
     pending = float(args.bearing) if args.bearing is not None else 0.0
     if args.bearing is not None:
         print(f"t={sc.t:6.1f}s {sc.hear(args.bearing, '--bearing')}")
-    script = make_script(pending, args)
+    script = make_script(pending, args, sc)
     keys: deque[str] = deque()
     mouse = {"drag": None}
 
@@ -328,7 +337,7 @@ def run_viewer(world, args, tcfg: TrackerConfig) -> None:
                 sc.close()
                 sc = new_scenario(world, args, detector, tcfg)
                 comp = TrackComposer(sc, W, H)
-                script = make_script(pending, args)
+                script = make_script(pending, args, sc)
                 budget, last_dec = 0.0, 0
             elif k == "Q":
                 if video is not None:
